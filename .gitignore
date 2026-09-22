@@ -5,6 +5,7 @@ target/
 !**/src/test/**/target/
 
 .env
+graphify-out/
 
 ### STS ###
 .apt_generated
