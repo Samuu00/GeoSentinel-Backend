@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.stereotype.Component;
 
@@ -27,7 +28,9 @@ public class ProblemAuthenticationEntryPoint implements AuthenticationEntryPoint
 
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException authException) throws IOException {
-        response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Bearer error=\"invalid_token\"");
+        // RFC 6750: error="invalid_token" solo se un token è arrivato ed è stato rifiutato; senza token basta "Bearer"
+        response.setHeader(HttpHeaders.WWW_AUTHENTICATE, authException instanceof OAuth2AuthenticationException
+                ? "Bearer error=\"invalid_token\"" : "Bearer");
 
         // messaggio generico: il motivo preciso (firma, scadenza, jti revocato) aiuterebbe solo chi attacca
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED,

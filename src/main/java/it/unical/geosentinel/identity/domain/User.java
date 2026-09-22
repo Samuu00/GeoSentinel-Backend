@@ -15,13 +15,14 @@ import java.util.Objects;
 @Table(name = "users")
 public class User extends AuditableEntity {
 
-    @Column(name = "email", nullable = false, unique = true)
+    // lunghezze allineate ai DTO (RegisterRequest) e da replicare in V2: validate non controlla la lunghezza
+    @Column(name = "email", nullable = false, unique = true, length = 254)
     private String email;
 
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
-    @Column(name = "display_name", nullable = false)
+    @Column(name = "display_name", nullable = false, length = 100)
     private String displayName;
 
     @Enumerated(EnumType.STRING)

@@ -5,7 +5,6 @@ import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
-import org.springframework.data.redis.cache.RedisCacheManager.RedisCacheManagerBuilder;
 import org.springframework.data.redis.serializer.JacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext.SerializationPair;
 import tools.jackson.databind.JavaType;
@@ -28,9 +27,11 @@ public class CacheConfig {
                 .disableCachingNullValues();
     }
 
+    // disableCreateOnMissingCache: una cache non registrata con typed(...) fallisce subito, invece di finire
+    // sul serializer JDK di defaultCacheConfig() (deserializzazione Java da Redis = rischio gadget)
     @Bean
     public RedisCacheManagerBuilderCustomizer transactionAwareCaches() {
-        return RedisCacheManagerBuilder::transactionAware;
+        return builder -> builder.transactionAware().disableCreateOnMissingCache();
     }
 
     public static RedisCacheConfiguration typed(RedisCacheConfiguration defaults, JsonMapper mapper,

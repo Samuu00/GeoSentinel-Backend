@@ -28,6 +28,8 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
@@ -37,13 +39,18 @@ import java.time.Clock;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 @EnableConfigurationProperties(JwtProperties.class)
 public class SecurityConfig {
-    private final JwtProperties jwtProperties;
+    // register/login/refresh non usano l'access token: se il client ne allega uno scaduto,
+    // BearerTokenAuthenticationFilter risponderebbe 401 anche su queste rotte permitAll
+    private static final Set<String> TOKENLESS_AUTH_PATHS =
+            Set.of("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh");
+
     private final JtiBlacklistValidator jtiBlacklistValidator;
     private final ProblemAuthenticationEntryPoint authenticationEntryPoint;
     private final ProblemAccessDeniedHandler accessDeniedHandler;
@@ -51,14 +58,12 @@ public class SecurityConfig {
     private final ProblemDetailWriter problemDetailWriter;
 
     public SecurityConfig(
-            JwtProperties jwtProperties,
             JtiBlacklistValidator jtiBlacklistValidator,
             ProblemAuthenticationEntryPoint authenticationEntryPoint,
             ProblemAccessDeniedHandler accessDeniedHandler,
             RedisRateLimiter rateLimiter,
             ProblemDetailWriter problemDetailWriter
     ) {
-        this.jwtProperties = jwtProperties;
         this.jtiBlacklistValidator = jtiBlacklistValidator;
         this.authenticationEntryPoint = authenticationEntryPoint;
         this.accessDeniedHandler = accessDeniedHandler;
@@ -126,18 +131,21 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http, JwtDecoder jwtDecoder,
                                            JwtAuthenticationConverter jwtAuthenticationConverter, Clock clock) throws Exception {
         RateLimitFilter rateLimitFilter = new RateLimitFilter(redisRateLimiter, problemDetailWriter, clock);
+        DefaultBearerTokenResolver defaultResolver = new DefaultBearerTokenResolver();
+        BearerTokenResolver bearerTokenResolver = request ->
+                TOKENLESS_AUTH_PATHS.contains(request.getRequestURI()) ? null : defaultResolver.resolve(request);
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // logout NON è permitAll: serve l'access token da mettere in blacklist
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/register", "/api/v1/auth/login",
-                                "/api/v1/auth/refresh").permitAll()
+                        .requestMatchers(HttpMethod.POST, TOKENLESS_AUTH_PATHS.toArray(String[]::new)).permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/trails/**", "/api/v1/pois/**").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/actuator/health").permitAll()
                         .anyRequest().authenticated()
                     )
                 .oauth2ResourceServer(oauth2 -> oauth2
+                        .bearerTokenResolver(bearerTokenResolver)
                         .jwt(jwt -> jwt
                                 .decoder(jwtDecoder)
                                 .jwtAuthenticationConverter(jwtAuthenticationConverter)

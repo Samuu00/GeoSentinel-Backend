@@ -6,6 +6,7 @@ import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -27,9 +28,6 @@ import java.util.UUID;
 
 @Service
 public class AuthService {
-    // TODO M2.2: spostare le durate in JwtProperties
-    private static final Duration REFRESH_TOKEN_TTL = Duration.ofDays(7);
-    private static final Duration SESSION_MAX_TTL = Duration.ofDays(30);
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
@@ -38,6 +36,9 @@ public class AuthService {
     private final TokenBlacklist tokenBlacklist;
     private final JwtIssuer jwtIssuer;
     private final Clock clock;
+    private final Duration refreshTtl;
+    // scadenza assoluta della sessione: le rotazioni non la estendono
+    private final Duration sessionMaxTtl;
     // Hash fittizio: il login esegue sempre un confronto BCrypt, così il tempo di risposta non rivela se l'email esiste
     private final String dummyPasswordHash;
 
@@ -49,7 +50,10 @@ public class AuthService {
             PasswordEncoder passwordEncoder,
             TokenBlacklist tokenBlacklist,
             JwtIssuer jwtIssuer,
-            Clock clock
+            Clock clock,
+            // @Value e non JwtProperties: application non dipende da infrastructure
+            @Value("${geosentinel.jwt.refresh-ttl}") Duration refreshTtl,
+            @Value("${geosentinel.jwt.session-max-ttl}") Duration sessionMaxTtl
     ) {
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
@@ -57,6 +61,8 @@ public class AuthService {
         this.tokenBlacklist = tokenBlacklist;
         this.jwtIssuer = jwtIssuer;
         this.clock = clock;
+        this.refreshTtl = refreshTtl;
+        this.sessionMaxTtl = sessionMaxTtl;
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
@@ -126,6 +132,9 @@ public class AuthService {
         if (rawRefreshToken != null && !rawRefreshToken.isBlank()) {
             String hash = sha256Hex(rawRefreshToken);
             refreshTokenRepository.findByTokenHash(hash)
+                    // si revoca solo una sessione dell'utente autenticato: il token di un altro utente si ignora
+                    .filter(token -> accessToken != null
+                            && token.getUser().getId().toString().equals(accessToken.getSubject()))
                     .ifPresent(token -> refreshTokenRepository.revokeFamily(token.getFamilyId(), now));
         }
 
@@ -144,9 +153,9 @@ public class AuthService {
         IssuedAccessToken accessToken = jwtIssuer.issueAccessToken(user);
 
         UUID familyId = previous == null ? UUID.randomUUID() : previous.getFamilyId();
-        Instant familyExpiresAt = previous == null ? now.plus(SESSION_MAX_TTL) : previous.getFamilyExpiresAt();
+        Instant familyExpiresAt = previous == null ? now.plus(sessionMaxTtl) : previous.getFamilyExpiresAt();
         // il token non sopravvive alla sessione
-        Instant refreshExpiresAt = min(now.plus(REFRESH_TOKEN_TTL), familyExpiresAt);
+        Instant refreshExpiresAt = min(now.plus(refreshTtl), familyExpiresAt);
 
         String rawRefreshToken = generateSecureRandomToken();
         refreshTokenRepository.save(new RefreshToken(

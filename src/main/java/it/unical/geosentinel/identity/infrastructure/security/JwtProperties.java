@@ -18,9 +18,6 @@ public record JwtProperties(
         @NotNull(message = "Access token TTL must be specified")
         Duration accessTtl,
 
-        @NotNull(message = "Refresh token TTL must be specified")
-        Duration refreshTtl,
-
         @NotBlank(message = "JWT issuer must be specified")
         String issuer
 ) {

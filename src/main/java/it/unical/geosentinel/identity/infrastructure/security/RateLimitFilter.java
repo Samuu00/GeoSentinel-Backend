@@ -43,17 +43,20 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         RateLimitPolicy policy = isAuthRoute ? AUTH_POLICY : GENERAL_POLICY;
 
-        // chiave per utente se autenticato, altrimenti per IP (getRemoteAddr: X-Forwarded-For solo dietro proxy fidato)
+        // chiave per utente se autenticato, altrimenti per IP (getRemoteAddr: X-Forwarded-For solo dietro proxy fidato).
+        // Un bucket per policy: con una chiave condivisa le GET pubbliche (60/min) ricaricherebbero il bucket del login (5/min)
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String prefix = isAuthRoute ? "rl:auth:" : "rl:";
         String rateLimitKey = (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof Jwt jwt)
-                ? "rl:user:" + jwt.getSubject()
-                : "rl:ip:" + request.getRemoteAddr();
+                ? prefix + "user:" + jwt.getSubject()
+                : prefix + "ip:" + request.getRemoteAddr();
 
         RateLimitDecision decision = redisRateLimiter.tryConsume(rateLimitKey, policy);
         response.setHeader("X-RateLimit-Remaining", String.valueOf(decision.remainingTokens()));
 
         if (!decision.allowed()) {
-            long retryAfterSeconds = Math.max(1, decision.retryAfterMillis() / 1000);
+            // arrotondato per eccesso: per difetto il client ritenterebbe troppo presto e riceverebbe un altro 429
+            long retryAfterSeconds = Math.max(1, Math.ceilDiv(decision.retryAfterMillis(), 1000));
             response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds));
 
             ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(

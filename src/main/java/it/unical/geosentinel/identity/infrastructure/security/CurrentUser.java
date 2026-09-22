@@ -1,6 +1,6 @@
 package it.unical.geosentinel.identity.infrastructure.security;
 
-import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -13,7 +13,7 @@ import java.util.UUID;
 public class CurrentUser {
     public UUID getRequiredUserId(){
         return getUserId()
-                .orElseThrow(() -> new AccessDeniedException("User not authenticated"));
+                .orElseThrow(() -> new AuthenticationCredentialsNotFoundException("User not authenticated"));
     }
 
     public Optional<UUID> getUserId() {
