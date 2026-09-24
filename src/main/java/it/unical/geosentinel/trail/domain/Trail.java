@@ -17,7 +17,7 @@ import java.util.Objects;
 @Entity
 @Table(name = "trails")
 public class Trail extends AuditableEntity{
-    @Column(name = "name", nullable = false)
+    @Column(name = "name", nullable = false, length = 150)
     private String name;
 
     @Column(name = "description", columnDefinition = "TEXT")

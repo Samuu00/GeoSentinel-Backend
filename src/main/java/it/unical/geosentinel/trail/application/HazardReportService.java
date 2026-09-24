@@ -9,6 +9,7 @@ import it.unical.geosentinel.trail.domain.HazardReport;
 import it.unical.geosentinel.trail.domain.HazardStatus;
 import it.unical.geosentinel.trail.domain.Trail;
 import it.unical.geosentinel.trail.infrastructure.persistence.HazardReportRepository;
+import org.springframework.security.access.prepost.PostAuthorize;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,7 +31,11 @@ public class HazardReportService {
         this.geometryMapper = geometryMapper;
     }
 
+    // Una segnalazione REJECTED (falsa o abusiva) la vedono solo il gestore e chi l'ha fatta.
+    // authentication.name è il sub del JWT, cioè l'id dell'utente.
     @Transactional(readOnly = true)
+    @PostAuthorize("returnObject.status().name() != 'REJECTED' or hasRole('PARK_MANAGER') "
+            + "or returnObject.reporterId().toString() == authentication.name")
     public HazardView getHazard(UUID id) {
         HazardReport report = hazardReportRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Hazard", id));

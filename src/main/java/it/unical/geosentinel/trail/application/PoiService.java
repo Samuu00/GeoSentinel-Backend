@@ -43,6 +43,7 @@ public class PoiService {
     }
     @Transactional(readOnly = true)
     public List<PoiView> findByTrail(UUID trailId) {
+        trailService.getTrailOrThrow(trailId); // 404 invece di una lista vuota, come per le segnalazioni
         return poiRepository.findByTrailId(trailId)
                 .stream()
                 .map(poi -> PoiView.from(poi, geometryMapper))

@@ -20,7 +20,7 @@ public class Poi extends AuditableEntity{
     @JoinColumn(name = "trail_id")
     private Trail trail;
 
-    @Column(name = "name", nullable = false)
+    @Column(name = "name", nullable = false, length = 100)
     private String name;
 
     @Enumerated(EnumType.STRING)
