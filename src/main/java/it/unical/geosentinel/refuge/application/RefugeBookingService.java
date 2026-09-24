@@ -1,0 +1,157 @@
+package it.unical.geosentinel.refuge.application;
+
+import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.AvailabilityView;
+import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.BookingCommand;
+import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.BookingView;
+import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.CreateRefugeCommand;
+import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.RefugeView;
+import it.unical.geosentinel.refuge.domain.Booking;
+import it.unical.geosentinel.refuge.domain.Refuge;
+import it.unical.geosentinel.refuge.infrastructure.persistence.BookingRepository;
+import it.unical.geosentinel.refuge.infrastructure.persistence.RefugeRepository;
+import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
+import it.unical.geosentinel.shared.domain.exception.CapacityExceededException;
+import it.unical.geosentinel.shared.domain.exception.IdempotencyKeyReusedException;
+import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
+import it.unical.geosentinel.shared.web.geo.GeometryMapper;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service
+public class RefugeBookingService {
+    private static final double MAX_SEARCH_RADIUS_METERS = 50_000.0;
+
+    private final RefugeRepository refugeRepository;
+    private final BookingRepository bookingRepository;
+    private final Clock clock;
+    private final GeometryMapper geometryMapper;
+
+    public RefugeBookingService(RefugeRepository refugeRepository, BookingRepository bookingRepository, Clock clock,
+                                GeometryMapper geometryMapper) {
+        this.refugeRepository = refugeRepository;
+        this.bookingRepository = bookingRepository;
+        this.clock = clock;
+        this.geometryMapper = geometryMapper;
+    }
+
+    private void validateBookingDates(LocalDate checkIn, LocalDate checkOut) {
+        LocalDate today = LocalDate.now(clock);
+        if (checkIn.isBefore(today)) {
+            throw new BusinessRuleViolationException("Check-in date cannot be in the past");
+        }
+        if (!checkOut.isAfter(checkIn)) {
+            throw new BusinessRuleViolationException("Check-out date must be strictly after check-in date");
+        }
+        if (java.time.temporal.ChronoUnit.DAYS.between(checkIn, checkOut) > 14) {
+            throw new BusinessRuleViolationException("A single booking cannot exceed 14 consecutive nights");
+        }
+    }
+
+    // SELECT ... FOR UPDATE sul rifugio: serializza le prenotazioni dello stesso rifugio.
+    // Con un findById semplice due richieste leggono la stessa occupazione e prenotano entrambe (overbooking).
+    @Transactional
+    @PreAuthorize("hasRole('HIKER')")
+    public BookingView book(UUID userId, UUID idempotencyKey, BookingCommand cmd){
+        Refuge refuge = refugeRepository.findByIdForUpdate(cmd.refugeId())
+                .orElseThrow(() -> new ResourceNotFoundException("Refuge", cmd.refugeId()));
+
+        // D12, cercata DOPO il lock: due retry simultanei sullo stesso rifugio si mettono in fila e il secondo
+        // trova la riga del primo. Con chiavi uguali su rifugi diversi decide il vincolo UNIQUE (409).
+        // Prima della validazione delle date: un retry arrivato a check-in passato restituisce comunque la prenotazione.
+        Optional<Booking> existing = bookingRepository.findByUserIdAndIdempotencyKey(userId, idempotencyKey);
+        if (existing.isPresent()) {
+            Booking previous = existing.get();
+            if (!previous.isSameRequest(cmd.refugeId(), cmd.checkIn(), cmd.checkOut(), cmd.guests())) {
+                throw new IdempotencyKeyReusedException();
+            }
+            return BookingView.from(previous);
+        }
+
+        validateBookingDates(cmd.checkIn(), cmd.checkOut());
+
+        int maxOccupancy = bookingRepository.maxNightlyOccupancy(refuge.getId(), cmd.checkIn(), cmd.checkOut());
+        int remainingCapacity = refuge.getCapacity() - maxOccupancy;
+        if (cmd.guests() > remainingCapacity) {
+            throw new CapacityExceededException(refuge.getId(), cmd.guests(), remainingCapacity);
+        }
+
+        Booking booking = Booking.create(refuge, userId, idempotencyKey, cmd.checkIn(), cmd.checkOut(), cmd.guests());
+        return BookingView.from(bookingRepository.save(booking));
+    }
+    @Transactional
+    public void cancel(UUID userId, UUID bookingId){
+        // 404 anche se la prenotazione è di un altro utente: un 403/422 rivelerebbe che esiste
+        Booking booking = bookingRepository.findByIdAndUserId(bookingId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking", bookingId));
+        booking.cancel(Instant.now(clock));
+    }
+    @Transactional(readOnly = true)
+    public AvailabilityView availability(UUID refugeId, LocalDate from, LocalDate to) {
+        validateBookingDates(from, to);
+        Refuge refuge = refugeRepository.findById(refugeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Refuge", refugeId));
+
+        List<Booking> overlapping = bookingRepository.findActiveOverlappingBookings(refugeId, from, to);
+
+        Map<LocalDate, Integer> availablePerNight = new LinkedHashMap<>();
+        LocalDate current = from;
+
+        while (current.isBefore(to)) {
+            LocalDate currentNight = current;
+            int nightlyOccupancy = overlapping.stream()
+                    .filter(b -> !b.getCheckIn().isAfter(currentNight) && b.getCheckOut().isAfter(currentNight))
+                    .mapToInt(Booking::getGuests)
+                    .sum();
+
+            int availableBeds = Math.max(0, refuge.getCapacity() - nightlyOccupancy);
+            availablePerNight.put(currentNight, availableBeds);
+            current = current.plusDays(1);
+        }
+        return new AvailabilityView(refuge.getId(), refuge.getCapacity(), from, to, availablePerNight);
+    }
+    @Transactional(readOnly = true)
+    public RefugeView getRefuge(UUID refugeId){
+        return RefugeView.from(refugeRepository.findById(refugeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Refuge", refugeId)), geometryMapper);
+    }
+    @Transactional(readOnly = true)
+    public List<RefugeView> findNearby(double lon, double lat, double radiusMeters, int limit){
+        double radius = Math.min(radiusMeters, MAX_SEARCH_RADIUS_METERS); // niente query-bomba, come per sentieri e POI
+        int boundedLimit = Math.max(1, Math.min(limit, 50));
+        return refugeRepository.findNearby(lon, lat, radius, boundedLimit)
+                .stream()
+                .map(r -> RefugeView.from(r, geometryMapper))
+                .toList();
+    }
+    @Transactional(readOnly = true)
+    public List<BookingView> getUserBookings(UUID userId){
+        return bookingRepository.findByUserIdOrderByCheckInDesc(userId)
+                .stream()
+                .map(BookingView::from)
+                .toList();
+    }
+    @Transactional
+    @PreAuthorize("hasRole('PARK_MANAGER')")
+    public RefugeView createRefuge(CreateRefugeCommand cmd){
+        Refuge refuge = new Refuge(cmd.name(), cmd.location(), cmd.capacity(), cmd.managerId());
+        return RefugeView.from(refugeRepository.save(refuge), geometryMapper);
+    }
+    @Transactional
+    @PreAuthorize("hasRole('PARK_MANAGER')")
+    public RefugeView updateCapacity(UUID refugeId, Integer capacity){
+        Refuge refuge = refugeRepository.findByIdForUpdate(refugeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Refuge", refugeId));
+        refuge.changeCapacity(capacity);
+        return RefugeView.from(refuge, geometryMapper);
+    }
+}

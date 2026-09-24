@@ -2,6 +2,8 @@ package it.unical.geosentinel.shared.web;
 
 import jakarta.validation.ConstraintViolationException;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
+import it.unical.geosentinel.shared.domain.exception.CapacityExceededException;
+import it.unical.geosentinel.shared.domain.exception.IdempotencyKeyReusedException;
 import it.unical.geosentinel.shared.domain.exception.OptimisticConflictException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
 import org.slf4j.Logger;
@@ -103,6 +105,18 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(BusinessRuleViolationException.class)
     public ResponseEntity<Object> handleBusinessRuleViolation(BusinessRuleViolationException ex, WebRequest request) {
         return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.BUSINESS_RULE, "Business rule violation",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
+    @ExceptionHandler(CapacityExceededException.class)
+    public ResponseEntity<Object> handleCapacityExceeded(CapacityExceededException ex, WebRequest request) {
+        return problem(ex, HttpStatus.CONFLICT, ProblemTypes.CAPACITY_EXCEEDED, "Capacity exceeded",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    public ResponseEntity<Object> handleIdempotencyKeyReused(IdempotencyKeyReusedException ex, WebRequest request) {
+        return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.IDEMPOTENCY_KEY_REUSED, "Idempotency key reused",
                 ex.getMessage(), new HttpHeaders(), request);
     }
 

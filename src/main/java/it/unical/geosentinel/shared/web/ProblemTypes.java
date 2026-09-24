@@ -13,6 +13,7 @@ public final class ProblemTypes {
     public static final URI CONCURRENT_MODIFICATION = URI.create(BASE_URL + "concurrent-modification");
     public static final URI RESOURCE_BUSY = URI.create(BASE_URL + "resource-busy");
     public static final URI CONFLICT = URI.create(BASE_URL + "conflict");
+    public static final URI IDEMPOTENCY_KEY_REUSED = URI.create(BASE_URL + "idempotency-key-reused");
     public static final URI MEDIA_UNSUPPORTED = URI.create(BASE_URL + "media-unsupported-type");
     public static final URI MEDIA_PAYLOAD_TOO_LARGE = URI.create(BASE_URL + "media-payload-too-large");
     public static final URI MEDIA_QUOTA_EXCEEDED = URI.create(BASE_URL + "media-quota-exceeded");
