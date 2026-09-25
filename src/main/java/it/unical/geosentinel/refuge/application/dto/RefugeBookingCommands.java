@@ -57,6 +57,8 @@ public class RefugeBookingCommands {
             );
         }
     }
+    // created = false: retry con la stessa Idempotency-Key, il controller risponde 200 invece di 201 (D12)
+    public record BookingResult(BookingView booking, boolean created) {}
     public record AvailabilityView(
             UUID refugeId,
             int totalCapacity,

@@ -13,7 +13,7 @@ import java.util.UUID;
 @Entity
 @Table(name = "refuges")
 public class Refuge extends AuditableEntity{
-    @Column(name = "name", nullable = false)
+    @Column(name = "name", nullable = false, length = 120) // come CreateRefugeRequest e V4 (validate non controlla le lunghezze)
     private String name;
     @Column(name = "location", nullable = false, columnDefinition = "geometry(Point,4326)")
     private Point location;
@@ -53,6 +53,8 @@ public class Refuge extends AuditableEntity{
     }
 
     public void changeCapacity(int newCapacity) { this.capacity = validateCapacity(newCapacity); }
+
+    public boolean isManagedBy(UUID userId) { return managerId.equals(userId); }
 
     public String getName() { return name; }
     public Point getLocation() { return location; }

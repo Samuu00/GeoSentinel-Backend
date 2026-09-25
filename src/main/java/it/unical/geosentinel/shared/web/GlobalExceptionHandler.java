@@ -23,6 +23,8 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.ServletWebRequest;
@@ -35,11 +37,13 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    private static final Set<String> PRECONDITION_HEADERS = Set.of("Idempotency-Key", HttpHeaders.IF_MATCH);
 
     private final Clock clock;
 
@@ -83,6 +87,20 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                                 error.getDefaultMessage())))
                 .toList();
         return validationProblem(ex, errors, headers, request);
+    }
+
+    // header di precondizione mancanti (Idempotency-Key, If-Match): 428, non il 400 di default di Spring
+    @Override
+    protected ResponseEntity<Object> handleServletRequestBindingException(ServletRequestBindingException ex,
+                                                                          HttpHeaders headers, HttpStatusCode status,
+                                                                          WebRequest request) {
+        if (ex instanceof MissingRequestHeaderException missing
+                && PRECONDITION_HEADERS.contains(missing.getHeaderName())) {
+            return problem(ex, HttpStatus.PRECONDITION_REQUIRED, ProblemTypes.PRECONDITION_REQUIRED,
+                    "Precondition required", "The " + missing.getHeaderName() + " header is required",
+                    headers, request);
+        }
+        return super.handleServletRequestBindingException(ex, headers, status, request);
     }
 
     // bean @Validated fuori dal layer web

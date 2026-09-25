@@ -2,6 +2,7 @@ package it.unical.geosentinel.refuge.application;
 
 import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.AvailabilityView;
 import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.BookingCommand;
+import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.BookingResult;
 import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.BookingView;
 import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.CreateRefugeCommand;
 import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.RefugeView;
@@ -14,6 +15,7 @@ import it.unical.geosentinel.shared.domain.exception.CapacityExceededException;
 import it.unical.geosentinel.shared.domain.exception.IdempotencyKeyReusedException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
 import it.unical.geosentinel.shared.web.geo.GeometryMapper;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -61,7 +63,7 @@ public class RefugeBookingService {
     // Con un findById semplice due richieste leggono la stessa occupazione e prenotano entrambe (overbooking).
     @Transactional
     @PreAuthorize("hasRole('HIKER')")
-    public BookingView book(UUID userId, UUID idempotencyKey, BookingCommand cmd){
+    public BookingResult book(UUID userId, UUID idempotencyKey, BookingCommand cmd){
         Refuge refuge = refugeRepository.findByIdForUpdate(cmd.refugeId())
                 .orElseThrow(() -> new ResourceNotFoundException("Refuge", cmd.refugeId()));
 
@@ -74,7 +76,7 @@ public class RefugeBookingService {
             if (!previous.isSameRequest(cmd.refugeId(), cmd.checkIn(), cmd.checkOut(), cmd.guests())) {
                 throw new IdempotencyKeyReusedException();
             }
-            return BookingView.from(previous);
+            return new BookingResult(BookingView.from(previous), false);
         }
 
         validateBookingDates(cmd.checkIn(), cmd.checkOut());
@@ -86,7 +88,7 @@ public class RefugeBookingService {
         }
 
         Booking booking = Booking.create(refuge, userId, idempotencyKey, cmd.checkIn(), cmd.checkOut(), cmd.guests());
-        return BookingView.from(bookingRepository.save(booking));
+        return new BookingResult(BookingView.from(bookingRepository.save(booking)), true);
     }
     @Transactional
     public void cancel(UUID userId, UUID bookingId){
@@ -94,6 +96,12 @@ public class RefugeBookingService {
         Booking booking = bookingRepository.findByIdAndUserId(bookingId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking", bookingId));
         booking.cancel(Instant.now(clock));
+    }
+    @Transactional(readOnly = true)
+    public BookingView getBooking(UUID userId, UUID bookingId) {
+        // 404 anche per una prenotazione altrui, come in cancel
+        return BookingView.from(bookingRepository.findByIdAndUserId(bookingId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking", bookingId)));
     }
     @Transactional(readOnly = true)
     public AvailabilityView availability(UUID refugeId, LocalDate from, LocalDate to) {
@@ -148,9 +156,13 @@ public class RefugeBookingService {
     }
     @Transactional
     @PreAuthorize("hasRole('PARK_MANAGER')")
-    public RefugeView updateCapacity(UUID refugeId, Integer capacity){
+    public RefugeView updateCapacity(UUID actorId, boolean actorIsAdmin, UUID refugeId, Integer capacity){
         Refuge refuge = refugeRepository.findByIdForUpdate(refugeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Refuge", refugeId));
+        // il ruolo non basta: solo il gestore del rifugio o un ADMIN ne cambiano la capacità (403, il rifugio è comunque visibile)
+        if (!actorIsAdmin && !refuge.isManagedBy(actorId)) {
+            throw new AccessDeniedException("Only the refuge manager can change its capacity");
+        }
         refuge.changeCapacity(capacity);
         return RefugeView.from(refuge, geometryMapper);
     }

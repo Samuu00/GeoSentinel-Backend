@@ -29,4 +29,11 @@ public class CurrentUser {
         }
         return Optional.empty();
     }
+
+    // le authority vengono dal claim roles del JWT: un ADMIN ha ROLE_ADMIN (la RoleHierarchy vale solo nelle espressioni di sicurezza)
+    public boolean isAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    }
 }
