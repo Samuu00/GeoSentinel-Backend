@@ -1,11 +1,13 @@
 package it.unical.geosentinel.identity.application;
 
+import it.unical.geosentinel.identity.application.port.LoginAttemptLimiter;
 import it.unical.geosentinel.identity.application.port.TokenBlacklist;
 import it.unical.geosentinel.identity.domain.RefreshToken;
 import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
+import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -34,6 +36,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
     private final TokenBlacklist tokenBlacklist;
+    private final LoginAttemptLimiter loginAttemptLimiter;
     private final JwtIssuer jwtIssuer;
     private final Clock clock;
     private final Duration refreshTtl;
@@ -49,6 +52,7 @@ public class AuthService {
             RefreshTokenRepository refreshTokenRepository,
             PasswordEncoder passwordEncoder,
             TokenBlacklist tokenBlacklist,
+            LoginAttemptLimiter loginAttemptLimiter,
             JwtIssuer jwtIssuer,
             Clock clock,
             // @Value e non JwtProperties: application non dipende da infrastructure
@@ -59,6 +63,7 @@ public class AuthService {
         this.refreshTokenRepository = refreshTokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenBlacklist = tokenBlacklist;
+        this.loginAttemptLimiter = loginAttemptLimiter;
         this.jwtIssuer = jwtIssuer;
         this.clock = clock;
         this.refreshTtl = refreshTtl;
@@ -79,9 +84,18 @@ public class AuthService {
         return createAuthSession(user, null);
     }
 
+    // Limite per account contro il credential stuffing (molti IP, stessa email), che il limite per IP non ferma.
+    // Controllato per primo: stesso comportamento per account esistenti e non (niente enumerazione) e nessun costo BCrypt.
+    // Chiave = hash dell'email, mai in chiaro su Redis. Limite accettato: chi attacca può rallentare il login di una
+    // vittima tempestandone l'email; il token bucket lo attenua (un tentativo ricaricato ogni 90 s, nessun blocco fisso).
     @Transactional
     public AuthTokens login(String email, String rawPassword) {
-        Optional<User> user = userRepository.findByEmail(User.normalizeEmail(email));
+        String normalizedEmail = User.normalizeEmail(email);
+        loginAttemptLimiter.tryAcquire(sha256Hex(normalizedEmail)).ifPresent(retryAfter -> {
+            throw new RateLimitExceededException(retryAfter);
+        });
+
+        Optional<User> user = userRepository.findByEmail(normalizedEmail);
         // matches() gira anche se l'utente non esiste: stesso costo, stesso errore
         boolean passwordMatches = passwordEncoder.matches(rawPassword,
                 user.map(User::getPasswordHash).orElse(dummyPasswordHash));

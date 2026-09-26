@@ -5,6 +5,7 @@ import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationExcept
 import it.unical.geosentinel.shared.domain.exception.CapacityExceededException;
 import it.unical.geosentinel.shared.domain.exception.IdempotencyKeyReusedException;
 import it.unical.geosentinel.shared.domain.exception.OptimisticConflictException;
+import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -136,6 +137,21 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handleIdempotencyKeyReused(IdempotencyKeyReusedException ex, WebRequest request) {
         return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.IDEMPOTENCY_KEY_REUSED, "Idempotency key reused",
                 ex.getMessage(), new HttpHeaders(), request);
+    }
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<Object> handleRateLimitExceeded(RateLimitExceededException ex, WebRequest request) {
+        // arrotondato per eccesso, come in RateLimitFilter: per difetto il client ritenterebbe troppo presto
+        long retryAfterSeconds = Math.max(1, Math.ceilDiv(ex.getRetryAfter().toMillis(), 1000));
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds));
+
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS,
+                "Too many requests. Please retry after " + retryAfterSeconds + " seconds.");
+        problemDetail.setType(ProblemTypes.RATE_LIMIT_EXCEEDED);
+        problemDetail.setTitle("Too Many Requests");
+        problemDetail.setProperty("retryAfterSeconds", retryAfterSeconds);
+        return handleExceptionInternal(ex, problemDetail, headers, HttpStatus.TOO_MANY_REQUESTS, request);
     }
 
     // ---- concorrenza & persistenza ----------------------------------------------------------------------------
