@@ -53,12 +53,14 @@ GeoSentinel-Backend/
     │   │   │   │       ├── BusinessRuleViolationException.java
     │   │   │   │       ├── OptimisticConflictException.java
     │   │   │   │       ├── CapacityExceededException.java      # 409 (refuge); qui perché l'handler è in shared
-    │   │   │   │       └── IdempotencyKeyReusedException.java  # 422 (D12)
+    │   │   │   │       ├── IdempotencyKeyReusedException.java  # 422 (D12)
+    │   │   │   │       └── RateLimitExceededException.java     # 429 + Retry-After (limite di login per account)
     │   │   │   ├── config/
     │   │   │   │   ├── JpaAuditingConfig.java        # @EnableJpaAuditing + AuditorAware
     │   │   │   │   ├── GeometryConfig.java           # GeometryFactory(SRID 4326) + Clock
     │   │   │   │   ├── AsyncConfig.java              # ThreadPoolTaskExecutor dedicato
     │   │   │   │   ├── CacheConfig.java              # RedisCacheManager tipizzato
+    │   │   │   │   ├── SchedulingConfig.java         # @EnableScheduling (pulizia refresh token)
     │   │   │   │   └── OpenApiConfig.java
     │   │   │   └── web/
     │   │   │       ├── GlobalExceptionHandler.java   # @RestControllerAdvice, RFC 7807
@@ -73,10 +75,11 @@ GeoSentinel-Backend/
     │   │   │
     │   │   ├── identity/                             # utenti, auth, sicurezza
     │   │   │   ├── domain/        User, Role, RefreshToken
-    │   │   │   ├── application/   AuthService, port/TokenBlacklist
+    │   │   │   ├── application/   AuthService, UserQueryService (letture per le altre feature), RefreshTokenCleanupJob,
+    │   │   │   │                  port/TokenBlacklist, port/LoginAttemptLimiter
     │   │   │   ├── infrastructure/
     │   │   │   │   ├── persistence/  UserRepository, RefreshTokenRepository
-    │   │   │   │   ├── redis/        RedisTokenBlacklist, RedisRateLimiter
+    │   │   │   │   ├── redis/        RedisTokenBlacklist, RedisRateLimiter, RedisLoginAttemptLimiter, RateLimitPolicy, RateLimitDecision
     │   │   │   │   └── security/     SecurityConfig, JwtTokenService, JtiBlacklistValidator,
     │   │   │   │                     RateLimitFilter, ProblemAuthenticationEntryPoint,
     │   │   │   │                     ProblemAccessDeniedHandler, JwtProperties, CurrentUser
@@ -101,9 +104,11 @@ GeoSentinel-Backend/
     │   │   │
     │   │   ├── maintenance/                          # ticket manutenzione
     │   │   │   ├── domain/        MaintenanceTicket, TicketStatus, TicketPriority
-    │   │   │   ├── application/   MaintenanceService
-    │   │   │   ├── infrastructure/persistence/  MaintenanceTicketRepository
-    │   │   │   └── web/           MaintenanceController, dto/*, MaintenanceMapper
+    │   │   │   ├── application/   MaintenanceService, dto/MaintenanceTicketCommands (command + TicketView)
+    │   │   │   ├── infrastructure/
+    │   │   │   │   ├── persistence/  MaintenanceTicketRepository
+    │   │   │   │   └── cache/        MaintenanceCacheConfig (registra "maintenance-by-trail" con CacheConfig.typed)
+    │   │   │   └── web/           MaintenanceController (/api/v1/maintenance-tickets), dto/ MaintenanceDtos, MaintenanceMapper
     │   │   │
     │   │   ├── emergency/                            # SOS e squadre di soccorso
     │   │   │   ├── domain/        SosAlert, SosStatus, RescueTeam, TeamStatus, SosAlertRaisedEvent
@@ -131,10 +136,10 @@ GeoSentinel-Backend/
     └── test/
         ├── java/it/unical/geosentinel/
         │   ├── support/AbstractIntegrationTest.java
-        │   ├── identity/  AuthServiceTest, AuthServiceLogoutTest, RateLimitFilterTest, AuthFlowIT, RateLimitIT
+        │   ├── identity/  AuthServiceTest, AuthServiceLogoutTest, AuthServiceLoginLimitTest, RateLimitFilterTest, AuthFlowIT, RateLimitIT
         │   ├── trail/     TrailDetailCacheSerializationTest, TrailSpatialQueryIT
         │   ├── refuge/    BookingTest, RefugeBookingServiceTest, BookingControllerTest, RefugeBookingConcurrencyIT
-        │   ├── maintenance/ MaintenanceOptimisticLockIT
+        │   ├── maintenance/ MaintenanceTicketTest, MaintenanceControllerTest, MaintenanceOptimisticLockIT
         │   ├── emergency/ SosAssignmentConcurrencyIT, SosAlertTest
         │   ├── media/     MediaServiceTest (+ MediaUploadIT opzionale)
         │   └── shared/    ProblemDetailWriterTest, GeoJsonLineStringTest, MaxUtf8BytesTest,
@@ -217,7 +222,7 @@ File:
   - `management.endpoints.web.exposure.include=health` + `management.endpoint.health.show-details=never` (l'actuator non espone altro al pubblico)
   - `springdoc.api-docs.enabled=false` + `springdoc.swagger-ui.enabled=false` (le docs si accendono solo in `local`)
   - `geosentinel.jwt.secret=${JWT_SECRET}`, `access-ttl=15m`, `refresh-ttl=7d`, `session-max-ttl=30d`, `issuer` (M2.2)
-- [ ] `application-local.properties`: `spring.flyway.locations=classpath:db/migration,classpath:db/seed`, springdoc attivo, logging SQL solo qui
+- [ ] `application-local.properties` (il file esiste ma è **vuoto**): `spring.flyway.locations=classpath:db/migration,classpath:db/seed`, springdoc attivo, logging SQL solo qui
 - [x] Record di configurazione `@ConfigurationProperties`: `JwtProperties(secret, accessTtl, issuer)` (usato solo in `infrastructure/security`)
 - [ ] `MinioProperties(endpoint, publicEndpoint, accessKey, secretKey, bucket, uploadUrlTtl, downloadUrlTtl)`, validato con `@Validated` (M3)
 - `refresh-ttl` e `session-max-ttl` **non** stanno in `JwtProperties`: li usa `AuthService`, che sta in `application` e non può dipendere da `infrastructure`, quindi li legge con `@Value`.
@@ -254,7 +259,7 @@ File:
 | `V2__identity.sql` | `users` (id uuid PK, email `varchar(254)`, password_hash, display_name `varchar(100)` (lunghezze allineate a `RegisterRequest` e alle `@Column(length)` di `User`: `validate` non controlla le lunghezze), role CHECK in 4 ruoli, enabled, audit cols, version). **`UNIQUE (email)` + `CHECK (email = lower(email))`**: il service salva e cerca l'email già normalizzata, quindi `WHERE email = ?` usa l'indice unico; il CHECK impedisce righe non normalizzate (es. dal seed). `refresh_tokens` (id, user_id FK, token_hash `varchar(64)` UNIQUE (non `char`: con `ddl-auto=validate` Hibernate si aspetta `varchar` per un `String` e rifiuta `bpchar`), family_id uuid, expires_at, **`family_expires_at`** (scadenza assoluta della sessione, copiata a ogni rotazione), revoked_at NULL, created_at); indici su `user_id`, `family_id`, `family_expires_at` (per la pulizia) |
 | `V3__trails.sql` | `trails` (id, name `varchar(150)`, description, difficulty CHECK, status CHECK `OPEN/CLOSED/WARNING`, `path geometry(LineString,4326) NOT NULL`, **`length_m double precision GENERATED ALWAYS AS (ST_Length(path::geography)) STORED`**, audit, version). `pois` (id, trail_id FK NULL, name `varchar(100)`, type CHECK, `location geometry(Point,4326) NOT NULL`, **audit cols**: `Poi` estende `AuditableEntity`, senza `created_at/by` e `updated_at/by` la validazione fallisce all'avvio). `trails.description` è `text`. Le lunghezze di `name` sono allineate ai DTO e alle `@Column(length)` di `Trail`/`Poi` (`validate` non le controlla). `hazard_reports` (id, reporter_id FK, trail_id FK NULL, type, severity, description, `location geometry(Point,4326)`, status, audit) |
 | `V4__refuges.sql` | `refuges` (id, name `varchar(120)`, `location geometry(Point,4326)`, capacity int `CHECK (capacity > 0)`, manager_id FK, audit). `bookings` (id, refuge_id FK, user_id FK, check_in date, check_out date, guests int `CHECK (guests > 0)`, status CHECK, `CHECK (check_out > check_in)`, `idempotency_key uuid NOT NULL`, audit); indice `(refuge_id, check_in, check_out)`; **`UNIQUE (user_id, idempotency_key)`** (D12) |
-| `V5__maintenance.sql` | `maintenance_tickets` (id, trail_id FK, title, description, priority, status, assignee_id FK NULL, **`version bigint NOT NULL DEFAULT 0`**, audit); indice `(trail_id, status)` |
+| `V5__maintenance.sql` | `maintenance_tickets` (id, title `varchar(150)`, description `text`, priority CHECK `LOW/MEDIUM/HIGH/CRITICAL`, status CHECK `OPEN/ASSIGNED/IN_PROGRESS/RESOLVED/CANCELLED`, trail_id FK NULL, refuge_id FK NULL, hazard_report_id FK NULL, `CHECK (num_nonnulls(trail_id, refuge_id, hazard_report_id) >= 1)` (un ticket da segnalazione ha anche il sentiero della segnalazione), assigned_to FK `users(id)` NULL, resolved_at NULL, **`version bigint NOT NULL DEFAULT 0`**, audit cols (`MaintenanceTicket` estende `AuditableEntity`)); indici su `(trail_id, created_at)`, `refuge_id`, `hazard_report_id`, `assigned_to`, `(status, priority)` |
 | `V6__emergency.sql` | `rescue_teams` (id, name, status CHECK `AVAILABLE/BUSY`, `base_location geometry(Point,4326)`). `sos_alerts` (id, hiker_id FK, `location geometry(Point,4326)`, location_updated_at, message, status CHECK `OPEN/IN_CHARGE/TEAM_DISPATCHED/RESOLVED/CANCELLED`, operator_id FK NULL, rescue_team_id FK NULL, `idempotency_key uuid NULL`, `notified_at timestamptz NULL`, created_at, taken_at, resolved_at). **Indice parziale** su `(created_at) WHERE status IN ('OPEN','IN_CHARGE','TEAM_DISPATCHED')` per la dashboard; **`UNIQUE (hiker_id, idempotency_key)`** (D12; i `NULL` non collidono); indice parziale `(created_at) WHERE notified_at IS NULL` per il recupero delle notifiche (M4.3) |
 | `V7__media.sql` | `media_files` (id, owner_id FK, object_key UNIQUE, content_type, declared_size, actual_size NULL, status CHECK `PENDING/READY/REJECTED`, hazard_report_id FK NULL, trail_id FK NULL, `CHECK (num_nonnulls(hazard_report_id, trail_id) <= 1)`, created_at); indice `(owner_id, status)` |
 
@@ -291,7 +296,7 @@ Firme chiave (solo contratti):
   - Il segnalatore è `UUID reporterId`, **non** `@ManyToOne User`: `trail` non dipende dal dominio di `identity` e non usa `UserRepository`. L'id arriva dal `sub` del JWT; la FK `reporter_id → users(id)` resta nel DDL. Stesso schema di `Booking.userId`
 - [x] `Refuge`: `int getCapacity()`; `void changeCapacity(int newCapacity)`; `boolean isManagedBy(UUID userId)`
 - [x] `Booking`: `static Booking create(Refuge refuge, UUID userId, UUID idempotencyKey, LocalDate checkIn, LocalDate checkOut, int guests)`; `boolean isSameRequest(...)`; `void cancel(Instant now)` (la data si ricava da `now`, mai `LocalDate.now()`). `checkOut > checkIn` come il CHECK del DDL
-- [ ] `MaintenanceTicket`: `@Version Long version`; `void update(String title, String description, TicketPriority p, TicketStatus s, UUID assigneeId)`
+- [x] `MaintenanceTicket` (estende `AuditableEntity`, `@Version Long version`): factory `forTrail` / `forRefuge` / `forHazard` (eredita il sentiero della segnalazione); `updateDetails(title, description, priority)`; `assign(UUID)` (da `OPEN` → `ASSIGNED`, una riassegnazione di un `IN_PROGRESS` non cambia stato); `startWork()`, `resolve(Instant now)` (da `ASSIGNED`/`IN_PROGRESS`), `cancel()` (non da `RESOLVED`). Test: `MaintenanceTicketTest`
 - [ ] `SosAlert`: `void takeCharge(UUID operatorId, Instant now)` (solo da `OPEN`); `void dispatch(RescueTeam team)` (solo da `IN_CHARGE`); `void resolve(Instant now)`; `void cancelByHiker(Instant now)`; `void updateLocation(Point p, Instant now)` (solo se attivo)
 - [ ] `RescueTeam`: `void markBusy()` (fallisce se già BUSY), `void markAvailable()`
 - [ ] `User`, `RefreshToken`, `MediaFile`: vedi M2/M3
@@ -520,22 +525,24 @@ Query native (servono il cast `::geography` e le funzioni PostGIS):
 - In alternativa al lock pessimistico basterebbe un `UPDATE … WHERE id=? AND status='OPEN'` condizionale. Il lock resta perché lo richiedi nelle specifiche e perché `dispatchTeam` tocca due righe.
 
 #### M4.4 — Ticket di manutenzione (Optimistic Lock + cache)
-- [ ] `MaintenanceTicketRepository`: `List<MaintenanceTicket> findByTrailIdOrderByCreatedAtDesc(UUID trailId)`
-- [ ] `MaintenanceService`:
-  - `TicketView open(UUID trailId, OpenTicketCommand)` → `@CacheEvict(value = "maintenance-by-trail", key = "#trailId")`
-  - `List<TicketView> byTrail(UUID trailId)` → `@Cacheable("maintenance-by-trail")`
-  - `TicketView update(UUID ticketId, long expectedVersion, UpdateTicketCommand)`:
+- [x] `MaintenanceTicketRepository`: `findByTrailIdOrderByCreatedAtDesc(UUID trailId)`; `findByIdWithDetails` (fetch di trail e refuge); `searchTickets(status, priority, assignedTo, Pageable)` con `@EntityGraph` su trail e refuge (niente N+1 sui nomi)
+- [x] `MaintenanceService` (`@PreAuthorize("hasRole('PARK_MANAGER')")` a livello di classe):
+  - `TicketView createTicket(CreateMaintenanceTicketCommand)`: **esattamente uno** tra `trailId`, `refugeId`, `hazardReportId` (422 altrimenti); le entità arrivano da `TrailService.getTrailOrThrow`, `RefugeBookingService.getRefugeOrThrow`, `HazardReportService.getHazardOrThrow` (mai dai repository di altre feature); `saveAndFlush` prima del DTO
+  - `List<TicketView> byTrail(UUID trailId)` → `@Cacheable("maintenance-by-trail")`, 404 se il sentiero non esiste
+  - `getTicket`, `findTickets(TicketQuery, Pageable)`
+  - `updateDetails` / `assignTicket` / `changeStatus(UUID id, long expectedVersion, …)`:
     1. carica il ticket
     2. **`if (expectedVersion != ticket.getVersion()) throw new OptimisticConflictException(...)`**: JPA usa la versione dell'entità caricata, non quella del client; senza questo check il lost update tra GET e PATCH del client non viene rilevato
-    3. `ticket.update(...)`: `@Version` protegge la finestra load→commit
-    4. evict della cache del trail del ticket
-  - tutti `@PreAuthorize("hasRole('PARK_MANAGER')")`
+    3. transizione sull'entità: `@Version` protegge la finestra load→commit
+    4. `flush` prima del DTO (la version nuova va nell'`ETag`)
+  - evict: `@CacheEvict(key = "#result.trailId()", condition = "#result.trailId() != null")` su ogni modifica (il sentiero di un ticket non cambia; i ticket di un solo rifugio non sono in cache)
+  - l'assegnatario deve essere un utente attivo: `UserQueryService.isActiveUser` (identity), altrimenti 404
 - `CacheConfig`:
   - [x] `RedisCacheManager` con **`.transactionAware()`**: put/evict avvengono dopo il commit (altrimenti un evict prima del commit + una lettura concorrente rimette in cache il dato vecchio)
   - [x] helper `CacheConfig.typed(...)` per un serializer JSON **tipizzato per cache**, senza *default typing* globale (rischio deserialization gadget); `disableCreateOnMissingCache()`: una cache non registrata fallisce invece di usare il serializer JDK
   - registrare le cache con `typed(...)` quando nascono i DTO, con un `RedisCacheManagerBuilderCustomizer` **nella feature** (`<feature>/infrastructure/cache`); prefisso chiavi `gs:cache:`:
     - [x] `trails` → `TrailDetail` (10 min), in `TrailCacheConfig`. Test: `TrailDetailCacheSerializationTest` (round-trip con lo stesso serializer)
-    - [ ] `maintenance-by-trail` → lista di `TicketView` (5 min)
+    - [x] `maintenance-by-trail` → `List<TicketView>` (5 min), in `MaintenanceCacheConfig` (tipo costruito con `constructCollectionType`). Test di round-trip in `MaintenanceTicketTest`
 - **Si cachano solo DTO record**, mai entità (proxy lazy + `@Version` non serializzabili in modo sensato).
 
 **Checkpoint M4 (manuale, i test automatici arrivano in M6):**
@@ -577,7 +584,7 @@ Stato: in `GlobalExceptionHandler` sono già gestite tutte le righe tranne `Aler
 **Trappola:** le eccezioni di `@PreAuthorize` sono lanciate dentro l'invocazione del controller e quindi **arrivano** all'advice. Senza un handler dedicato le prende il fallback `Exception` → 500 invece di 403.
 
 #### M5.2 — Controller e DTO
-**Pattern:** controller *thin*: `@Valid` → service → mapper → `ResponseEntity`. `201 Created` con header `Location`. Paginazione con `Pageable` + wrapper `PagedModel`.
+**Pattern:** controller *thin*: `@Valid` → service → mapper → `ResponseEntity`. `201 Created` con header `Location`. Paginazione con `Pageable` + wrapper `PagedModel`, e **whitelist dei campi di `?sort=`** nel controller (400 altrimenti): il sort del client finisce nell'`ORDER BY` e un campo sconosciuto diventerebbe un 500 (vedi `MaintenanceController.checkSortable`). Niente enum salvati come stringa tra i campi ordinabili: si ordinerebbero in ordine alfabetico (per questo `priority` è escluso).
 
 DTO comuni:
 - [x] `GeoPointDto(@NotNull @DecimalMin("-90") @DecimalMax("90") Double lat, @NotNull @DecimalMin("-180") @DecimalMax("180") Double lon)`
@@ -605,9 +612,10 @@ Endpoint:
 | `GET /api/v1/bookings/my` · `GET /api/v1/bookings/{id}` | owner | 404 per una prenotazione altrui |
 | `DELETE /api/v1/bookings/{id}` | owner | 204 |
 | `PATCH /api/v1/refuges/{id}/capacity` | PARK_MANAGER **gestore del rifugio**, o ADMIN | capacità; un altro PARK_MANAGER → 403 |
-| `POST /api/v1/trails/{id}/maintenance-tickets` | PARK_MANAGER | |
-| `GET /api/v1/trails/{id}/maintenance-tickets` | PARK_MANAGER | cached |
-| `PATCH /api/v1/maintenance-tickets/{id}` | PARK_MANAGER | **`If-Match: "<version>"` obbligatorio** → 428 se manca; risposta con `ETag` |
+| `POST /api/v1/maintenance-tickets` (`trailId` / `refugeId` / `hazardReportId` nel body, esattamente uno) | PARK_MANAGER | 201 + `Location` + `ETag` |
+| `GET /api/v1/maintenance-tickets/{id}` · `?status&priority&assignedTo` (paginato, `PagedModel`) | PARK_MANAGER | `ETag` sul singolo |
+| `GET /api/v1/maintenance-tickets/trail/{trailId}` | PARK_MANAGER | cached; **non** sotto `/trails/**` (GET `permitAll`: un anonimo avrebbe 403 invece di 401) |
+| `PUT /api/v1/maintenance-tickets/{id}` · `PATCH /{id}/assign` · `PATCH /{id}/status` | PARK_MANAGER | **`If-Match: "<version>"` obbligatorio** → 428 se manca, 400 se non è un numero, 409 se vecchia; risposta con `ETag`, `version` non nel body |
 | `POST /api/v1/sos` | HIKER | 201; `Idempotency-Key` facoltativo (mai rifiutare un SOS); retry → 200 con l'allerta esistente |
 | `PATCH /api/v1/sos/{id}/location` | owner | |
 | `POST /api/v1/sos/{id}/cancel` | owner | |
@@ -620,7 +628,7 @@ Endpoint:
 | `POST /api/v1/media/{id}/confirm` | owner | |
 | `GET /api/v1/media/{id}/download-url` | owner / PM / RESCUE | |
 
-Mapping: i service restituiscono view (`from(entity, GeometryMapper)`, vedi M4.1); il web ha i suoi record di request e **response** e un mapper MapStruct per feature (`TrailMapper`, `RefugeMapper`, `MaintenanceMapper`, `SosMapper`, `uses = GeometryMapper.class`) per request → command e view → response. La response separata decide cosa esce dall'API: `HazardResponse` non espone `reporterId` (dato personale), `TrailDetailResponse` non espone `version` (va nell'`ETag` quando servirà).
+Mapping: i service restituiscono view (`from(entity, GeometryMapper)`, vedi M4.1); il web ha i suoi record di request e **response** e un mapper MapStruct per feature (`TrailMapper`, `RefugeMapper`, `MaintenanceMapper`, `SosMapper`, `uses = GeometryMapper.class`) per request → command e view → response. La response separata decide cosa esce dall'API: `HazardResponse` non espone `reporterId` (dato personale), `TrailDetailResponse` non espone `version` (va nell'`ETag` quando servirà), `TicketResponse` nemmeno (è nell'`ETag`).
 
 Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida già da solo `@RequestParam`/`@PathVariable` annotati (`HandlerMethodValidationException`, gestita in `GlobalExceptionHandler`); con `@Validated` si aggiungerebbe un proxy AOP che valida una seconda volta.
 

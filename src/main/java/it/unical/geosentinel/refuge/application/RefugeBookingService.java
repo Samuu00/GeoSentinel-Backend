@@ -129,8 +129,13 @@ public class RefugeBookingService {
     }
     @Transactional(readOnly = true)
     public RefugeView getRefuge(UUID refugeId){
-        return RefugeView.from(refugeRepository.findById(refugeId)
-                .orElseThrow(() -> new ResourceNotFoundException("Refuge", refugeId)), geometryMapper);
+        return RefugeView.from(getRefugeOrThrow(refugeId), geometryMapper);
+    }
+    // per le altre feature (es. maintenance), che non usano RefugeRepository
+    @Transactional(readOnly = true)
+    public Refuge getRefugeOrThrow(UUID refugeId){
+        return refugeRepository.findById(refugeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Refuge", refugeId));
     }
     @Transactional(readOnly = true)
     public List<RefugeView> findNearby(double lon, double lat, double radiusMeters, int limit){

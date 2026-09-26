@@ -187,6 +187,20 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 
 **Pulizia refresh token (26/09, scritta da Claude su richiesta):** `RefreshTokenRepository.deleteExpired` cancella per `family_expires_at` (non `expires_at`: si perderebbe la reuse detection dei token vecchi di una sessione ancora viva); `RefreshTokenCleanupJob` ogni notte alle 03:30 UTC; `@EnableScheduling` in `shared/config/SchedulingConfig`. In V2: indice su `refresh_tokens(family_expires_at)`.
 
+**M1.3 + M4.4 + M5.2 per `maintenance` — scritto dall'utente, revisionato e corretto da Claude su richiesta (26/09):**
+- `maintenance/domain`: `MaintenanceTicket` (target sentiero, rifugio o segnalazione; `assign`/`startWork`/`resolve`/`cancel`), `TicketStatus`, `TicketPriority`. `application`: `MaintenanceService`, `dto/MaintenanceTicketCommands`. `infrastructure`: `MaintenanceTicketRepository`, `cache/MaintenanceCacheConfig`. `web`: `MaintenanceController` (`/api/v1/maintenance-tickets`), `dto/MaintenanceDtos`, `MaintenanceMapper`.
+- Correzioni:
+  - non partiva: l'entità non estendeva `AuditableEntity` e non aveva `@Id` (`ticket_id`, `createdAt` mai valorizzato);
+  - usava `TrailRepository`, `RefugeRepository`, `HazardReportRepository`, `UserRepository`: ora `TrailService.getTrailOrThrow`, i nuovi `RefugeBookingService.getRefugeOrThrow`, `HazardReportService.getHazardOrThrow` e `identity/application/UserQueryService.isActiveUser`;
+  - lock ottimistico assente: ora `expectedVersion` da `If-Match` su PUT, assign e status (428/400/409), `ETag` nelle risposte, flush prima del DTO; `version` fuori dal body;
+  - cache `maintenance-by-trail` mai registrata né usata: `byTrail` con `@Cacheable`, evict su `#result.trailId()`;
+  - `assign` su un ticket `IN_PROGRESS` lo riportava ad `ASSIGNED`;
+  - più target nella stessa richiesta accettati in silenzio: ora esattamente uno (422);
+  - ruoli allineati al piano (solo `PARK_MANAGER`, prima anche `RESCUE_OPERATOR`); `Page` grezzo → `PagedModel`; N+1 sulla ricerca (`@EntityGraph`); `title` `length = 150`; import `org.geolatte.geom.M` e metodi del repository inutilizzati rimossi.
+  - `?sort=` libero finiva nell'`ORDER BY` della `@Query` (campo sconosciuto → errore Hibernate → 500): whitelist `SORTABLE_FIELDS` nel controller (`createdAt`, `updatedAt`, `status`, `title`) → 400. `priority` escluso: l'enum è una stringa e si ordinerebbe in ordine alfabetico. Non un handler globale: `InvalidDataAccessApiUsageException` coprirebbe anche bug veri. Ogni nuovo endpoint paginato (es. SOS) fa lo stesso.
+- Confermate dall'utente: target multipli (sentiero/rifugio/segnalazione) e rotte sotto `/api/v1/maintenance-tickets`.
+- Test: `MaintenanceTicketTest` (transizioni + round-trip della cache), `MaintenanceControllerTest` (sort, `If-Match`). In V5: vedi la riga aggiornata nel master plan.
+
 **M2 completo** lato codice; restano i checkpoint, che richiedono le migrazioni. Senza le migrazioni V1–V7 l'app non parte comunque.
 
 **Presenti ma non ancora revisionati:** `Dockerfile`, `docker-compose.yml` (vuoto).
@@ -199,6 +213,8 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - `GeoSentinelApplicationTests` è un `@SpringBootTest`: in `./mvnw test` cerca Postgres e fallisce finché mancano DB e migrazioni. Da sostituire con `MigrationIT` (M6.2) o rimuovere.
 - `pom.xml`: `groupId` ancora `org.example` (il package è `it.unical.geosentinel`).
 - `src/main/resources/static` e `templates`: cartelle vuote del progetto iniziale, da rimuovere.
+- `application-local.properties` esiste ma è vuoto (M0.3: flyway con `db/seed`, springdoc attivo, logging SQL).
+- Nessun test copre ancora `MaintenanceService` (cache evict su `#result`, confronto di `expectedVersion`): li coprirà `MaintenanceOptimisticLockIT` (M6.2), che richiede V5.
 
 **Correzioni della review completa (22/09, sera):**
 - `RateLimitFilter`: un bucket per policy (`rl:auth:*` separato da `rl:*`). Con la chiave condivisa le GET pubbliche ricaricavano il bucket del login, aggirando il limite di 5 al minuto. `Retry-After` arrotondato per eccesso. Test: `RateLimitFilterTest`.
@@ -212,7 +228,7 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 **Revisione del piano (22/09):** aggiunte le decisioni D11 (password max 72 byte UTF-8, BCrypt) e D12 (`Idempotency-Key` su SOS e prenotazioni), il task M0.5 (CI + Dependabot), login a tempo costante e limite per account, scadenza assoluta della sessione di refresh, magic bytes e `Content-Disposition: attachment` sui media, recupero delle notifiche SOS perse (`notified_at`), conservazione delle posizioni SOS.
 - Nel PATH c'è `javap` di un JDK 15; Maven usa correttamente il JDK 21 (`JAVA_HOME`).
 
-**Prossimo passo:** M1.1, migrazioni Flyway V1–V7 (senza, l'app non parte con `ddl-auto=validate`). V1+V2 bastano per far partire `identity`; V3 deve includere le colonne di audit anche su `pois` (`Poi` estende `AuditableEntity`) e `hazard_reports.reporter_id` come `uuid` con FK e indice. Il web di `trail` è fatto: le sue rotte si potranno provare appena c'è V3. Anche `refuge` è completo (web incluso): le sue rotte si provano con V4. In parallelo restano da chiudere M0.2 (compose + `.env.example`), M0.4 (Dockerfile) e M0.5 (CI).
+**Prossimo passo:** M1.1, migrazioni Flyway V1–V7 (senza, l'app non parte con `ddl-auto=validate`). V1+V2 bastano per far partire `identity`; V3 deve includere le colonne di audit anche su `pois` (`Poi` estende `AuditableEntity`) e `hazard_reports.reporter_id` come `uuid` con FK e indice. Il web di `trail` è fatto: le sue rotte si potranno provare appena c'è V3. Anche `refuge` è completo (web incluso): le sue rotte si provano con V4. Lo stesso vale per `maintenance` con V5 (colonne nel master plan: target multipli, `assigned_to`, `resolved_at`, audit). Resta da scrivere solo `emergency` (M4.3) e `media` (M3). In parallelo restano da chiudere M0.2 (compose + `.env.example`), M0.4 (Dockerfile) e M0.5 (CI).
 
 ## Comandi
 ```bash

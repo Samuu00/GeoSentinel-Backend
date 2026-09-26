@@ -41,6 +41,13 @@ public class HazardReportService {
                 .orElseThrow(() -> new ResourceNotFoundException("Hazard", id));
         return HazardView.from(report, geometryMapper);
     }
+    // per le altre feature (es. maintenance), che non usano HazardReportRepository. Niente @PostAuthorize:
+    // l'entità non esce dall'API, e chi la chiede ha già superato i controlli del proprio service
+    @Transactional(readOnly = true)
+    public HazardReport getHazardOrThrow(UUID id) {
+        return hazardReportRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Hazard", id));
+    }
     @Transactional(readOnly = true)
     public List<HazardView> findNearTrail(UUID trailId) {
         trailService.getTrailOrThrow(trailId); // 404 invece di una lista vuota per un sentiero inesistente
