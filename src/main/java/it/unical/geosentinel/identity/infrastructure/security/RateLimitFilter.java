@@ -36,6 +36,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.clock = clock;
     }
 
+    // Un SOS non riceve mai un 429. L'abuso resta limitato: raiseSos restituisce l'allerta già attiva invece di crearne un'altra
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return "POST".equals(request.getMethod()) && "/api/v1/sos".equals(request.getRequestURI());
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
         String path = request.getRequestURI();

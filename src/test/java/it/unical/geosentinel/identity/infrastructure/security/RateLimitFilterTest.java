@@ -35,6 +35,18 @@ class RateLimitFilterTest {
         assertThat(keys.getAllValues()).containsExactly("rl:auth:ip:10.0.0.1", "rl:ip:10.0.0.1");
     }
 
+    @Test
+    void sosIsNeverRateLimited() throws Exception {
+        RedisRateLimiter limiter = mock(RedisRateLimiter.class);
+        RateLimitFilter filter = new RateLimitFilter(limiter, mock(ProblemDetailWriter.class), Clock.systemUTC());
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request("/api/v1/sos"), new MockHttpServletResponse(), chain);
+
+        verify(limiter, times(0)).tryConsume(any(), any());
+        assertThat(chain.getRequest()).isNotNull();
+    }
+
     private static MockHttpServletRequest request(String uri) {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", uri);
         request.setRemoteAddr("10.0.0.1");

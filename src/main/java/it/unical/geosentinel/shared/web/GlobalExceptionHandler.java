@@ -2,6 +2,7 @@ package it.unical.geosentinel.shared.web;
 
 import jakarta.validation.ConstraintViolationException;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
+import it.unical.geosentinel.shared.domain.exception.AlertAlreadyTakenException;
 import it.unical.geosentinel.shared.domain.exception.CapacityExceededException;
 import it.unical.geosentinel.shared.domain.exception.IdempotencyKeyReusedException;
 import it.unical.geosentinel.shared.domain.exception.OptimisticConflictException;
@@ -130,6 +131,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(CapacityExceededException.class)
     public ResponseEntity<Object> handleCapacityExceeded(CapacityExceededException ex, WebRequest request) {
         return problem(ex, HttpStatus.CONFLICT, ProblemTypes.CAPACITY_EXCEEDED, "Capacity exceeded",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
+    @ExceptionHandler(AlertAlreadyTakenException.class)
+    public ResponseEntity<Object> handleAlertAlreadyTaken(AlertAlreadyTakenException ex, WebRequest request) {
+        return problem(ex, HttpStatus.CONFLICT, ProblemTypes.ALERT_ALREADY_TAKEN, "Alert already taken",
                 ex.getMessage(), new HttpHeaders(), request);
     }
 

@@ -54,6 +54,7 @@ GeoSentinel-Backend/
     │   │   │   │       ├── OptimisticConflictException.java
     │   │   │   │       ├── CapacityExceededException.java      # 409 (refuge); qui perché l'handler è in shared
     │   │   │   │       ├── IdempotencyKeyReusedException.java  # 422 (D12)
+    │   │   │   │       ├── AlertAlreadyTakenException.java     # 409 (emergency)
     │   │   │   │       └── RateLimitExceededException.java     # 429 + Retry-After (limite di login per account)
     │   │   │   ├── config/
     │   │   │   │   ├── JpaAuditingConfig.java        # @EnableJpaAuditing + AuditorAware
@@ -112,11 +113,11 @@ GeoSentinel-Backend/
     │   │   │
     │   │   ├── emergency/                            # SOS e squadre di soccorso
     │   │   │   ├── domain/        SosAlert, SosStatus, RescueTeam, TeamStatus, SosAlertRaisedEvent
-    │   │   │   ├── application/   SosService
+    │   │   │   ├── application/   SosService, SosDataRetentionJob (GDPR, 90 giorni), dto/SosCommands (command + view + SosRaiseResult)
     │   │   │   ├── infrastructure/
     │   │   │   │   ├── persistence/  SosAlertRepository, RescueTeamRepository
-    │   │   │   │   └── notification/ SosNotificationListener   # @Async + AFTER_COMMIT
-    │   │   │   └── web/           SosController, RescueTeamController, dto/*, SosMapper
+    │   │   │   │   └── notification/ SosNotificationListener (@Async + AFTER_COMMIT), SosNotificationRecovery (notified_at)
+    │   │   │   └── web/           SosController (/api/v1/sos), RescueTeamController (/api/v1/rescue-teams), dto/ SosDtos, RescueTeamDtos, SosMapper
     │   │   │
     │   │   └── media/                                # metadati file + MinIO
     │   │       ├── domain/        MediaFile, MediaStatus, MediaPolicy
@@ -260,7 +261,7 @@ File:
 | `V3__trails.sql` | `trails` (id, name `varchar(150)`, description, difficulty CHECK, status CHECK `OPEN/CLOSED/WARNING`, `path geometry(LineString,4326) NOT NULL`, **`length_m double precision GENERATED ALWAYS AS (ST_Length(path::geography)) STORED`**, audit, version). `pois` (id, trail_id FK NULL, name `varchar(100)`, type CHECK, `location geometry(Point,4326) NOT NULL`, **audit cols**: `Poi` estende `AuditableEntity`, senza `created_at/by` e `updated_at/by` la validazione fallisce all'avvio). `trails.description` è `text`. Le lunghezze di `name` sono allineate ai DTO e alle `@Column(length)` di `Trail`/`Poi` (`validate` non le controlla). `hazard_reports` (id, reporter_id FK, trail_id FK NULL, type, severity, description, `location geometry(Point,4326)`, status, audit) |
 | `V4__refuges.sql` | `refuges` (id, name `varchar(120)`, `location geometry(Point,4326)`, capacity int `CHECK (capacity > 0)`, manager_id FK, audit). `bookings` (id, refuge_id FK, user_id FK, check_in date, check_out date, guests int `CHECK (guests > 0)`, status CHECK, `CHECK (check_out > check_in)`, `idempotency_key uuid NOT NULL`, audit); indice `(refuge_id, check_in, check_out)`; **`UNIQUE (user_id, idempotency_key)`** (D12) |
 | `V5__maintenance.sql` | `maintenance_tickets` (id, title `varchar(150)`, description `text`, priority CHECK `LOW/MEDIUM/HIGH/CRITICAL`, status CHECK `OPEN/ASSIGNED/IN_PROGRESS/RESOLVED/CANCELLED`, trail_id FK NULL, refuge_id FK NULL, hazard_report_id FK NULL, `CHECK (num_nonnulls(trail_id, refuge_id, hazard_report_id) >= 1)` (un ticket da segnalazione ha anche il sentiero della segnalazione), assigned_to FK `users(id)` NULL, resolved_at NULL, **`version bigint NOT NULL DEFAULT 0`**, audit cols (`MaintenanceTicket` estende `AuditableEntity`)); indici su `(trail_id, created_at)`, `refuge_id`, `hazard_report_id`, `assigned_to`, `(status, priority)` |
-| `V6__emergency.sql` | `rescue_teams` (id, name, status CHECK `AVAILABLE/BUSY`, `base_location geometry(Point,4326)`). `sos_alerts` (id, hiker_id FK, `location geometry(Point,4326)`, location_updated_at, message, status CHECK `OPEN/IN_CHARGE/TEAM_DISPATCHED/RESOLVED/CANCELLED`, operator_id FK NULL, rescue_team_id FK NULL, `idempotency_key uuid NULL`, `notified_at timestamptz NULL`, created_at, taken_at, resolved_at). **Indice parziale** su `(created_at) WHERE status IN ('OPEN','IN_CHARGE','TEAM_DISPATCHED')` per la dashboard; **`UNIQUE (hiker_id, idempotency_key)`** (D12; i `NULL` non collidono); indice parziale `(created_at) WHERE notified_at IS NULL` per il recupero delle notifiche (M4.3) |
+| `V6__emergency.sql` | `rescue_teams` (id, name `varchar(100)` UNIQUE, call_sign `varchar(32)`, contact_number `varchar(30)`, status CHECK `AVAILABLE/ON_MISSION/OFF_DUTY`, `base_location geometry(Point,4326)`, audit cols). `sos_alerts` (id, hiker_id FK `users(id)`, `idempotency_key uuid NULL`, `location geometry(Point,4326) NOT NULL`, `location_updated_at NOT NULL`, medical_notes `text`, status CHECK `ACTIVE/DISPATCHED/RESOLVED/CANCELLED`, assigned_team_id FK `rescue_teams(id)` NULL, operator_id FK `users(id)` NULL, closed_at NULL, `notified_at timestamptz NULL`, `anonymized_at timestamptz NULL`, audit cols; **niente `version`**: le scritture passano da lock pessimistici). **Indice parziale** su `(created_at) WHERE status IN ('ACTIVE','DISPATCHED')` per la dashboard; **`UNIQUE (hiker_id, idempotency_key)`** (D12; i `NULL` non collidono); **`UNIQUE (hiker_id) WHERE status IN ('ACTIVE','DISPATCHED')`** (al più un'allerta attiva per escursionista, rete di sicurezza dell'advisory lock); indice parziale `(created_at) WHERE notified_at IS NULL` (recupero notifiche); indice parziale `(closed_at) WHERE anonymized_at IS NULL` (conservazione); indici su `assigned_team_id`, `operator_id` |
 | `V7__media.sql` | `media_files` (id, owner_id FK, object_key UNIQUE, content_type, declared_size, actual_size NULL, status CHECK `PENDING/READY/REJECTED`, hazard_report_id FK NULL, trail_id FK NULL, `CHECK (num_nonnulls(hazard_report_id, trail_id) <= 1)`, created_at); indice `(owner_id, status)` |
 
 **Indici spaziali (in ciascuna migrazione, accanto alla tabella):**
@@ -297,15 +298,15 @@ Firme chiave (solo contratti):
 - [x] `Refuge`: `int getCapacity()`; `void changeCapacity(int newCapacity)`; `boolean isManagedBy(UUID userId)`
 - [x] `Booking`: `static Booking create(Refuge refuge, UUID userId, UUID idempotencyKey, LocalDate checkIn, LocalDate checkOut, int guests)`; `boolean isSameRequest(...)`; `void cancel(Instant now)` (la data si ricava da `now`, mai `LocalDate.now()`). `checkOut > checkIn` come il CHECK del DDL
 - [x] `MaintenanceTicket` (estende `AuditableEntity`, `@Version Long version`): factory `forTrail` / `forRefuge` / `forHazard` (eredita il sentiero della segnalazione); `updateDetails(title, description, priority)`; `assign(UUID)` (da `OPEN` → `ASSIGNED`, una riassegnazione di un `IN_PROGRESS` non cambia stato); `startWork()`, `resolve(Instant now)` (da `ASSIGNED`/`IN_PROGRESS`), `cancel()` (non da `RESOLVED`). Test: `MaintenanceTicketTest`
-- [ ] `SosAlert`: `void takeCharge(UUID operatorId, Instant now)` (solo da `OPEN`); `void dispatch(RescueTeam team)` (solo da `IN_CHARGE`); `void resolve(Instant now)`; `void cancelByHiker(Instant now)`; `void updateLocation(Point p, Instant now)` (solo se attivo)
-- [ ] `RescueTeam`: `void markBusy()` (fallisce se già BUSY), `void markAvailable()`
+- [x] `SosAlert` (stati `ACTIVE → DISPATCHED → RESOLVED`, `CANCELLED` da attivo): `static raise(hikerId, idempotencyKey, location, medicalNotes, now)`; `dispatch(RescueTeam, UUID operatorId)` (solo da `ACTIVE`; già `DISPATCHED` → `AlertAlreadyTakenException` 409); `resolve(Instant now)` e `cancel(Instant now)` (impostano `closedAt` e liberano la squadra); `updateLocation(Point, Instant now)` (solo se attiva, aggiorna `locationUpdatedAt`). Niente passo `IN_CHARGE` separato: l'esclusività è sul dispatch e `operatorId` registra chi l'ha fatto. `notified_at`/`anonymized_at` non sono mappati (li scrivono solo query dedicate, un flush dell'entità non li sovrascrive). Test: `SosAlertTest`
+- [x] `RescueTeam`: `deploy()` (`AVAILABLE → ON_MISSION`), `release()` (da `ON_MISSION`), `setOffDuty()` (non in missione), `setAvailable()` (non da `ON_MISSION`: la squadra si libera solo chiudendo l'allerta)
 - [ ] `User`, `RefreshToken`, `MediaFile`: vedi M2/M3
 
 **Vincoli JTS:** ogni `Point`/`LineString` creato **solo** dal `GeometryFactory` bean (SRID corretto). Mai `new Coordinate(lat, lon)`: è `new Coordinate(lon, lat)`.
 
 **Checkpoint M1:**
 - [ ] L'app parte con `ddl-auto=validate` → nessun mismatch colonna/tipo
-- [ ] Unit test `SosAlertTest`: transizioni legali OK, illegali lanciano (nessun Spring, JUnit puro)
+- [x] Unit test `SosAlertTest`: transizioni legali OK, illegali lanciano (nessun Spring, JUnit puro)
 
 ---
 
@@ -507,22 +508,21 @@ Query native (servono il cast `::geography` e le funzioni PostGIS):
 - Limite noto: il lock sulla riga del rifugio serializza tutte le prenotazioni di quel rifugio. Va bene per decine di prenotazioni al secondo per rifugio; oltre quella soglia servirebbe una tabella `refuge_night_availability` con lock per notte.
 
 #### M4.3 — Allerte SOS (Pessimistic Lock + evento asincrono)
-- [ ] `SosAlertRepository`: `@Lock(PESSIMISTIC_WRITE) Optional<SosAlert> findByIdForUpdate(UUID id)`; `Page<SosAlert> findByStatusIn(Collection<SosStatus>, Pageable)`
-- [ ] `RescueTeamRepository`: `@Lock(PESSIMISTIC_WRITE) Optional<RescueTeam> findByIdForUpdate(UUID id)`
-- [ ] `SosService`:
-  - `SosView raise(UUID hikerId, @Nullable UUID idempotencyKey, RaiseSosCommand)` (HIKER) → con una chiave già vista restituisce l'allerta esistente (D12), altrimenti crea e pubblica `SosAlertRaisedEvent(alertId, lon, lat, createdAt)` via `ApplicationEventPublisher`. La chiave qui è **facoltativa**: un SOS senza chiave non si rifiuta mai.
-  - `void updateLocation(UUID hikerId, UUID alertId, GeoPointDto p)` (solo il proprietario)
-  - `SosView takeCharge(UUID operatorId, UUID alertId)` → lock alert → `alert.takeCharge(...)`; se non `OPEN` → `AlertAlreadyTakenException` (409)
-  - `SosView dispatchTeam(UUID operatorId, UUID alertId, UUID teamId)` → **ordine dei lock fisso: prima alert, poi team** (così non ci sono deadlock) → `team.markBusy()` + `alert.dispatch(team)`
-  - `SosView resolve(UUID operatorId, UUID alertId)` → libera il team
-  - `Page<SosView> activeAlerts(Pageable)` (RESCUE_OPERATOR)
-  - `@PreAuthorize("hasRole('RESCUE_OPERATOR')")` sulle operazioni dell'operatore
-- [x] `AsyncConfig`: bean `ThreadPoolTaskExecutor sosNotificationExecutor` → core 4, max 8, queue 100, `CallerRunsPolicy` (un SOS non si scarta mai), prefix `sos-notify-`, `setWaitForTasksToCompleteOnShutdown(true)` + `awaitTerminationSeconds 30`, `TaskDecorator` che propaga l'MDC (correlation id)
-- [ ] `SosNotificationListener`: `@Async("sosNotificationExecutor") @TransactionalEventListener(phase = AFTER_COMMIT) void on(SosAlertRaisedEvent e)` → per ora log strutturato + individuazione della squadra `AVAILABLE` più vicina (query `ST_Distance` su `rescue_teams`); a notifica riuscita imposta `notified_at` (`UPDATE … WHERE id = ? AND notified_at IS NULL`)
-- [ ] **Recupero delle notifiche perse** (`SosNotificationRecovery`): l'evento vive in memoria, quindi se l'app si ferma tra il commit e la notifica, l'SOS non viene notificato. `@Scheduled(fixedDelay = 30s)` rilancia la notifica per le allerte attive con `notified_at IS NULL` e `created_at < now - 60s`. La notifica deve quindi essere **idempotente** (può partire due volte). È la versione minima del pattern *transactional outbox*: una tabella outbox dedicata serve solo quando gli eventi da garantire diventano più di uno.
-- **Vincoli:** `@Async` funziona solo se la chiamata passa dal proxy (non da `this.metodo()`); l'evento trasporta **dati**, non entità JPA (il listener gira fuori dalla transazione).
-- **Dati personali:** la posizione di un escursionista è un dato personale (GDPR). Politica di conservazione: dopo 90 giorni dalla chiusura (`RESOLVED`/`CANCELLED`) la posizione si azzera o si arrotonda (job `@Scheduled`); decidi il valore e scrivilo nel codice.
-- In alternativa al lock pessimistico basterebbe un `UPDATE … WHERE id=? AND status='OPEN'` condizionale. Il lock resta perché lo richiedi nelle specifiche e perché `dispatchTeam` tocca due righe.
+- [x] `SosAlertRepository`: `findByIdForUpdate` e `findByIdAndHikerIdForUpdate` (`PESSIMISTIC_WRITE`; il secondo dà 404 per l'allerta di un altro); `findByStatusIn(…, Pageable)` con `@EntityGraph` sulla squadra; `lockHiker(long)` (`pg_advisory_xact_lock`); `findNearbyActive`; `findUnnotifiedCreatedBefore`, `markNotified`, `anonymizeClosedBefore` (native)
+- [x] `RescueTeamRepository`: `findByIdForUpdate` (`PESSIMISTIC_WRITE`), `findAvailableNearby`
+- [x] `SosService`:
+  - `SosRaiseResult raiseSos(UUID hikerId, @Nullable UUID idempotencyKey, RaiseSosCommand)` (HIKER). **Un SOS non si rifiuta mai:** advisory lock per escursionista → stessa chiave (D12) o allerta già attiva → restituisce quella (`created = false`, 200); altrimenti crea e pubblica `SosAlertRaisedEvent(alertId, lon, lat, raisedAt)`. L'advisory lock serve perché non c'è una riga da bloccare: senza, due richieste simultanee creerebbero due allerte
+  - `updateLiveLocation` / `cancelSos`: solo il proprietario (404 altrimenti), con lock
+  - `dispatchTeam(operatorId, alertId, cmd)` → **ordine dei lock fisso: prima alert, poi team**; `resolveAlert` e `cancelSos` bloccano anche la squadra assegnata, sempre dopo l'allerta
+  - `getAlert` con `@PostAuthorize` (operatori o proprietario: la `Location` del POST punta lì); `findActiveAlerts(Pageable)`; `findActiveNearby` (raggio ≤ 100 km)
+  - squadre: `createTeam` (**solo ADMIN**), `getTeam`, `findAvailableTeamsNearby` (RESCUE_OPERATOR)
+- [x] `AsyncConfig`: bean `sosNotificationExecutor` → core 4, max 8, queue 100, `CallerRunsPolicy` (un SOS non si scarta mai), prefix `sos-notify-`, attesa dei task allo shutdown, `TaskDecorator` che propaga l'MDC. Nessun executor dichiarato nelle feature
+- [x] `SosNotificationListener`: `@Async("sosNotificationExecutor") @TransactionalEventListener(AFTER_COMMIT)` → `deliver(event)`: notifica (per ora mock; log **senza** coordinate né note mediche), poi `markNotified` (`UPDATE … WHERE id = ? AND notified_at IS NULL`)
+- [x] **Recupero delle notifiche perse** (`SosNotificationRecovery`): `@Scheduled(fixedDelay = 30s)` rilancia `deliver` per le allerte attive con `notified_at IS NULL` e `created_at < now - 60s` (max 100 per giro). La notifica può partire due volte: chi la riceve deve tollerare i duplicati. Versione minima del *transactional outbox*
+- [x] **Conservazione (GDPR)** (`SosDataRetentionJob`, 04:00 UTC): 90 giorni dopo `closed_at` la posizione si arrotonda a 0.01° (~1 km, `ST_SnapToGrid`) e le note mediche si cancellano; `anonymized_at` evita di ripassare sulle stesse righe
+- [x] Rate limit: `POST /api/v1/sos` è escluso da `RateLimitFilter` (un SOS non riceve mai 429; l'abuso resta limitato perché il raise restituisce l'allerta attiva)
+- **Vincoli:** `@Async` funziona solo se la chiamata passa dal proxy (non da `this.metodo()`); l'evento trasporta **dati**, non entità JPA né geometrie JTS.
+- In alternativa al lock pessimistico basterebbe un `UPDATE … WHERE id=? AND status='ACTIVE'` condizionale. Il lock resta perché lo richiedi nelle specifiche e perché `dispatchTeam` tocca due righe.
 
 #### M4.4 — Ticket di manutenzione (Optimistic Lock + cache)
 - [x] `MaintenanceTicketRepository`: `findByTrailIdOrderByCreatedAtDesc(UUID trailId)`; `findByIdWithDetails` (fetch di trail e refuge); `searchTickets(status, priority, assignedTo, Pageable)` con `@EntityGraph` su trail e refuge (niente N+1 sui nomi)
@@ -562,7 +562,7 @@ Query native (servono il cast `::geography` e le funzioni PostGIS):
 - [x] `ProblemTypes`: costanti `URI` (`https://geosentinel.dev/problems/<slug>`), una per categoria
 - [ ] Ogni risposta: `type`, `title`, `status`, `detail`, `instance` (path) + properties `timestamp`, `traceId` (letto dall'MDC, popolato da Micrometer Tracing: vedi M0.1)
 
-Stato: in `GlobalExceptionHandler` sono già gestite tutte le righe tranne `AlertAlreadyTakenException` (M4.3), le eccezioni `media-*` e `StorageUnavailableException` (M3), che nasceranno con le loro feature. Manca ancora il `traceId` (M0.1).
+Stato: in `GlobalExceptionHandler` sono già gestite tutte le righe tranne le eccezioni `media-*` e `StorageUnavailableException` (M3), che nasceranno con le loro feature. Manca ancora il `traceId` (M0.1).
 
 | Eccezione | Status | type slug |
 |---|---|---|
@@ -616,14 +616,16 @@ Endpoint:
 | `GET /api/v1/maintenance-tickets/{id}` · `?status&priority&assignedTo` (paginato, `PagedModel`) | PARK_MANAGER | `ETag` sul singolo |
 | `GET /api/v1/maintenance-tickets/trail/{trailId}` | PARK_MANAGER | cached; **non** sotto `/trails/**` (GET `permitAll`: un anonimo avrebbe 403 invece di 401) |
 | `PUT /api/v1/maintenance-tickets/{id}` · `PATCH /{id}/assign` · `PATCH /{id}/status` | PARK_MANAGER | **`If-Match: "<version>"` obbligatorio** → 428 se manca, 400 se non è un numero, 409 se vecchia; risposta con `ETag`, `version` non nel body |
-| `POST /api/v1/sos` | HIKER | 201; `Idempotency-Key` facoltativo (mai rifiutare un SOS); retry → 200 con l'allerta esistente |
-| `PATCH /api/v1/sos/{id}/location` | owner | |
-| `POST /api/v1/sos/{id}/cancel` | owner | |
-| `GET /api/v1/sos?status=…` | RESCUE_OPERATOR | paginato |
-| `POST /api/v1/sos/{id}/take-charge` | RESCUE_OPERATOR | 409 se già preso |
-| `POST /api/v1/sos/{id}/dispatch` `{teamId}` | RESCUE_OPERATOR | |
-| `POST /api/v1/sos/{id}/resolve` | RESCUE_OPERATOR | |
-| `GET /api/v1/rescue-teams?status=AVAILABLE` | RESCUE_OPERATOR | |
+| `POST /api/v1/sos` | HIKER | 201 + `Location`; `Idempotency-Key` facoltativo (mai rifiutare un SOS); retry o allerta già attiva → 200 con l'allerta esistente; nessun rate limit |
+| `PUT /api/v1/sos/{id}/location` | owner | 404 per un'allerta altrui |
+| `DELETE /api/v1/sos/{id}` | owner | 204 |
+| `GET /api/v1/sos/active` | owner | 404 se nessuna allerta attiva |
+| `GET /api/v1/sos/{id}` | owner / RESCUE_OPERATOR | |
+| `GET /api/v1/sos` (attive, `PagedModel`) · `/nearby?lon&lat&radius&limit` | RESCUE_OPERATOR | sort solo `createdAt`/`updatedAt`; `radius ≤ 100000` |
+| `PATCH /api/v1/sos/{id}/dispatch` `{teamId}` | RESCUE_OPERATOR | 409 `alert-already-taken` se una squadra è già stata inviata |
+| `PATCH /api/v1/sos/{id}/resolve` | RESCUE_OPERATOR | libera la squadra |
+| `POST /api/v1/rescue-teams` | ADMIN | 201 + `Location` |
+| `GET /api/v1/rescue-teams/{id}` · `/available-nearby?lon&lat&radius&limit` | RESCUE_OPERATOR | |
 | `POST /api/v1/media/upload-requests` | auth | |
 | `POST /api/v1/media/{id}/confirm` | owner | |
 | `GET /api/v1/media/{id}/download-url` | owner / PM / RESCUE | |
@@ -664,10 +666,10 @@ Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida
 | `MigrationIT` | Flyway V1–V7 + `ddl-auto=validate` su vero PostGIS | context carica |
 | `TrailSpatialQueryIT` | `ST_DWithin` in **metri**, `ST_Contains` bbox | punto a ~100 m trovato con r=200, non con r=50; **regressione lon/lat**: con coordinate invertite il test fallisce |
 | `RefugeBookingConcurrencyIT` | nessun overbooking | capacity 10, **50 thread** × 1 posto stesse date, ognuno con la **sua** `Idempotency-Key` (con la stessa chiave e lo stesso utente sarebbe un retry, non una nuova prenotazione), `CountDownLatch` di partenza → **esattamente 10 successi, 40 × 409**, `maxNightlyOccupancy == 10` |
-| `SosAssignmentConcurrencyIT` | presa in carico esclusiva | 10 operatori concorrenti su un alert → **1 successo, 9 × 409**; dispatch concorrente dello stesso team su 2 alert → 1 successo |
+| `SosAssignmentConcurrencyIT` | invio esclusivo della squadra | 10 operatori concorrenti su un alert, ognuno con una squadra diversa → **1 successo, 9 × 409**; dispatch concorrente dello stesso team su 2 alert → 1 successo |
 | `MaintenanceOptimisticLockIT` | lost update impedito | due update con la stessa `expectedVersion` → il secondo 409; versione finale = +1 |
 | `AuthFlowIT` | ciclo token completo | register/login/refresh/reuse-detection/logout-blacklist/sessione assoluta scaduta/password > 72 byte → 400 (scenari del checkpoint M2) |
-| `IdempotencyIT` | nessun duplicato sui retry | 10 thread con la stessa `Idempotency-Key` su `POST /sos` e su una prenotazione → **una sola riga** creata, **un** 201 e nove 200 con lo stesso id; stessa chiave con body diverso → 422 |
+| `IdempotencyIT` | nessun duplicato sui retry | 10 thread con la stessa `Idempotency-Key` su `POST /sos` e su una prenotazione → **una sola riga** creata, **un** 201 e nove 200 con lo stesso id; stessa chiave con body diverso → 422 sulle prenotazioni, 200 con l'allerta esistente sugli SOS (mai rifiutati); dieci `POST /sos` **senza** chiave dallo stesso utente → una sola allerta (advisory lock) |
 | `SosNotificationRecoveryIT` | nessun SOS senza notifica | allerta con `notified_at` NULL più vecchia di 60 s → il job la notifica; lanciato due volte → una sola notifica effettiva |
 | `RateLimitIT` | 429 + `Retry-After` | N+1-esima richiesta bloccata |
 | `ProblemDetailContractIT` | contratto errori | 400/401/403/404/409/429 → `application/problem+json` con `type/title/status/instance` |

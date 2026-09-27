@@ -201,6 +201,18 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - Confermate dall'utente: target multipli (sentiero/rifugio/segnalazione) e rotte sotto `/api/v1/maintenance-tickets`.
 - Test: `MaintenanceTicketTest` (transizioni + round-trip della cache), `MaintenanceControllerTest` (sort, `If-Match`). In V5: vedi la riga aggiornata nel master plan.
 
+**M1.3 + M4.3 + M5.2 per `emergency` — scritto dall'utente, revisionato e corretto da Claude su richiesta (27/09):**
+- `emergency/domain`: `SosAlert` (`ACTIVE → DISPATCHED → RESOLVED`, `CANCELLED`; `operatorId`, `closedAt`, `locationUpdatedAt`; niente `@Version`), `RescueTeam` (`AVAILABLE/ON_MISSION/OFF_DUTY`), `SosAlertRaisedEvent(alertId, lon, lat, raisedAt)`. `application`: `SosService`, `SosDataRetentionJob`, `dto/SosCommands`. `infrastructure`: repository con lock, `notification/SosNotificationListener` + `SosNotificationRecovery`. `web`: `SosController` (`/api/v1/sos`), `RescueTeamController` (`/api/v1/rescue-teams`), `SosDtos`, `RescueTeamDtos`, `SosMapper`.
+- Correzioni:
+  - `dispatchTeam`/`resolveAlert`/`createTeam` erano `@Transactional(readOnly = true)`: modifiche perse, INSERT rifiutato;
+  - `updateLiveLocation` ignorava `hikerId` (chiunque spostava l'SOS altrui); `cancelSos` altrui → 422 che rivelava l'esistenza: ora 404 con `findByIdAndHikerIdForUpdate`;
+  - nessun lock pessimistico: ora alert → team su dispatch/resolve/cancel; secondo dispatch → 409 `alert-already-taken` (`AlertAlreadyTakenException` in `shared`);
+  - un secondo SOS riceveva 422: ora mai rifiutato, advisory lock per escursionista + `Idempotency-Key` facoltativa → 200 con l'allerta esistente;
+  - `EmergencyAsyncConfig` duplicava l'executor (AbortPolicy, `initialize()` manuale, niente MDC): rimosso, si usa `sosNotificationExecutor`;
+  - `createTeam` con `@PathVariable` sul body; `GET /{id}` dell'allerta vietato al proprietario (`@PostAuthorize`); view con `Point` JTS; evento con `Point`, note mediche e `hikerId` nei log; enum confrontato con stringa in JPQL; `Page` grezzo e sort libero (whitelist); `setAvailable` liberava una squadra in missione.
+- Scelte (27/09): stati dell'utente mantenuti (niente `IN_CHARGE`: l'esclusività è sul dispatch, `operatorId` registra l'operatore); rotte `/api/v1/sos` e `/api/v1/rescue-teams`; recupero notifiche con `notified_at` (ogni 30 s); conservazione GDPR a 90 giorni da `closed_at` (posizione arrotondata a 0.01°, note cancellate, `anonymized_at`); `POST /api/v1/sos` escluso dal rate limit; `createTeam` solo `ADMIN`. `notified_at`/`anonymized_at` non mappati nell'entità.
+- Test: `SosAlertTest`, `RateLimitFilterTest` (SOS senza rate limit). V6 aggiornata nel master plan.
+
 **M2 completo** lato codice; restano i checkpoint, che richiedono le migrazioni. Senza le migrazioni V1–V7 l'app non parte comunque.
 
 **Presenti ma non ancora revisionati:** `Dockerfile`, `docker-compose.yml` (vuoto).
@@ -228,7 +240,7 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 **Revisione del piano (22/09):** aggiunte le decisioni D11 (password max 72 byte UTF-8, BCrypt) e D12 (`Idempotency-Key` su SOS e prenotazioni), il task M0.5 (CI + Dependabot), login a tempo costante e limite per account, scadenza assoluta della sessione di refresh, magic bytes e `Content-Disposition: attachment` sui media, recupero delle notifiche SOS perse (`notified_at`), conservazione delle posizioni SOS.
 - Nel PATH c'è `javap` di un JDK 15; Maven usa correttamente il JDK 21 (`JAVA_HOME`).
 
-**Prossimo passo:** M1.1, migrazioni Flyway V1–V7 (senza, l'app non parte con `ddl-auto=validate`). V1+V2 bastano per far partire `identity`; V3 deve includere le colonne di audit anche su `pois` (`Poi` estende `AuditableEntity`) e `hazard_reports.reporter_id` come `uuid` con FK e indice. Il web di `trail` è fatto: le sue rotte si potranno provare appena c'è V3. Anche `refuge` è completo (web incluso): le sue rotte si provano con V4. Lo stesso vale per `maintenance` con V5 (colonne nel master plan: target multipli, `assigned_to`, `resolved_at`, audit). Resta da scrivere solo `emergency` (M4.3) e `media` (M3). In parallelo restano da chiudere M0.2 (compose + `.env.example`), M0.4 (Dockerfile) e M0.5 (CI).
+**Prossimo passo:** M1.1, migrazioni Flyway V1–V7 (senza, l'app non parte con `ddl-auto=validate`). V1+V2 bastano per far partire `identity`; V3 deve includere le colonne di audit anche su `pois` (`Poi` estende `AuditableEntity`) e `hazard_reports.reporter_id` come `uuid` con FK e indice. Il web di `trail` è fatto: le sue rotte si potranno provare appena c'è V3. Anche `refuge` è completo (web incluso): le sue rotte si provano con V4. Lo stesso vale per `maintenance` con V5 (colonne nel master plan: target multipli, `assigned_to`, `resolved_at`, audit). Resta da scrivere solo `media` (M3); `emergency` si prova con V6. In parallelo restano da chiudere M0.2 (compose + `.env.example`), M0.4 (Dockerfile) e M0.5 (CI).
 
 ## Comandi
 ```bash
