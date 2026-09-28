@@ -5,9 +5,11 @@ import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationExcept
 import it.unical.geosentinel.shared.domain.exception.AlertAlreadyTakenException;
 import it.unical.geosentinel.shared.domain.exception.CapacityExceededException;
 import it.unical.geosentinel.shared.domain.exception.IdempotencyKeyReusedException;
+import it.unical.geosentinel.shared.domain.exception.MediaRejectedException;
 import it.unical.geosentinel.shared.domain.exception.OptimisticConflictException;
 import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
+import it.unical.geosentinel.shared.domain.exception.StorageUnavailableException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -138,6 +140,27 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handleAlertAlreadyTaken(AlertAlreadyTakenException ex, WebRequest request) {
         return problem(ex, HttpStatus.CONFLICT, ProblemTypes.ALERT_ALREADY_TAKEN, "Alert already taken",
                 ex.getMessage(), new HttpHeaders(), request);
+    }
+
+    @ExceptionHandler(MediaRejectedException.class)
+    public ResponseEntity<Object> handleMediaRejected(MediaRejectedException ex, WebRequest request) {
+        return switch (ex.getReason()) {
+            case UNSUPPORTED_TYPE -> problem(ex, HttpStatus.UNSUPPORTED_MEDIA_TYPE, ProblemTypes.MEDIA_UNSUPPORTED,
+                    "Unsupported media type", ex.getMessage(), new HttpHeaders(), request);
+            case TOO_LARGE -> problem(ex, HttpStatus.PAYLOAD_TOO_LARGE, ProblemTypes.MEDIA_PAYLOAD_TOO_LARGE,
+                    "Media too large", ex.getMessage(), new HttpHeaders(), request);
+            case QUOTA_EXCEEDED -> problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.MEDIA_QUOTA_EXCEEDED,
+                    "Storage quota exceeded", ex.getMessage(), new HttpHeaders(), request);
+        };
+    }
+
+    // Detail generico: il messaggio di MinIO può contenere host e bucket interni
+    @ExceptionHandler(StorageUnavailableException.class)
+    public ResponseEntity<Object> handleStorageUnavailable(StorageUnavailableException ex, WebRequest request) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.RETRY_AFTER, "5");
+        return problem(ex, HttpStatus.SERVICE_UNAVAILABLE, ProblemTypes.STORAGE_UNAVAILABLE, "Storage unavailable",
+                "The file storage is temporarily unavailable. Retry shortly.", headers, request);
     }
 
     @ExceptionHandler(IdempotencyKeyReusedException.class)
