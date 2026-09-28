@@ -423,13 +423,13 @@ I 401/403 generati nei filtri **non passano** da `@RestControllerAdvice`.
 - **Trasporto del refresh token:** nel body JSON, adatto a un client mobile. Se arriverà una SPA nel browser, va spostato in un cookie `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth` (fuori dalla portata di JavaScript/XSS), riattivando la protezione CSRF su quelle rotte.
 
 **Checkpoint M2:**
-- [ ] curl: register → login → chiamata protetta 200 → logout → stessa chiamata 401 problem+json
-- [ ] refresh due volte con lo **stesso** token: la seconda → 401 e **anche** il token nuovo della prima rotazione è revocato
-- [ ] refresh oltre `familyExpiresAt` → 401 anche con un token mai usato
-- [ ] registrazione con password di 80 caratteri ASCII → 400 (non 500)
-- [ ] access token scaduto → 401 (usa `accessTtl` di pochi secondi nel test)
-- [ ] 6 login rapidi dallo stesso IP → il 6° riceve 429 con `Retry-After`
-- [ ] HIKER su una rotta `PARK_MANAGER` → 403 problem+json
+- [x] register → chiamata protetta 200 → logout → stessa chiamata 401 problem+json (`AuthFlowIT`)
+- [x] refresh due volte con lo **stesso** token: la seconda → 401 e **anche** il token nuovo della prima rotazione è revocato (`AuthFlowIT`)
+- [x] refresh oltre `familyExpiresAt` → 401 anche con un token mai usato (`AuthFlowIT`)
+- [x] registrazione con password di 80 caratteri ASCII → 400 (non 500) (`AuthFlowIT`)
+- [x] access token scaduto → 401 (`AuthFlowIT`: token firmato con `exp` nel passato, oltre i 60 s di tolleranza)
+- [x] 6 login rapidi dallo stesso IP → il 6° riceve 429 con `Retry-After` (`RateLimitIT`)
+- [x] HIKER su una rotta `PARK_MANAGER` → 403 problem+json; ADMIN passa grazie alla `RoleHierarchy` (`AuthFlowIT`)
 
 ---
 
@@ -577,12 +577,12 @@ Query native (servono il cast `::geography` e le funzioni PostGIS):
 - **Si cachano solo DTO record**, mai entità (proxy lazy + `@Version` non serializzabili in modo sensato).
 
 **Checkpoint M4 (manuale, i test automatici arrivano in M6):**
-- [ ] `findNearby` con un punto a 100 m dal sentiero seed → lo trova; a 5 km con raggio 1 km → no
+- [x] `findNearby` con un punto a 100 m dal sentiero → lo trova con r=200, non con r=50 (`TrailSpatialQueryIT`)
 - [ ] `redis-cli KEYS 'gs:cache:*'` dopo un GET trail → chiave presente; dopo update → sparita
 - [ ] Log mostra `sos-notify-1` che gestisce l'evento **dopo** la risposta HTTP del `raise`
-- [ ] Due `POST /sos` con la stessa `Idempotency-Key` → una sola allerta, stessa risposta
-- [ ] Due `POST /bookings` con la stessa `Idempotency-Key` → 201 poi 200 con la stessa prenotazione, una sola riga; stessa chiave con date diverse → 422
-- [ ] Allerta con `notified_at` azzerato a mano nel DB → entro un minuto viene rinotificata
+- [x] Due `POST /sos` con la stessa `Idempotency-Key` → una sola allerta, stessa risposta (`IdempotencyIT`)
+- [x] Due `POST /bookings` con la stessa `Idempotency-Key` → 201 poi 200 con la stessa prenotazione, una sola riga; stessa chiave con body diverso → 422 (`IdempotencyIT`)
+- [x] Allerta con `notified_at` NULL più vecchia di 60 s → il job la notifica una sola volta (`SosNotificationRecoveryIT`)
 
 ---
 
@@ -675,10 +675,10 @@ Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida
 
 **Checkpoint M5:**
 - [ ] Swagger UI su `/swagger-ui.html`: login con "Authorize" e chiamata di una rotta protetta
-- [ ] Body malformato → 400 con `errors[]`; lat=200 → 400
-- [ ] PATCH ticket senza `If-Match` → 428; con versione vecchia → 409
+- [x] Body malformato → 400 con `errors[]`; lat=200 → 400 (`ProblemDetailContractIT`)
+- [x] PATCH ticket senza `If-Match` → 428 (`MaintenanceControllerTest`); con versione vecchia → 409 (`MaintenanceOptimisticLockIT`)
 - [x] `POST /bookings` senza `Idempotency-Key` → 428; non UUID → 400 (`BookingControllerTest`)
-- [ ] **Nessuna** risposta di errore con `Content-Type` diverso da `application/problem+json`
+- [x] **Nessuna** risposta di errore con `Content-Type` diverso da `application/problem+json` (`ProblemDetailContractIT`: 400/401/403/404/409/428/429, tutti con `traceId`; dai filtri arriva anche `;charset=UTF-8`)
 
 ---
 
@@ -686,13 +686,13 @@ Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida
 
 #### M6.1 — `AbstractIntegrationTest`
 **Pattern:** *singleton containers*: container `static`, avviati una volta per JVM, condivisi da tutte le classi IT. Così il context cache di Spring resta valido e la suite resta veloce.
-- [ ] `@SpringBootTest(webEnvironment = RANDOM_PORT)`, `@ActiveProfiles("test")`
-- [ ] `PostgreSQLContainer` con `DockerImageName.parse("postgis/postgis:16-3.4").asCompatibleSubstituteFor("postgres")` + `@ServiceConnection`
-- [ ] Redis: `GenericContainer("redis:7-alpine").withExposedPorts(6379)` + `@ServiceConnection(name = "redis")`
-- [ ] Avvio nel blocco `static { … start(); }` (**non** `@Container`, che li fermerebbe a fine classe)
-- [ ] Pulizia: `@AfterEach` con `TRUNCATE … CASCADE` delle tabelle di dominio via `JdbcTemplate` + `FLUSHALL` Redis. **Non** `@Transactional` sui test di concorrenza (i thread worker non vedrebbero i dati e il rollback maschererebbe i lock)
-- [ ] Helper: `String obtainToken(Role role)`, `RestClient`/`MockMvcTester` preconfigurato
-- [ ] `application-test.properties`: `accessTtl` corto, rate limit alto (tranne in `RateLimitIT`)
+- [x] `@SpringBootTest(webEnvironment = RANDOM_PORT)`, `@ActiveProfiles("test")`
+- [x] `PostgreSQLContainer` (Testcontainers 2: `org.testcontainers.postgresql`, non generico) con `postgis/postgis:16-3.4-alpine` + `asCompatibleSubstituteFor("postgres")`; proprietà via `@DynamicPropertySource`
+- [x] Redis: `GenericContainer("redis:7.2-alpine").withExposedPorts(6379)`
+- [x] Avvio nel blocco `static` con `Startables.deepStart` (in parallelo; **non** `@Container`, che li fermerebbe a fine classe)
+- [x] Pulizia: **`@BeforeEach`** (non `@AfterEach`: si parte puliti anche se il test precedente è morto) con `TRUNCATE … CASCADE` di tutte le tabelle + `FLUSHALL` Redis (azzera anche i bucket del rate limit). Niente `@Transactional` sui test
+- [x] Helper: `obtainToken(Role)`, `createUser(Role)`, `call(...)` (HTTP vero sulla porta, serve alla concorrenza), `runConcurrently(n, task)` (partenza con `CountDownLatch`), fixture SQL `insertTrail/insertRefuge/insertTeam`, `isProblemJson`
+- [x] `application-test.properties`: segreto JWT e chiavi MinIO finte, password Redis vuota (il `.env` locale non deve finire nei test). Rate limit: le policy sono costanti nel codice, quindi niente override: `FLUSHALL` prima di ogni test e ogni test resta sotto le 5 chiamate a `/auth`. Access token scaduto: firmato a mano in `AuthFlowIT`, niente `accessTtl` corto (un contesto in più)
 
 #### M6.2 — Suite (ognuna = un file)
 | Test | Cosa dimostra | Criterio |
@@ -714,9 +714,9 @@ Pattern del test di concorrenza (da scrivere tu): `ExecutorService` a N thread, 
 Opzionali, da aggiungere quando servono: `MediaUploadIT` col modulo Testcontainers MinIO; un test ArchUnit che fa rispettare le regole di dipendenza del §1 (utile se il team cresce); JaCoCo.
 
 **Checkpoint M6 (Definition of Done del backend):**
-- [ ] `./mvnw verify` verde da zero con Docker attivo, senza servizi locali accesi
-- [ ] Test di concorrenza verdi 5/5
-- [ ] Nessun test usa H2 o database in memoria
+- [x] `./mvnw verify` verde da zero con Docker attivo (41 unit + 63 IT, ~45 s; due esecuzioni consecutive verdi)
+- [x] Test di concorrenza verdi 5/5 (`@RepeatedTest(5)`)
+- [x] Nessun test usa H2 o database in memoria
 
 ---
 

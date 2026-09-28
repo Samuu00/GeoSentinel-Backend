@@ -249,12 +249,10 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 **Configurazione:** un solo formato, `.properties` (i file `.yml` sono stati rimossi). I profili si aggiungono come `application-<profilo>.properties`.
 
 **Aperti:**
-- `RoleHierarchy`: da verificare che valga anche per `authorizeHttpRequests` e non solo per la method security (prova: token `ADMIN` su una rotta `PARK_MANAGER`).
-- `GeoSentinelApplicationTests` è un `@SpringBootTest`: in `./mvnw test` cerca Postgres e fallisce finché mancano DB e migrazioni. Da sostituire con `MigrationIT` (M6.2) o rimuovere.
+- `RoleHierarchy`: verificata per la method security (`AuthFlowIT`). Da riverificare per `authorizeHttpRequests` solo se una rotta userà `hasRole(...)` in `SecurityConfig` (oggi solo `authenticated()`).
 - `pom.xml`: `groupId` ancora `org.example` (il package è `it.unical.geosentinel`).
 - `src/main/resources/static` e `templates`: cartelle vuote del progetto iniziale, da rimuovere.
 - `application-local.properties` fatto (28/09): solo differenze dal base (flyway con `db/seed`, springdoc acceso, logging SQL), nessun segreto. Redis nel base: `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD` (vuota di default).
-- Nessun test copre ancora `MaintenanceService` (cache evict su `#result`, confronto di `expectedVersion`): li coprirà `MaintenanceOptimisticLockIT` (M6.2), che richiede V5.
 - Flusso media mai provato contro un MinIO vero (POST policy, `statObject`, lettura dei primi byte): serve il compose (M0.2) e V7. Da valutare `MediaUploadIT` con il modulo Testcontainers MinIO.
 
 **Correzioni della review completa (22/09, sera):**
@@ -284,8 +282,20 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - **Resta all'utente:** secret scanning + push protection (Settings → Code security su GitHub). Checkpoint di M0.5 (PR rossa con un test rotto, prima PR di Dependabot) verificabili solo dopo il push.
 - **La CI sarà rossa finché:** `GeoSentinelApplicationTests` cerca Postgres sulla 5432 e `support/AbstractIntegrationTest.java` (in scrittura dall'utente) non compila (`org.springframework.boot.test.autoconfigure.web.servlet` non esiste in Boot 4: il package è cambiato).
 
+**M6.1 — `AbstractIntegrationTest` scritto dall'utente, corretto da Claude su richiesta (28/09):**
+- Non compilava: `AutoConfigureMockMvc` in Boot 4 è in `org.springframework.boot.webmvc.test.autoconfigure`; in Testcontainers 2 `PostgreSQLContainer` è `org.testcontainers.postgresql` (non generico); `MinIOContainer` senza il modulo nel pom.
+- Corretto anche: immagine PostGIS senza `asCompatibleSubstituteFor("postgres")`; MinIO tolto (non serve all'avvio, l'immagine ufficiale non si scarica; lo aggiungerà `MediaUploadIT`); chiavi inesistenti (`geosentinel.security.jwt.secret-key`, `default-bucket`, `bucket-name`); la `REDIS_PASSWORD` del `.env` locale sarebbe finita sul Redis di test.
+- Aggiunti (contratto M6.1): avvio parallelo `Startables.deepStart`, pulizia `@BeforeEach` (`TRUNCATE ... CASCADE` + `FLUSHALL`, che azzera anche i bucket del rate limit), `obtainToken(Role)` / `createUser(Role)` (password `Password123!`), `src/test/resources/application-test.properties` (segreto JWT, chiavi MinIO finte, Redis senza password).
+- Helper aggiunti per la suite: `call(...)` (HTTP vero sulla porta: MockMvc non passa da Tomcat, serve alla concorrenza), `runConcurrently(n, task)` (partenza sincronizzata con `CountDownLatch`), fixture SQL `insertTrail/insertRefuge/insertTeam`, `isProblemJson` (confronta tipo e sottotipo: dai filtri arriva `;charset=UTF-8`), hash BCrypt calcolato una volta per classe.
+
+**M6.2 — suite di integrazione scritta da Claude su richiesta (28/09):** `shared/MigrationIT`, `shared/IdempotencyIT`, `shared/ProblemDetailContractIT`, `trail/TrailSpatialQueryIT`, `refuge/RefugeBookingConcurrencyIT`, `emergency/SosAssignmentConcurrencyIT`, `emergency/SosNotificationRecoveryIT`, `maintenance/MaintenanceOptimisticLockIT`, `identity/AuthFlowIT`, `identity/RateLimitIT`. `GeoSentinelApplicationTests` rimosso (`git rm`: lo sostituisce `MigrationIT`).
+- Test di concorrenza con `@RepeatedTest(5)` e richieste HTTP reali: 50 prenotazioni su 10 posti → 10 × 201 e 40 × 409; 10 dispatch sulla stessa allerta → 1 × 200 e 9 × 409 `alert-already-taken`; stessa squadra su due allerte → 200 + 422; If-Match concorrenti → 200 + 409; 10 retry con la stessa `Idempotency-Key` (SOS, prenotazioni) e 10 SOS senza chiave → una riga, 201 + 9 × 200.
+- `AuthServiceTest` non serve: il tempo costante del login lo copre già `AuthServiceLoginLimitTest.allowedAttemptContinuesToCredentialCheck`.
+- `RoleHierarchy` verificata per la method security (token ADMIN su `POST /refuges` → 201). Le rotte HTTP usano solo `authenticated()`, quindi il dubbio su `authorizeHttpRequests` non ha effetti oggi.
+- **`./mvnw verify` verde da zero: 41 unit + 63 IT in ~45 s, due esecuzioni consecutive verdi.** Nessun bug trovato nel codice di produzione.
+
 **Prossimo passo:**
-1. **M6.1 `AbstractIntegrationTest`** (in corso) + **`MigrationIT`**, che sostituisce `GeoSentinelApplicationTests`: la CI torna verde.
+1. Commit + push: il job `verify` della CI dovrebbe diventare verde. Poi, con Pro, la regola "status checks" su `main`.
 2. Checkpoint manuali di M2 (curl: register → login → logout → 401, refresh riusato, 429), poi M3 (upload su MinIO vero) e M4.
 
 ## Comandi
