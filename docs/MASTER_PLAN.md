@@ -55,6 +55,8 @@ GeoSentinel-Backend/
     │   │   │   │       ├── CapacityExceededException.java      # 409 (refuge); qui perché l'handler è in shared
     │   │   │   │       ├── IdempotencyKeyReusedException.java  # 422 (D12)
     │   │   │   │       ├── AlertAlreadyTakenException.java     # 409 (emergency)
+    │   │   │   │       ├── MediaRejectedException.java         # 415 / 413 / 422 per motivo (media)
+    │   │   │   │       ├── StorageUnavailableException.java    # 503 (MinIO irraggiungibile)
     │   │   │   │       └── RateLimitExceededException.java     # 429 + Retry-After (limite di login per account)
     │   │   │   ├── config/
     │   │   │   │   ├── JpaAuditingConfig.java        # @EnableJpaAuditing + AuditorAware
@@ -120,12 +122,12 @@ GeoSentinel-Backend/
     │   │   │   └── web/           SosController (/api/v1/sos), RescueTeamController (/api/v1/rescue-teams), dto/ SosDtos, RescueTeamDtos, SosMapper
     │   │   │
     │   │   └── media/                                # metadati file + MinIO
-    │   │       ├── domain/        MediaFile, MediaStatus, MediaPolicy
-    │   │       ├── application/   MediaService, port/ObjectStorage
+    │   │       ├── domain/        MediaFile, MediaStatus, MediaTargetType, MediaPolicy
+    │   │       ├── application/   MediaService, MediaCleanupJob, port/ObjectStorage, dto/MediaCommands
     │   │       ├── infrastructure/
     │   │       │   ├── persistence/  MediaFileRepository
     │   │       │   └── storage/      MinioObjectStorage, MinioConfig, MinioProperties
-    │   │       └── web/           MediaController, dto/*
+    │   │       └── web/           MediaController (/api/v1/media), dto/ MediaDtos, MediaMapper
     │   │
     │   └── resources/
     │       ├── application.properties
@@ -142,7 +144,7 @@ GeoSentinel-Backend/
         │   ├── refuge/    BookingTest, RefugeBookingServiceTest, BookingControllerTest, RefugeBookingConcurrencyIT
         │   ├── maintenance/ MaintenanceTicketTest, MaintenanceControllerTest, MaintenanceOptimisticLockIT
         │   ├── emergency/ SosAssignmentConcurrencyIT, SosAlertTest
-        │   ├── media/     MediaServiceTest (+ MediaUploadIT opzionale)
+        │   ├── media/     MediaPolicyTest, MediaServiceTest (+ MediaUploadIT opzionale)
         │   └── shared/    ProblemDetailWriterTest, GeoJsonLineStringTest, MaxUtf8BytesTest,
         │                  ProblemDetailContractIT, MigrationIT
         └── resources/application-test.properties
@@ -183,34 +185,35 @@ Aggiungi (quelle già presenti non le ripeto):
 - [x] `spring-boot-starter-actuator` (healthcheck per Docker)
 - [x] `spring-boot-starter-security-oauth2-resource-server` (nome Boot 4; verifica sul BOM)
 - [x] `org.flywaydb:flyway-database-postgresql` (**obbligatorio** da Flyway 10 in poi, altrimenti "Unsupported Database")
-- [ ] `io.minio:minio` (versione esplicita, ultima stabile) → **rimandato a M3**
+- [x] `io.minio:minio` **9.0.3** + `com.squareup.okhttp3:okhttp-jvm` 5.3.2 esplicito: da okhttp 5 l'artefatto `okhttp` è multipiattaforma e con Maven arriva un jar vuoto (le classi sono in `okhttp-jvm`), quindi senza questa riga `NoClassDefFoundError` alla prima chiamata a MinIO. Versione di okhttp allineata a quella dichiarata da minio. La 8.5.x portava `bcprov` 1.78.1 (CVE-2025-8916)
 - [x] `org.mapstruct:mapstruct` + `mapstruct-processor` in `maven-compiler-plugin > annotationProcessorPaths`, con `-Amapstruct.defaultComponentModel=spring` e `-Amapstruct.unmappedTargetPolicy=ERROR`
 - [x] `org.springdoc:springdoc-openapi-starter-webmvc-ui` (linea 3.x, per Boot 4)
 - [x] Test: `spring-boot-testcontainers`, Testcontainers `postgresql` + `junit-jupiter` (Testcontainers 2: artefatti `testcontainers-postgresql`, `testcontainers-junit-jupiter`; verifica sul BOM)
 - [x] Plugin `maven-failsafe-plugin` per i test `*IT` separati dagli unit test (`*Test` con surefire)
-- [ ] `io.micrometer:micrometer-tracing-bridge-otel`: mette `traceId`/`spanId` nell'MDC per ogni richiesta, senza filtri scritti a mano (serve al `traceId` dei ProblemDetail in M5.1)
+- [x] Tracing: `spring-boot-micrometer-tracing-opentelemetry` **e** `io.micrometer:micrometer-tracing-bridge-otel` (in Boot 4 il bridge da solo non viene autoconfigurato, e nel modulo di Boot è opzionale: servono entrambi). Mette `traceId`/`spanId` nell'MDC per ogni richiesta, senza filtri scritti a mano; nessun exporter OTLP. Il `traceId` finisce nei ProblemDetail sia da `GlobalExceptionHandler` sia da `ProblemDetailWriter` (401/403/429 dei filtri)
 
 **Checkpoint:**
-- [ ] `./mvnw -q dependency:tree` senza conflitti evidenti
+- [x] `./mvnw -q dependency:tree` senza conflitti evidenti (Jackson 2 solo per springdoc accanto a Jackson 3, `okhttp-jvm` 5.3.2 allineato, `bcprov` 1.84)
 - [x] `./mvnw -q compile` verde
-- [ ] `unmappedTargetPolicy=ERROR` attivo (lo verificherai al primo mapper con un campo mancante)
+- [x] `unmappedTargetPolicy=ERROR` attivo (verificato in M5.2: `RefugeMapper` non si generava con `checkOut` mancante)
 
 #### M0.2 — `docker-compose.yml` + `.env.example`
 **Obiettivo:** `docker compose up -d` porta su tutto, healthy, bucket già creato.
 
 Servizi:
-- [ ] `postgres`: `postgis/postgis:16-3.4`, `env_file: .env` (le chiavi `POSTGRES_*` sono le stesse lette dall'app), volume nominato, healthcheck `pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB`
-- [ ] `redis`: `redis:7-alpine`, `--requirepass ${REDIS_PASSWORD}`, healthcheck `redis-cli -a ... ping`
-- [ ] `minio`: immagine con **tag `RELEASE.*` pinnato** (mai `latest`; l'immagine community MinIO non riceve più rilasci regolari, pinna una release nota). `server /data --console-address :9001`, healthcheck `mc ready local`
-- [ ] `minio-init`: `minio/mc`, `depends_on: minio: condition: service_healthy`, crea l'alias, fa `mb --ignore-existing` del bucket `geosentinel-media` e `anonymous set none` (bucket privato)
-- [ ] `.env.example` con tutte le chiavi, valori finti: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `MINIO_ROOT_USER/PASSWORD`, `MINIO_BUCKET`, `JWT_SECRET` (≥ 32 byte, base64). Le chiavi si aggiungono quando nasce il servizio che le usa.
+- [x] `postgres`: `postgis/postgis:16-3.4-alpine`, credenziali `${POSTGRES_*:?}` (obbligatorie, nessun default debole), volume nominato, porta su `127.0.0.1:${DB_PORT:-5432}` (la stessa `DB_PORT` che usa l'app), healthcheck `pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB`
+- [x] `redis`: `redis:7.2-alpine`, `--requirepass ${REDIS_PASSWORD:?}`, healthcheck `redis-cli ping | grep -q PONG` con `REDISCLI_AUTH` (redis-cli esce con 0 anche su `NOAUTH`: il solo exit code non basta)
+- [x] `minio`: **`pgsty/minio:RELEASE.2026-08-04T00-00-00Z`**. Le immagini ufficiali `minio/minio` e `quay.io/minio/minio` non sono più scaricabili (repository rimosso / 401): si usa il fork della community pgsty, con tag `RELEASE.*` pinnato. `server /data --console-address :9001`, healthcheck `mc ready local`. La 9000 è esposta su tutte le interfacce (gli URL firmati li usa il telefono), la console solo su localhost
+- [x] `minio-init`: `pgsty/mc:RELEASE.2026-09-16T00-00-00Z`, `depends_on: minio: condition: service_healthy`, `set -e`, alias, `mb --ignore-existing` del bucket `${MINIO_BUCKET:-geosentinel-media}` e `anonymous set none` (bucket privato: GET anonimo → 403)
+- [x] `backend` facoltativo sotto `profiles: ["app"]` (`docker compose --profile app up -d --build`): `env_file: .env` + `DB_HOST=postgres`, `REDIS_HOST=redis`, `MINIO_ENDPOINT=http://minio:9000`
+- [x] `.env.example` con tutte le chiavi, valori finti: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `MINIO_ROOT_USER/PASSWORD` (le sceglie chi installa: le legge l'immagine MinIO e l'app le usa come access/secret key), facoltative `MINIO_BUCKET`, `MINIO_ENDPOINT` (nel compose `http://minio:9000`), `MINIO_PUBLIC_ENDPOINT` (IP del PC, o `10.0.2.2` per l'emulatore Android), `JWT_SECRET` (≥ 32 byte, base64). Le chiavi si aggiungono quando nasce il servizio che le usa.
 
 **Vincoli:** nessun servizio `app` obbligatorio nel compose di sviluppo (l'app gira dall'IDE); se lo aggiungi, `depends_on` con `condition: service_healthy`.
 
 **Checkpoint:**
-- [ ] `docker compose ps` → tutti `healthy`, `minio-init` `exited (0)`
-- [ ] `docker compose exec postgres psql -U ... -c "SELECT postgis_full_version();"` risponde
-- [ ] Console MinIO su `:9001` mostra il bucket privato
+- [x] `docker compose ps` → tutti `healthy`, `minio-init` `exited (0)`
+- [x] `docker compose exec postgres psql ... "SELECT postgis_lib_version()"` risponde (3.4.3)
+- [x] Bucket `geosentinel-media` privato (`mc anonymous get` → `private`, GET anonimo → 403)
 
 #### M0.3 — Configurazione applicativa
 Formato scelto: **solo `.properties`** (un unico file base + un file per profilo; mai `.yml` e `.properties` insieme, sulle chiavi duplicate vincerebbe il `.properties` in silenzio).
@@ -223,27 +226,30 @@ File:
   - `management.endpoints.web.exposure.include=health` + `management.endpoint.health.show-details=never` (l'actuator non espone altro al pubblico)
   - `springdoc.api-docs.enabled=false` + `springdoc.swagger-ui.enabled=false` (le docs si accendono solo in `local`)
   - `geosentinel.jwt.secret=${JWT_SECRET}`, `access-ttl=15m`, `refresh-ttl=7d`, `session-max-ttl=30d`, `issuer` (M2.2)
-- [ ] `application-local.properties` (il file esiste ma è **vuoto**): `spring.flyway.locations=classpath:db/migration,classpath:db/seed`, springdoc attivo, logging SQL solo qui
+- [x] `application-local.properties`: `spring.flyway.locations=classpath:db/migration,classpath:db/seed`, springdoc attivo, logging SQL solo qui
 - [x] Record di configurazione `@ConfigurationProperties`: `JwtProperties(secret, accessTtl, issuer)` (usato solo in `infrastructure/security`)
-- [ ] `MinioProperties(endpoint, publicEndpoint, accessKey, secretKey, bucket, uploadUrlTtl, downloadUrlTtl)`, validato con `@Validated` (M3)
+- [x] `MinioProperties(endpoint, publicEndpoint, accessKey, secretKey, bucket)` (`geosentinel.storage.minio.*`), `@Validated`: senza `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` l'avvio fallisce. Endpoint e bucket hanno un default in `application.properties`. I TTL sono costanti in `MediaService` (upload 10 min, download 5 min)
 - `refresh-ttl` e `session-max-ttl` **non** stanno in `JwtProperties`: li usa `AuthService`, che sta in `application` e non può dipendere da `infrastructure`, quindi li legge con `@Value`.
 
 **Checkpoint:**
-- [ ] L'app parte col profilo `local` (fallirà su Flyway finché non c'è V1: è atteso)
-- [ ] `grep -ri password src/main/resources` → solo placeholder `${...}`
+- [x] L'app parte col profilo `local` (con V1–V7 e seed applicati)
+- [x] `grep -ri password src/main/resources` → solo placeholder `${...}` (e l'hash BCrypt pubblico del seed)
 
 #### M0.4 — `Dockerfile` multi-stage
-- [ ] Stage `build`: `eclipse-temurin:21-jdk`, copia prima `pom.xml` + `.mvn` e fai `dependency:go-offline` (layer cache), poi `src` e `package -DskipTests`
-- [ ] Stage `extract`: `java -Djarmode=tools -jar app.jar extract --layers --launcher`
-- [ ] Stage `runtime`: `eclipse-temurin:21-jre`, utente non-root, copia i layer in ordine (dependencies → spring-boot-loader → snapshot-dependencies → application), `-XX:MaxRAMPercentage=75`
+- [x] Stage `build`: `eclipse-temurin:21-jdk-alpine`, copia prima `pom.xml` + `.mvn` e fai `dependency:go-offline` (layer cache), poi `src` e `package -DskipTests`
+- [x] Estrazione nello stesso stage: `java -Djarmode=tools -jar target/*.jar extract --layers --launcher --destination extracted` (Boot 4 ha rimosso `layertools`)
+- [x] Stage `runtime`: `eclipse-temurin:21-jre-alpine`, utente non-root, copia i layer in ordine (dependencies → spring-boot-loader → snapshot-dependencies → application) **senza `--chown`** (codice di root, in sola lettura per l'app), `-XX:MaxRAMPercentage=75`
+- [x] `.dockerignore`: `.git`, `target/`, `.env*`, `docs/`, `graphify-out/`, IDE
 
-**Checkpoint:** `docker build .` verde; una modifica solo a `src` non invalida il layer delle dipendenze.
+**Checkpoint:**
+- [x] `docker build .` verde
+- [x] una modifica solo a `src` non invalida il layer delle dipendenze
 
 #### M0.5 — CI e supply chain
 **Obiettivo:** ogni push verifica build, test e dipendenze senza intervento manuale.
-- [ ] `.github/workflows/ci.yml`: JDK 21 (Temurin) con cache Maven, `./mvnw -B verify` (i runner GitHub hanno Docker, quindi girano anche gli IT con Testcontainers)
-- [ ] `.github/dependabot.yml`: ecosistemi `maven`, `docker`, `github-actions`, cadenza settimanale
-- [ ] Secret scanning + push protection attivi nelle impostazioni del repo (niente codice)
+- [x] `.github/workflows/ci.yml`: job `verify` (JDK 21 Temurin, cache Maven, `chmod +x mvnw` perché è versionato 100644, `./mvnw -B verify`: i runner GitHub hanno Docker, quindi girano anche gli IT con Testcontainers) e job `docker` (`docker build`, niente push). `permissions: contents: read`, `concurrency` che annulla le run superate
+- [x] `.github/dependabot.yml`: ecosistemi `maven` (minor/patch raggruppate), `docker`, `docker-compose`, `github-actions`, cadenza settimanale
+- [ ] Secret scanning + push protection attivi nelle impostazioni del repo (niente codice: Settings → Code security)
 
 **Checkpoint:** una PR con un test rotto diventa rossa; Dependabot apre la prima PR.
 
@@ -252,14 +258,25 @@ File:
 ### Milestone 1 — Migrazioni Flyway & entità di persistenza
 
 #### M1.1 — DDL (`src/main/resources/db/migration`)
+**Prerequisito:** M0.2 (serve un Postgres/PostGIS acceso per i checkpoint), oppure `MigrationIT` con Testcontainers (M6.2, da anticipare).
+
 **Vincoli:** migrazioni **immutabili** una volta committate (errore = nuova `V` successiva). Ogni FK ha il suo indice. Enum = `varchar` + `CHECK`. Geometrie sempre con tipo e SRID espliciti.
+- **V1–V7 tutte prima del primo avvio:** `ddl-auto=validate` controlla **tutte** le entità del persistence unit, non solo quelle della feature: con solo V1+V2 l'app non parte (manca `trails`). Per provarle una alla volta: `MigrationIT`.
+- **`validate` controlla solo esistenza e tipo delle colonne**, non `NOT NULL` né lunghezze. Ogni `nullable = false` delle entità va scritto nel DDL, altrimenti il DB accetta `null` senza errori. Colonne `NOT NULL` (oltre a `id`, `created_at`, `version`):
+  - `users`: email, password_hash, display_name, role, enabled
+  - `refresh_tokens`: user_id, token_hash, family_id, expires_at, family_expires_at
+  - `trails`: name, difficulty, status, path · `pois`: name, type, location · `hazard_reports`: reporter_id, type, severity, location, status
+  - `refuges`: name, location, capacity, manager_id · `bookings`: refuge_id, user_id, check_in, check_out, guests, idempotency_key, status
+  - `maintenance_tickets`: title, priority, status
+  - `rescue_teams`: name, call_sign, status, base_location, contact_number · `sos_alerts`: hiker_id, location, location_updated_at, status
+  - `media_files`: owner_id, object_key, original_filename, content_type, size_bytes, status
 
 | File | Contenuto |
 |---|---|
 | `V1__extensions.sql` | `CREATE EXTENSION IF NOT EXISTS postgis;` |
-| `V2__identity.sql` | `users` (id uuid PK, email `varchar(254)`, password_hash, display_name `varchar(100)` (lunghezze allineate a `RegisterRequest` e alle `@Column(length)` di `User`: `validate` non controlla le lunghezze), role CHECK in 4 ruoli, enabled, audit cols, version). **`UNIQUE (email)` + `CHECK (email = lower(email))`**: il service salva e cerca l'email già normalizzata, quindi `WHERE email = ?` usa l'indice unico; il CHECK impedisce righe non normalizzate (es. dal seed). `refresh_tokens` (id, user_id FK, token_hash `varchar(64)` UNIQUE (non `char`: con `ddl-auto=validate` Hibernate si aspetta `varchar` per un `String` e rifiuta `bpchar`), family_id uuid, expires_at, **`family_expires_at`** (scadenza assoluta della sessione, copiata a ogni rotazione), revoked_at NULL, created_at); indici su `user_id`, `family_id`, `family_expires_at` (per la pulizia) |
-| `V3__trails.sql` | `trails` (id, name `varchar(150)`, description, difficulty CHECK, status CHECK `OPEN/CLOSED/WARNING`, `path geometry(LineString,4326) NOT NULL`, **`length_m double precision GENERATED ALWAYS AS (ST_Length(path::geography)) STORED`**, audit, version). `pois` (id, trail_id FK NULL, name `varchar(100)`, type CHECK, `location geometry(Point,4326) NOT NULL`, **audit cols**: `Poi` estende `AuditableEntity`, senza `created_at/by` e `updated_at/by` la validazione fallisce all'avvio). `trails.description` è `text`. Le lunghezze di `name` sono allineate ai DTO e alle `@Column(length)` di `Trail`/`Poi` (`validate` non le controlla). `hazard_reports` (id, reporter_id FK, trail_id FK NULL, type, severity, description, `location geometry(Point,4326)`, status, audit) |
-| `V4__refuges.sql` | `refuges` (id, name `varchar(120)`, `location geometry(Point,4326)`, capacity int `CHECK (capacity > 0)`, manager_id FK, audit). `bookings` (id, refuge_id FK, user_id FK, check_in date, check_out date, guests int `CHECK (guests > 0)`, status CHECK, `CHECK (check_out > check_in)`, `idempotency_key uuid NOT NULL`, audit); indice `(refuge_id, check_in, check_out)`; **`UNIQUE (user_id, idempotency_key)`** (D12) |
+| `V2__users_and_auth.sql` | `users` (id uuid PK, email `varchar(254)`, password_hash, display_name `varchar(100)` (lunghezze allineate a `RegisterRequest` e alle `@Column(length)` di `User`: `validate` non controlla le lunghezze), role CHECK in 4 ruoli, enabled, audit cols, version). **`UNIQUE (email)` + `CHECK (email = lower(email))`**: il service salva e cerca l'email già normalizzata, quindi `WHERE email = ?` usa l'indice unico; il CHECK impedisce righe non normalizzate (es. dal seed). `refresh_tokens` (id, user_id FK, token_hash `varchar(64)` UNIQUE (non `char`: con `ddl-auto=validate` Hibernate si aspetta `varchar` per un `String` e rifiuta `bpchar`), family_id uuid, expires_at, **`family_expires_at`** (scadenza assoluta della sessione, copiata a ogni rotazione), revoked_at NULL, created_at); indici su `user_id`, `family_id`, `family_expires_at` (per la pulizia) |
+| `V3__trails_and_refuges.sql` | `trails` (id, name `varchar(150)`, description, difficulty CHECK, status CHECK `OPEN/CLOSED/WARNING`, `path geometry(LineString,4326) NOT NULL`, **`length_m double precision GENERATED ALWAYS AS (ST_Length(path::geography)) STORED`**, audit, version). `pois` (id, trail_id FK NULL, name `varchar(100)`, type CHECK, `location geometry(Point,4326) NOT NULL`, **audit cols**: `Poi` estende `AuditableEntity`, senza `created_at/by` e `updated_at/by` la validazione fallisce all'avvio). `trails.description` è `text`. Le lunghezze di `name` sono allineate ai DTO e alle `@Column(length)` di `Trail`/`Poi` (`validate` non le controlla). `refuges` (id, name `varchar(120)`, `location geometry(Point,4326)`, capacity int `CHECK (capacity > 0)`, manager_id FK, audit). `bookings` (id, refuge_id FK, user_id FK, check_in date, check_out date, guests int `CHECK (guests > 0)`, status CHECK `CONFIRMED/CANCELLED`, `CHECK (check_out > check_in)`, `idempotency_key uuid NOT NULL`, audit); indice `(refuge_id, check_in, check_out)`; **`UNIQUE (user_id, idempotency_key)`** (D12) |
+| `V4__hazard_reports.sql` | `hazard_reports` (id, `reporter_id uuid NOT NULL` FK `users(id)`, trail_id FK NULL, type, severity, description `text`, `location geometry(Point,4326) NOT NULL`, status, audit); indici su `reporter_id` e `trail_id`, **GiST su `location` e su `(location::geography)`** (li usa `findActiveNearTrail`) |
 | `V5__maintenance.sql` | `maintenance_tickets` (id, title `varchar(150)`, description `text`, priority CHECK `LOW/MEDIUM/HIGH/CRITICAL`, status CHECK `OPEN/ASSIGNED/IN_PROGRESS/RESOLVED/CANCELLED`, trail_id FK NULL, refuge_id FK NULL, hazard_report_id FK NULL, `CHECK (num_nonnulls(trail_id, refuge_id, hazard_report_id) >= 1)` (un ticket da segnalazione ha anche il sentiero della segnalazione), assigned_to FK `users(id)` NULL, resolved_at NULL, **`version bigint NOT NULL DEFAULT 0`**, audit cols (`MaintenanceTicket` estende `AuditableEntity`)); indici su `(trail_id, created_at)`, `refuge_id`, `hazard_report_id`, `assigned_to`, `(status, priority)` |
 | `V6__emergency.sql` | `rescue_teams` (id, name `varchar(100)` UNIQUE, call_sign `varchar(32)`, contact_number `varchar(30)`, status CHECK `AVAILABLE/ON_MISSION/OFF_DUTY`, `base_location geometry(Point,4326)`, audit cols). `sos_alerts` (id, hiker_id FK `users(id)`, `idempotency_key uuid NULL`, `location geometry(Point,4326) NOT NULL`, `location_updated_at NOT NULL`, medical_notes `text`, status CHECK `ACTIVE/DISPATCHED/RESOLVED/CANCELLED`, assigned_team_id FK `rescue_teams(id)` NULL, operator_id FK `users(id)` NULL, closed_at NULL, `notified_at timestamptz NULL`, `anonymized_at timestamptz NULL`, audit cols; **niente `version`**: le scritture passano da lock pessimistici). **Indice parziale** su `(created_at) WHERE status IN ('ACTIVE','DISPATCHED')` per la dashboard; **`UNIQUE (hiker_id, idempotency_key)`** (D12; i `NULL` non collidono); **`UNIQUE (hiker_id) WHERE status IN ('ACTIVE','DISPATCHED')`** (al più un'allerta attiva per escursionista, rete di sicurezza dell'advisory lock); indice parziale `(created_at) WHERE notified_at IS NULL` (recupero notifiche); indice parziale `(closed_at) WHERE anonymized_at IS NULL` (conservazione); indici su `assigned_team_id`, `operator_id` |
 | `V7__media.sql` | `media_files` (id, owner_id FK `users(id)`, object_key `varchar(64)` UNIQUE, original_filename `varchar(255)`, content_type `varchar(50)`, size_bytes bigint (dichiarata, poi reale dopo il confirm), status `varchar(20)` CHECK `PENDING_UPLOAD/READY/QUARANTINED`, entity_type `varchar(20)` CHECK `TRAIL/HAZARD_REPORT` NULL, entity_id uuid NULL (polimorfico: niente FK, l'esistenza la verifica `MediaService`), `CHECK ((entity_type IS NULL) = (entity_id IS NULL))`, checksum `varchar(64)`, `version bigint NOT NULL DEFAULT 0`, audit cols (`MediaFile` estende `AuditableEntity`)); indici `(owner_id, status, created_at)` (quota e `/my`), `(entity_type, entity_id) WHERE status = 'READY'`, `(created_at) WHERE status = 'PENDING_UPLOAD'` (`MediaCleanupJob`) |
@@ -268,12 +285,13 @@ File:
 - `USING GIST (path)` / `USING GIST (location)`: per `ST_Contains`, `ST_Intersects`, bbox `&&`
 - `USING GIST ((path::geography))` / `USING GIST ((location::geography))`: per `ST_DWithin` in metri (decisione D6)
 
-- [ ] `db/seed/R__local_seed.sql` (repeatable, **solo profilo local**): un utente per ruolo (hash BCrypt precalcolato), 2–3 sentieri reali in Dolomiti, 1 rifugio con capacity piccola, 2 squadre
+- [x] `db/seed/R__local_seed.sql` (repeatable, **solo profilo local**, `ON CONFLICT DO NOTHING`): un utente per ruolo + un secondo HIKER (password `Password123!`, hash **`{bcrypt}…`**: il `DelegatingPasswordEncoder` senza prefisso non riconosce l'hash), 2 sentieri e 2 POI in Sila, 1 rifugio con capacity 4 + una prenotazione, 2 squadre, una segnalazione con il suo ticket, un SOS attivo non notificato (sul secondo HIKER). Niente media: senza l'oggetto nel bucket il download risponderebbe 404
+- Gli `id` non hanno `DEFAULT`: li genera Hibernate (il seed usa UUID fissi). Nessuna estensione oltre a PostGIS
 
 **Checkpoint:**
-- [ ] App avviata: `flyway_schema_history` contiene V1–V7 con `success = true`
-- [ ] `EXPLAIN` di una query `ST_DWithin(path::geography, …)` su `trails` mostra `Index Scan using …geography…` (con `SET enable_seqscan = off` se la tabella è piccola)
-- [ ] `SELECT length_m FROM trails` restituisce metri plausibili per il seed
+- [x] App avviata: `flyway_schema_history` contiene V1–V7 con `success = true` (+ il seed)
+- [x] `EXPLAIN` di una query `ST_DWithin(path::geography, …)` su `trails` mostra `Index Scan using idx_trails_path_geog`
+- [x] `SELECT length_m FROM trails` restituisce metri plausibili per il seed (3193 m e 4525 m)
 
 #### M1.2 — Base di persistenza e auditing
 File + contratti:
@@ -300,12 +318,12 @@ Firme chiave (solo contratti):
 - [x] `MaintenanceTicket` (estende `AuditableEntity`, `@Version Long version`): factory `forTrail` / `forRefuge` / `forHazard` (eredita il sentiero della segnalazione); `updateDetails(title, description, priority)`; `assign(UUID)` (da `OPEN` → `ASSIGNED`, una riassegnazione di un `IN_PROGRESS` non cambia stato); `startWork()`, `resolve(Instant now)` (da `ASSIGNED`/`IN_PROGRESS`), `cancel()` (non da `RESOLVED`). Test: `MaintenanceTicketTest`
 - [x] `SosAlert` (stati `ACTIVE → DISPATCHED → RESOLVED`, `CANCELLED` da attivo): `static raise(hikerId, idempotencyKey, location, medicalNotes, now)`; `dispatch(RescueTeam, UUID operatorId)` (solo da `ACTIVE`; già `DISPATCHED` → `AlertAlreadyTakenException` 409); `resolve(Instant now)` e `cancel(Instant now)` (impostano `closedAt` e liberano la squadra); `updateLocation(Point, Instant now)` (solo se attiva, aggiorna `locationUpdatedAt`). Niente passo `IN_CHARGE` separato: l'esclusività è sul dispatch e `operatorId` registra chi l'ha fatto. `notified_at`/`anonymized_at` non sono mappati (li scrivono solo query dedicate, un flush dell'entità non li sovrascrive). Test: `SosAlertTest`
 - [x] `RescueTeam`: `deploy()` (`AVAILABLE → ON_MISSION`), `release()` (da `ON_MISSION`), `setOffDuty()` (non in missione), `setAvailable()` (non da `ON_MISSION`: la squadra si libera solo chiudendo l'allerta)
-- [ ] `User`, `RefreshToken`, `MediaFile`: vedi M2/M3
+- [x] `User`, `RefreshToken`, `MediaFile`: vedi M2/M3
 
 **Vincoli JTS:** ogni `Point`/`LineString` creato **solo** dal `GeometryFactory` bean (SRID corretto). Mai `new Coordinate(lat, lon)`: è `new Coordinate(lon, lat)`.
 
 **Checkpoint M1:**
-- [ ] L'app parte con `ddl-auto=validate` → nessun mismatch colonna/tipo
+- [x] L'app parte con `ddl-auto=validate` → nessun mismatch colonna/tipo
 - [x] Unit test `SosAlertTest`: transizioni legali OK, illegali lanciano (nessun Spring, JUnit puro)
 
 ---
@@ -415,42 +433,55 @@ I 401/403 generati nei filtri **non passano** da `@RestControllerAdvice`.
 
 ---
 
-### Milestone 3 — Object storage (MinIO, pre-signed URL)
+### Milestone 3 — Object storage (MinIO, presigned POST policy)
 
 **Flusso (nessun byte passa dal backend):**
-`POST /media/upload-requests` → validazione → riga `PENDING` + URL PUT firmato → il client carica su MinIO → `POST /media/{id}/confirm` → il backend fa `statObject`, verifica dimensione e tipo → `READY` (oppure `REJECTED` + delete dell'oggetto) → `GET /media/{id}/download-url` → URL GET firmato.
+`POST /media/upload-requests` → validazione (tipo, dimensione, target, quota) → riga `PENDING_UPLOAD` + **presigned POST policy** → il client fa un POST multipart su MinIO → `POST /media/{id}/confirm` → il backend fa `statObject` + lettura dei primi byte → `READY` (oppure `QUARANTINED` + delete dell'oggetto) → `GET /media/{id}/download-url` → URL GET firmato.
+
+**Perché POST policy e non PUT pre-firmato:** un PUT pre-firmato firma solo l'host, quindi il client può caricare un file di qualunque dimensione e tipo; se poi non chiama mai il confirm, l'oggetto resta nel bucket fuori da ogni quota. La policy (`content-length-range` 1..dimensione dichiarata, `eq $Content-Type`, `eq $key`) la fa rispettare MinIO.
 
 #### M3.1 — Porta ObjectStorage + adapter MinIO
-- [ ] Porta `media.application.port.ObjectStorage`:
-  - `URI presignedUpload(String objectKey, String contentType, Duration ttl)`
-  - `URI presignedDownload(String objectKey, Duration ttl)`
-  - `Optional<StoredObjectInfo> stat(String objectKey)` → record `(long size, String contentType)`
-  - `void delete(String objectKey)`
-- [ ] `MinioConfig`: **due** `MinioClient`: uno per le operazioni server-side (`endpoint` interno) e uno **solo per firmare** con `publicEndpoint` (la firma include l'host: un URL firmato con l'host interno Docker non funziona dal client)
-- [ ] `MinioObjectStorage implements ObjectStorage`: `getPresignedObjectUrl(Method.PUT / GET)`; traduce `MinioException` in un'eccezione applicativa `StorageUnavailableException` (→ 503)
+- [x] Porta `media.application.port.ObjectStorage` (il bucket è un dettaglio dell'adapter):
+  - `PresignedUpload presignUpload(String objectKey, String contentType, long maxBytes, Duration ttl)` → record `(String url, Map<String,String> formFields)`: il client invia tutti i campi e per ultimo `file`
+  - `String generatePresignedDownloadUrl(String objectKey, String contentType, Duration ttl)`
+  - `Optional<StoredObject> stat(String objectKey)` → record `(long sizeBytes, String etag)`, vuoto se l'oggetto non esiste
+  - `byte[] readHead(String objectKey, int length)` (GET con range, per i magic bytes)
+  - `void deleteObject(String objectKey)`
+- [x] `MinioObjectStorage implements ObjectStorage`: **due** `MinioClient` costruiti nell'adapter, uno per le operazioni server-side (`endpoint`) e uno **solo per firmare** con `publicEndpoint` (la firma include l'host: un URL firmato con l'host interno Docker non funziona dal client). Region fissa `us-east-1` (senza, il client la chiede al server prima di firmare), timeout brevi (connect 5 s, read/write 30 s; il default MinIO è 5 minuti, dentro una transazione che tiene una connessione del pool). Traduce `MinioException` in `StorageUnavailableException` (→ 503 + `Retry-After`, detail generico). API di MinIO 9: `io.minio.Http.Method`, non più `io.minio.http.Method`
+- [x] `MinioConfig`: solo `@EnableConfigurationProperties(MinioProperties.class)`. Il bucket lo crea `minio-init` nel compose (privato): niente chiamate di rete all'avvio del contesto
 
 #### M3.2 — Policy e metadati
-- [ ] `MediaPolicy` (valore di dominio, puro): whitelist `image/jpeg, image/png, image/webp → max 10 MB`, `video/mp4 → max 200 MB`; quota utente **1 GB**; `void check(String contentType, long declaredSize, long usedBytes)` lancia `UnsupportedMediaTypeException` (→ 415), `PayloadTooLargeException` (→ 413), `QuotaExceededException` (→ 422)
-- [ ] `MediaFile` entity: `static MediaFile pending(UUID ownerId, String key, String contentType, long declaredSize, …)`; `void markReady(long actualSize)`; `void reject()`
-- [ ] `MediaFileRepository`: `long sumSizeByOwnerAndStatusIn(UUID ownerId, Collection<MediaStatus> statuses)` (`COALESCE(SUM(...), 0)`)
+- [x] `MediaPolicy` (valore di dominio, puro, unico punto delle regole: il DTO controlla solo la presenza dei campi): whitelist `image/jpeg, image/png, image/webp`, max **10 MB**, quota utente **1 GB**; `matchesSignature(contentType, head)` (JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, WebP `RIFF….WEBP`, 12 byte letti). Violazioni → `MediaRejectedException(reason)` → 415 `media-unsupported-type` / 413 `media-payload-too-large` / 422 `media-quota-exceeded`. Il nome evita lo scontro con `org.springframework.web.server.PayloadTooLargeException` negli auto-import. Video (`video/mp4`) rimandati
+- [x] `MediaFile` (estende `AuditableEntity`, `@Version`): `initUpload(ownerId, objectKey, originalFilename, contentType, sizeBytes, entityType, entityId)` (policy + `entityType`/`entityId` entrambi o nessuno); `markReady(actualSize, checksum)` e `quarantine()` solo da `PENDING_UPLOAD`; `isOwnedBy(UUID)`. `size_bytes` è quella dichiarata finché il file è `PENDING_UPLOAD`, poi quella reale
+- [x] `MediaStatus`: `PENDING_UPLOAD`, `READY`, `QUARANTINED` (oggetto cancellato, riga tenuta per traccia)
+- [x] `MediaTargetType`: `TRAIL`, `HAZARD_REPORT` (enum, non stringa libera). `entity_id` è polimorfico: niente FK, l'esistenza la verifica il service
+- [x] `MediaFileRepository`: `sumQuotaBytes(ownerId, pendingSince, READY, PENDING_UPLOAD)` (JPQL con gli enum come parametri); `lockOwner(namespace, key)` (`pg_advisory_xact_lock(int, int)`: la forma a due chiavi int è un keyspace separato dal lock bigint degli SOS); `findByStatusAndCreatedAtBefore(…, Pageable)` e `deleteIfPending(id, PENDING_UPLOAD)` per la pulizia
 
-#### M3.3 — `MediaService`
-- [ ] `UploadTicket requestUpload(UUID ownerId, UploadRequestCommand cmd)` → `(UUID mediaId, URI uploadUrl, Instant expiresAt, Map<String,String> requiredHeaders)` (il client deve inviare lo stesso `Content-Type`)
-- [ ] `MediaView confirmUpload(UUID ownerId, UUID mediaId)`: verifica ownership (404 se non tuo), `stat`, confronta size ≤ declared e content-type; mismatch → `reject` + `delete`
-- [ ] `MediaView confirmUpload` verifica anche i **magic bytes**: legge i primi 16 byte dell'oggetto (`getObject` con range `0-15`) e controlla la firma (JPEG `FF D8 FF`, PNG `89 50 4E 47`, WebP `RIFF….WEBP`, MP4 `ftyp` all'offset 4). Il `Content-Type` restituito da `statObject` è quello dichiarato dal client, non una prova del contenuto: senza questo controllo un file HTML dichiarato `image/jpeg` passerebbe.
-- [ ] `URI downloadUrl(UUID requesterId, UUID mediaId)`: solo `READY`. L'URL firmato forza gli header di risposta con i parametri di query `response-content-type` (il MIME validato) e `response-content-disposition=attachment` (nessun contenuto eseguito inline dal browser)
+#### M3.3 — `MediaService` e `MediaCleanupJob`
+- [x] `UploadSessionView initiateUpload(UUID ownerId, InitUploadCommand cmd)` → `(mediaId, uploadUrl, formFields, expiresAt)`:
+  1. `MediaFile.initUpload` (policy) → verifica del target: `TRAIL` deve esistere (`TrailService.getTrailOrThrow`), `HAZARD_REPORT` deve esistere ed essere del segnalatore (`HazardReportService.getHazardOrThrow`, 404 altrimenti)
+  2. `lockOwner` → `sumQuotaBytes` → `checkQuota` (il lock viene prima della lettura: due richieste simultanee non superano la quota)
+  3. save → `presignUpload` con `maxBytes` = dimensione dichiarata
+  - `@PreAuthorize`: le foto di un **sentiero** sono contenuto ufficiale visibile a tutti → solo `PARK_MANAGER`; un escursionista allega foto alle **proprie** segnalazioni
+- [x] `MediaFileView confirmUpload(UUID ownerId, UUID mediaId)`: 404 se non tuo; già `READY`/`QUARANTINED` → restituisce l'esito (retry); oggetto assente → 422; size ≤ dichiarata (controllo ripetuto per sicurezza) **e** magic bytes coerenti con il tipo → `markReady`; altrimenti `quarantine` + delete dell'oggetto. Il `Content-Type` salvato da MinIO è quello dichiarato dal client, non una prova del contenuto
+- [x] Visibilità (`getMedia`, `getPresignedDownloadUrl`): il proprietario vede tutti i suoi file; gli altri solo i `READY` allegati a un'entità **che possono vedere**. I sentieri sono pubblici; per le segnalazioni si riusa il `@PostAuthorize` di `HazardReportService.getHazard` (una `REJECTED` la vedono solo `PARK_MANAGER` e il segnalatore): unica fonte della regola. 404, mai 403. `getAttachedMedia` applica lo stesso controllo sul target
+- [x] Download: solo `READY`; l'URL firmato forza `response-content-type` (MIME validato) e `response-content-disposition=attachment`
+- [x] `deleteMedia(requesterId, requesterIsAdmin, mediaId)`: proprietario o ADMIN (moderazione); prima la riga, poi l'oggetto (se lo storage fallisce la transazione torna indietro)
+- [x] `MediaCleanupJob` (`@Scheduled` ogni 15 min): cancella gli upload `PENDING_UPLOAD` più vecchi di TTL + 1 h di margine, 100 per giro. Prima `deleteIfPending` (il DELETE blocca la riga: un confirm concorrente attende e poi fallisce sulla `@Version`), poi l'oggetto; se MinIO fallisce la transazione torna indietro e si riprova al giro dopo. Con più istanze il DELETE condizionale evita doppioni
 - **Vincoli:**
-  - object key generata dal server: `{yyyy}/{MM}/{uuid}.{ext da MIME}`. **Mai** il filename del client (path traversal / sovrascrittura)
+  - object key generata dal server: `{yyyy}/{MM}/{uuid}.{ext da MIME}`. **Mai** il filename del client (path traversal / sovrascrittura) né l'`ownerId` (finirebbe negli URL)
   - TTL: upload 10 min, download 5 min
-  - la quota conta `PENDING + READY` (altrimenti la aggiri con upload paralleli non confermati)
-- Rimandato: pulizia dei `PENDING` orfani (`@Scheduled` o lifecycle rule MinIO), da aggiungere quando ne vedi accumularsi. Hardening: presigned **POST policy** con `content-length-range`, se il confirm-step non ti basta.
+  - la quota conta i `READY` e i `PENDING_UPLOAD` il cui URL non è scaduto (i più vecchi non sono più caricabili e li cancella il job)
+  - le risposte non espongono `ownerId` né l'object key (come `reporterId` in `HazardResponse`)
+- Test: `MediaPolicyTest` (magic bytes, HTML dichiarato JPEG, file troncato, quota, motivi 415/413/422), `MediaServiceTest` (media di una segnalazione `REJECTED` nascosti agli altri, proprietario sempre ammesso, lock prima della quota)
 
 **Checkpoint M3:**
-- [ ] curl `upload-requests` → `curl -X PUT --upload-file foto.jpg -H "Content-Type: image/jpeg" "<url>"` → confirm → `READY`
-- [ ] Upload di un file più grande del dichiarato → confirm → `REJECTED` e oggetto sparito dal bucket
-- [ ] File di testo caricato come `image/jpeg` → confirm → `REJECTED`
-- [ ] `application/x-msdownload` → 415 problem+json
-- [ ] L'URL di download di un altro utente → 404
+- [ ] curl `upload-requests` → `curl -F` con tutti i `formFields` e `-F file=@foto.jpg` sull'`uploadUrl` → 204 → confirm → `READY`
+- [ ] Upload di un file più grande del dichiarato → MinIO risponde 400 (`EntityTooLarge`)
+- [ ] File di testo caricato come `image/jpeg` → confirm → `QUARANTINED` e oggetto sparito dal bucket
+- [ ] `application/x-msdownload` → 415 problem+json; 11 MB → 413
+- [ ] Media non allegato di un altro utente → 404; media di una segnalazione `REJECTED` altrui → 404
+- [ ] Upload non confermato → dopo circa 1 h 10 min riga e oggetto spariti
 
 ---
 
@@ -560,9 +591,9 @@ Query native (servono il cast `::geography` e le funzioni PostGIS):
 #### M5.1 — `GlobalExceptionHandler` (RFC 7807)
 **Pattern:** `@RestControllerAdvice` che estende `ResponseEntityExceptionHandler` (gestisce già 400/405/415 di Spring MVC in formato `ProblemDetail`).
 - [x] `ProblemTypes`: costanti `URI` (`https://geosentinel.dev/problems/<slug>`), una per categoria
-- [ ] Ogni risposta: `type`, `title`, `status`, `detail`, `instance` (path) + properties `timestamp`, `traceId` (letto dall'MDC, popolato da Micrometer Tracing: vedi M0.1)
+- [x] Ogni risposta: `type`, `title`, `status`, `detail`, `instance` (path) + properties `timestamp`, `traceId` (letto dall'MDC, popolato da Micrometer Tracing: vedi M0.1). Verificato: 404 dall'handler e 401 dal filtro hanno entrambi `traceId`
 
-Stato: in `GlobalExceptionHandler` sono già gestite tutte le righe tranne le eccezioni `media-*` e `StorageUnavailableException` (M3), che nasceranno con le loro feature. Manca ancora il `traceId` (M0.1).
+Stato: in `GlobalExceptionHandler` sono gestite tutte le righe, comprese le eccezioni dei media.
 
 | Eccezione | Status | type slug |
 |---|---|---|
@@ -576,8 +607,8 @@ Stato: in `GlobalExceptionHandler` sono già gestite tutte le righe tranne le ec
 | `DataIntegrityViolationException` | 409 | `conflict` (**senza** nome del constraint nel detail) |
 | `IdempotencyKeyReusedException` (stessa chiave, body diverso) | 422 | `idempotency-key-reused` |
 | Header obbligatorio mancante (`If-Match`, `Idempotency-Key` sulle prenotazioni) (fatto: override di `handleServletRequestBindingException` per `MissingRequestHeaderException` sugli header in `PRECONDITION_HEADERS`; gli altri header mancanti restano 400) | 428 | `precondition-required` |
-| `UnsupportedMediaTypeException` / `PayloadTooLargeException` / `QuotaExceededException` | 415 / 413 / 422 | `media-*` |
-| `StorageUnavailableException` | 503 | `storage-unavailable` |
+| `MediaRejectedException` (motivo `UNSUPPORTED_TYPE` / `TOO_LARGE` / `QUOTA_EXCEEDED`) | 415 / 413 / 422 | `media-unsupported-type` / `media-payload-too-large` / `media-quota-exceeded` |
+| `StorageUnavailableException` | 503 + `Retry-After` | `storage-unavailable` (detail generico: il messaggio di MinIO può contenere host e bucket interni) |
 | `AccessDeniedException` / `AuthorizationDeniedException` (da `@PreAuthorize`) | 403 | `forbidden` |
 | `Exception` (fallback) | 500 | `internal-error`, detail generico, log con `traceId`, **mai** stack trace |
 
@@ -626,11 +657,14 @@ Endpoint:
 | `PATCH /api/v1/sos/{id}/resolve` | RESCUE_OPERATOR | libera la squadra |
 | `POST /api/v1/rescue-teams` | ADMIN | 201 + `Location` |
 | `GET /api/v1/rescue-teams/{id}` · `/available-nearby?lon&lat&radius&limit` | RESCUE_OPERATOR | |
-| `POST /api/v1/media/upload-requests` | auth | |
-| `POST /api/v1/media/{id}/confirm` | owner | |
-| `GET /api/v1/media/{id}/download-url` | owner / PM / RESCUE | |
+| `POST /api/v1/media/upload-requests` | auth (target `TRAIL` solo PARK_MANAGER; `HAZARD_REPORT` solo il segnalatore) | 201 + `Location`; risponde `uploadUrl` + `formFields` (POST policy); 415 / 413 / 422 quota |
+| `POST /api/v1/media/{id}/confirm` | owner | `READY` o `QUARANTINED` nel body; 404 se non tuo |
+| `GET /api/v1/media/{id}` · `/{id}/download-url` | owner, o chiunque se `READY` e allegato a un'entità visibile | 404 altrimenti; download con `Content-Disposition: attachment` |
+| `GET /api/v1/media/attached?entityType&entityId` | auth | solo `READY`; 404 per una segnalazione non visibile |
+| `GET /api/v1/media/my` | auth | `PagedModel`, sort solo `createdAt`/`sizeBytes` |
+| `DELETE /api/v1/media/{id}` | owner o ADMIN | 204 |
 
-Mapping: i service restituiscono view (`from(entity, GeometryMapper)`, vedi M4.1); il web ha i suoi record di request e **response** e un mapper MapStruct per feature (`TrailMapper`, `RefugeMapper`, `MaintenanceMapper`, `SosMapper`, `uses = GeometryMapper.class`) per request → command e view → response. La response separata decide cosa esce dall'API: `HazardResponse` non espone `reporterId` (dato personale), `TrailDetailResponse` non espone `version` (va nell'`ETag` quando servirà), `TicketResponse` nemmeno (è nell'`ETag`).
+Mapping: i service restituiscono view (`from(entity, GeometryMapper)`, vedi M4.1); il web ha i suoi record di request e **response** e un mapper MapStruct per feature (`TrailMapper`, `RefugeMapper`, `MaintenanceMapper`, `SosMapper`, `MediaMapper`, `uses = GeometryMapper.class`) per request → command e view → response. La response separata decide cosa esce dall'API: `HazardResponse` non espone `reporterId` (dato personale), `TrailDetailResponse` non espone `version` (va nell'`ETag` quando servirà), `TicketResponse` nemmeno (è nell'`ETag`).
 
 Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida già da solo `@RequestParam`/`@PathVariable` annotati (`HandlerMethodValidationException`, gestita in `GlobalExceptionHandler`); con `@Validated` si aggiungerebbe un proxy AOP che valida una seconda volta.
 
@@ -690,7 +724,7 @@ Opzionali, da aggiungere quando servono: `MediaUploadIT` col modulo Testcontaine
 
 ```
 M0.1 → M0.2 → M0.3 → M0.4 → M0.5
-  → M1.1 → M1.2 → M1.3
+  → M1.1 (V1–V7 insieme; richiede M0.2 o MigrationIT) → M1.2 → M1.3
   → M2.1 → M2.2 → M2.3 → M2.4 → M2.5 → M2.6 → M2.7
   → M5.1 (anticipato: da qui in poi ogni errore è già RFC 7807)
   → M3 → M4.1 → M4.2 → M4.3 → M4.4
@@ -719,7 +753,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 /ecc:orchestrate custom "ecc:java-build-resolver,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-0] Review only, do not write feature code: pom.xml deps for Spring Boot 4.1 (flyway-database-postgresql, oauth2-resource-server, mapstruct processor paths, springdoc 3, testcontainers 2), docker-compose healthchecks + minio-init bucket, Dockerfile multi-stage layers; Acceptance: mvnw compile green; all compose services healthy; no secrets in repo"
 /ecc:orchestrate custom "ecc:database-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-1] Review only: Flyway V1-V7 (PostGIS, geometry types with SRID 4326, GiST on column and on ::geography expression, FK indexes, CHECK enums, generated length_m) and JPA entities (JTS mapping lon/lat order, auditing, @Version, LAZY relations, equals/hashCode); Acceptance: ddl-auto=validate passes; every FK indexed; ST_DWithin plan uses geography GiST index"
 /ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-2] Review only: stateless SecurityFilterChain with oauth2 resource server HS256, JwtEncoder claims, JTI Redis blacklist validator, refresh token hashing + atomic rotation + family reuse detection, Lua token-bucket RateLimitFilter, problem+json 401/403, RoleHierarchy and @PreAuthorize; Acceptance: refresh reuse revokes family; logout blacklists jti; no user enumeration on login"
-/ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-3] Review only: MinIO ObjectStorage port/adapter, presigned PUT/GET with public endpoint signing client, server-generated object keys, MIME whitelist, size limits, per-user quota counting PENDING+READY, confirm step via statObject with reject+delete on mismatch; Acceptance: no bytes proxied through controllers; foreign media returns 404; oversize upload rejected"
+/ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-3] Review only: MinIO ObjectStorage port/adapter, presigned POST policy (content-length-range, Content-Type eq) and GET with public endpoint signing client, server-generated object keys, MIME whitelist, size limits, per-user quota with advisory lock, confirm step via statObject + magic bytes with quarantine+delete on mismatch, cleanup job for unconfirmed uploads, visibility reusing HazardReportService.getHazard; Acceptance: no bytes proxied through controllers; foreign media returns 404; oversize upload rejected by storage"
 /ecc:orchestrate custom "ecc:database-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-4] Review only: PostGIS native queries (ST_DWithin geography meters, ST_Contains envelope), refuge booking PESSIMISTIC_WRITE + per-night occupancy via generate_series, SOS lock ordering alert-then-team, @Version plus explicit expectedVersion check, transaction-aware typed Redis cache, dedicated async executor with AFTER_COMMIT listener; Acceptance: no overbooking path; no deadlock ordering; cache holds DTOs only"
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-5] Review only: thin REST controllers with record DTOs and JSR-380, MapStruct mappers with GeometryMapper, If-Match/ETag on maintenance PATCH, GlobalExceptionHandler RFC 7807 mapping incl. AccessDenied from @PreAuthorize and lock failures, OpenAPI bearer scheme; Acceptance: every error is application/problem+json; no entity exposed in responses; 201 with Location"
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-6] Review only: AbstractIntegrationTest singleton PostGIS+Redis Testcontainers with @ServiceConnection, truncate cleanup without @Transactional, concurrency ITs with CountDownLatch for bookings/SOS/optimistic lock, spatial IT with lon/lat regression, ProblemDetail contract IT; Acceptance: mvnw verify green from clean; concurrency tests pass 5/5 repeats; no in-memory DB"

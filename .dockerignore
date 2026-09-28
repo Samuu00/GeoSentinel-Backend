@@ -1,0 +1,13 @@
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+.claude
+target/
+*.log
+.env
+.env.example
+docs/
+graphify-out/
+*.md

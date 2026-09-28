@@ -1,0 +1,40 @@
+# Build + unit test (surefire) + integration test *IT (failsafe, Testcontainers: i runner ubuntu hanno Docker)
+# e build dell'immagine Docker, a ogni push su main e su ogni pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Il token del workflow può solo leggere il codice
+permissions:
+  contents: read
+
+# Un nuovo push sulla stessa PR/branch annulla la run precedente
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      # mvnw è versionato senza bit di esecuzione (100644)
+      - run: chmod +x mvnw
+      - run: ./mvnw -B verify
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      # Solo build (M0.4): nessun push su un registry
+      - run: docker build -t geosentinel-backend:ci .

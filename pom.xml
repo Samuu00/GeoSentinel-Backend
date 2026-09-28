@@ -65,6 +65,17 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- traceId/spanId nell'MDC per ogni richiesta (letti da GlobalExceptionHandler per i ProblemDetail).
+             In Boot 4 servono entrambi: il modulo di Boot (autoconfigurazione) e il bridge, che nel modulo è opzionale.
+             Niente exporter OTLP: le tracce non escono dall'app -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>

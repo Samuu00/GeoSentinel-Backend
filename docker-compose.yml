@@ -1,0 +1,147 @@
+# Infrastruttura di sviluppo. L'app di norma gira dall'IDE: `docker compose up -d` avvia solo i servizi.
+# Il backend in container parte con `docker compose --profile app up -d --build`.
+# Credenziali solo dal .env (vedi .env.example): nessun default, se una chiave manca il compose si ferma.
+
+services:
+  # ----------------------------------------------------------------------------
+  # PostgreSQL + PostGIS
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: geosentinel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB mancante nel .env}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER mancante nel .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD mancante nel .env}
+    ports:
+      # Solo localhost: il DB non va esposto sulla rete. Stessa DB_PORT che usa l'app dall'IDE
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # $$: variabili lette nel container, non interpolate dal compose
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - geosentinel-net
+
+  # ----------------------------------------------------------------------------
+  # Redis: blacklist JWT, rate limit, cache
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: geosentinel-redis
+    restart: unless-stopped
+    # Con password: l'app la invia sempre (spring.data.redis.password=${REDIS_PASSWORD})
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD mancante nel .env}",
+              "--save", "60", "1", "--loglevel", "warning"]
+    environment:
+      # Letta da redis-cli nell'healthcheck, così la password non compare negli argomenti del processo
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      # redis-cli esce con 0 anche su NOAUTH: si controlla la risposta
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - geosentinel-net
+
+  # ----------------------------------------------------------------------------
+  # MinIO. Le immagini ufficiali (minio/minio, quay.io/minio) non sono più scaricabili:
+  # fork della community pgsty, con tag RELEASE pinnato (mai latest)
+  # ----------------------------------------------------------------------------
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    container_name: geosentinel-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER mancante nel .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD mancante nel .env}
+    ports:
+      # Su tutte le interfacce: gli URL firmati li usa anche un telefono (MINIO_PUBLIC_ENDPOINT = IP del PC)
+      - "9000:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - geosentinel-net
+
+  # Crea il bucket PRIVATO (i media si leggono solo con URL firmati) e termina
+  minio-init:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    container_name: geosentinel-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-geosentinel-media}
+    # set -e: un errore fa uscire con codice != 0 e il backend non parte su un bucket mancante
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$MINIO_BUCKET"
+        mc anonymous set none "local/$$MINIO_BUCKET"
+    networks:
+      - geosentinel-net
+
+  # ----------------------------------------------------------------------------
+  # Backend (facoltativo, profilo "app")
+  # ----------------------------------------------------------------------------
+  backend:
+    build: .
+    image: geosentinel-backend:dev
+    container_name: geosentinel-backend
+    profiles: ["app"]
+    restart: unless-stopped
+    # Stesse chiavi che l'app legge dal .env quando gira dall'IDE
+    env_file: .env
+    environment:
+      # Profilo local: seed di sviluppo e Swagger
+      SPRING_PROFILES_ACTIVE: local
+      # Nel container "localhost" è il container stesso: si usano i nomi dei servizi
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: http://minio:9000
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      - geosentinel-net
+
+volumes:
+  postgres_data:
+    name: geosentinel_postgres_data
+  redis_data:
+    name: geosentinel_redis_data
+  minio_data:
+    name: geosentinel_minio_data
+
+networks:
+  geosentinel-net:
+    name: geosentinel-network

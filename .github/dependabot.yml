@@ -1,0 +1,28 @@
+# Aggiornamenti settimanali delle dipendenze (M0.5). Minor e patch raggruppate in una PR per ecosistema,
+# le major arrivano separate (possono rompere: vanno lette)
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      maven-minor-patch:
+        update-types: [minor, patch]
+
+  # Immagini base del Dockerfile (eclipse-temurin)
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Immagini del compose (postgis, redis, pgsty/minio, pgsty/mc)
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

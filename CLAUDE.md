@@ -18,7 +18,7 @@ Fase attuale: **solo backend**. Il piano completo, con milestone, task, firme e 
 | DB | PostgreSQL 16 + PostGIS, Hibernate Spatial + JTS, SRID 4326. Flyway (`ddl-auto=validate`) |
 | Sicurezza | `oauth2-resource-server` (Nimbus) con HS256, refresh token opaco (hash SHA-256) con rotazione per famiglia, blacklist dei `jti` su Redis, rate limit token bucket (Lua su Redis) |
 | Cache | Redis tramite Boot `RedisCacheManager`, `transactionAware`, **serializer JSON tipizzato per cache** (niente default typing) |
-| Storage | MinIO con pre-signed URL (dipendenza da aggiungere in M3) |
+| Storage | MinIO 9.0.3 (+ `okhttp-jvm` esplicito) con **presigned POST policy** per l'upload e GET firmato per il download |
 | DTO / mapping | Record Java + MapStruct 1.6.3 (`componentModel=spring`, `unmappedTargetPolicy=ERROR`). Niente Lombok |
 | Errori | RFC 7807 `ProblemDetail`, `type` = `https://geosentinel.dev/problems/<slug>` |
 | API docs | springdoc-openapi 3.1.1 |
@@ -213,20 +213,49 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - Scelte (27/09): stati dell'utente mantenuti (niente `IN_CHARGE`: l'esclusività è sul dispatch, `operatorId` registra l'operatore); rotte `/api/v1/sos` e `/api/v1/rescue-teams`; recupero notifiche con `notified_at` (ogni 30 s); conservazione GDPR a 90 giorni da `closed_at` (posizione arrotondata a 0.01°, note cancellate, `anonymized_at`); `POST /api/v1/sos` escluso dal rate limit; `createTeam` solo `ADMIN`. `notified_at`/`anonymized_at` non mappati nell'entità.
 - Test: `SosAlertTest`, `RateLimitFilterTest` (SOS senza rate limit). V6 aggiornata nel master plan.
 
-**M2 completo** lato codice; restano i checkpoint, che richiedono le migrazioni. Senza le migrazioni V1–V7 l'app non parte comunque.
+**M3 per `media` — scritto dall'utente, revisionato e corretto da Claude su richiesta (28/09):**
+- `media/domain`: `MediaFile` (`PENDING_UPLOAD → READY / QUARANTINED`, `@Version`, `size_bytes` dichiarata poi reale), `MediaStatus`, `MediaTargetType` (`TRAIL`, `HAZARD_REPORT`), `MediaPolicy` (whitelist JPEG/PNG/WebP, 10 MB, quota 1 GB, magic bytes). `application`: `MediaService`, `MediaCleanupJob`, porta `ObjectStorage`, `dto/MediaCommands`. `infrastructure`: `MediaFileRepository`, `storage/MinioObjectStorage` + `MinioConfig` + `MinioProperties`. `web`: `MediaController` (`/api/v1/media`), `MediaDtos`, `MediaMapper`.
+- `pom.xml`: `minio` 8.5.17 → **9.0.3** (la 8.5 portava `bcprov` 1.78.1, CVE-2025-8916) + **`okhttp-jvm` 5.3.2 esplicito**. Trappola: da okhttp 5 l'artefatto `okhttp` è multipiattaforma e con Maven arriva un jar vuoto; senza `okhttp-jvm` compila, ma va in `NoClassDefFoundError` alla prima chiamata. In MinIO 9 `Method` è `io.minio.Http.Method`.
+- Correzioni:
+  - non compilava (`new DomainException(...)` astratta) e non partiva (`MinioProperties` `@Validated` senza chiavi `geosentinel.storage.minio.*`); bucket letto da due property diverse;
+  - media di altri leggibili e scaricabili da chiunque: ora il proprietario vede tutto, gli altri solo i `READY` allegati a un'entità visibile (404 altrimenti);
+  - il confirm non verificava nulla: ora dimensione ≤ dichiarata e magic bytes; se non tornano, `QUARANTINED` + delete dell'oggetto;
+  - `response-content-type` messo sul PUT (inutile): ora sul GET, con `Content-Disposition: attachment`;
+  - object key con `ownerId` e filename del client: ora `yyyy/MM/uuid.ext`; `ownerId` e object key tolti dalle risposte;
+  - `entityType` stringa libera senza verifica: ora enum, esistenza del target controllata tramite `TrailService`/`HazardReportService`;
+  - creazione del bucket all'avvio (timeout MinIO di 5 minuti): ora la fa `minio-init`; un client di firma sul `publicEndpoint`, region fissa, timeout brevi;
+  - `Page` grezzo e sort libero → `PagedModel` + whitelist; 201 + `Location`; codice e import inutilizzati rimossi.
+- Limiti chiusi (28/09, scelte di Claude su richiesta):
+  - upload con **presigned POST policy** (`content-length-range`, `eq $Content-Type`, `eq $key`) invece del PUT: è MinIO a rifiutare un file troppo grande o di un altro tipo. Il client fa un POST multipart con `formFields` + `file`;
+  - `MediaCleanupJob` ogni 15 min: upload non confermati oltre TTL + 1 h → cancella la riga (`deleteIfPending` condizionale) e poi l'oggetto;
+  - i media di una segnalazione `REJECTED` seguono il `@PostAuthorize` di `HazardReportService.getHazard` (riusato, un'unica fonte della regola);
+  - foto su un sentiero solo `PARK_MANAGER` (`@PreAuthorize` con SpEL sul command), su una segnalazione solo il segnalatore;
+  - quota con advisory lock per utente (`pg_advisory_xact_lock(int, int)`: keyspace separato dal lock bigint degli SOS);
+  - `MediaRejectedException` → 415 / 413 / 422 (`media-*`), `StorageUnavailableException` → 503; tipo e dimensione li valida solo `MediaPolicy`, non il DTO;
+  - rotta `POST /api/v1/media/upload-requests` come nel piano; `DELETE` al proprietario o a un ADMIN.
+- Configurazione: nel `.env` servono `MINIO_ROOT_USER` e `MINIO_ROOT_PASSWORD` (le sceglie chi installa, le legge anche l'immagine MinIO), altrimenti l'avvio fallisce. `MINIO_BUCKET`, `MINIO_ENDPOINT` e `MINIO_PUBLIC_ENDPOINT` hanno un default (`geosentinel-media`, `http://localhost:9000`); il public endpoint va cambiato per un telefono (IP del PC) o per l'emulatore Android (`10.0.2.2`).
+- Test: `MediaPolicyTest`, `MediaServiceTest`. Master plan aggiornato: §1, M0.1–M0.3, M3 riscritta, V7, M5.1, M5.2, catena di review di M3.
 
-**Presenti ma non ancora revisionati:** `Dockerfile`, `docker-compose.yml` (vuoto).
+**Tutte le feature sono scritte** (M2 compreso), le migrazioni V1–V7 sono applicate e l'app parte: restano i checkpoint.
+
+**M0.4 — `Dockerfile` + `.dockerignore` scritti dall'utente, corretti da Claude su richiesta (28/09):** multi-stage alpine, utente non root, layer estratti con `-Djarmode=tools extract --layers --launcher` (Boot 4 ha rimosso `layertools`: `Unsupported jarmode`), file dell'app di proprietà di root (niente `--chown`), tolti `bash` e `java.security.egd`. Verificato: `docker build` verde, una modifica solo a `src` lascia in cache `go-offline` e il layer delle dipendenze, il processo gira come `geosentinel` (uid 100) e non può scrivere in `/app`, Boot 4.1.1 parte e si ferma su Flyway (nessun DB: atteso). 
+
+**M0.2 — `docker-compose.yml` scritto dall'utente, corretto da Claude su richiesta (28/09):**
+- Correzioni: bucket MinIO **pubblico** (`anonymous set download`) → `none`; Redis senza `--requirepass` (l'app manda `REDIS_PASSWORD` → `WRONGPASS`); `exit 0` in `minio-init` che nascondeva gli errori → `set -e`; credenziali con default deboli (`minioadmin`, segreto JWT pubblico) → `${VAR:?}`; backend con chiavi inesistenti (`GEOSENTINEL_SECURITY_JWT_SECRET_KEY`, `..._DEFAULT_BUCKET`, `MINIO_BUCKET_NAME`) e senza `JWT_SECRET` → `env_file: .env` + nomi dei servizi, sotto `profiles: ["app"]`; `stringtype=unspecified` tolto; porte di Postgres/Redis/console solo su `127.0.0.1`.
+- **Immagini MinIO ufficiali non più scaricabili** (Docker Hub: repository inesistente, quay.io: 401): `pgsty/minio` e `pgsty/mc` (fork della community) con tag `RELEASE.*` pinnato.
+- Verificato: tutti `healthy`, `minio-init` exit 0, PostGIS 3.4.3, bucket privato (GET anonimo → 403), Redis rifiuta chi non ha la password.
+- **Porta 5432 occupata da un PostgreSQL di Windows** sul PC dell'utente: nel `.env` serve `DB_PORT=5433` (la leggono sia il compose sia l'app).
 
 **Configurazione:** un solo formato, `.properties` (i file `.yml` sono stati rimossi). I profili si aggiungono come `application-<profilo>.properties`.
 
 **Aperti:**
 - `RoleHierarchy`: da verificare che valga anche per `authorizeHttpRequests` e non solo per la method security (prova: token `ADMIN` su una rotta `PARK_MANAGER`).
-- `traceId` nell'MDC: lo imposta ancora nessuno. Deciso: `micrometer-tracing-bridge-otel` (aggiunto a M0.1 nel piano).
 - `GeoSentinelApplicationTests` è un `@SpringBootTest`: in `./mvnw test` cerca Postgres e fallisce finché mancano DB e migrazioni. Da sostituire con `MigrationIT` (M6.2) o rimuovere.
 - `pom.xml`: `groupId` ancora `org.example` (il package è `it.unical.geosentinel`).
 - `src/main/resources/static` e `templates`: cartelle vuote del progetto iniziale, da rimuovere.
-- `application-local.properties` esiste ma è vuoto (M0.3: flyway con `db/seed`, springdoc attivo, logging SQL).
+- `application-local.properties` fatto (28/09): solo differenze dal base (flyway con `db/seed`, springdoc acceso, logging SQL), nessun segreto. Redis nel base: `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD` (vuota di default).
 - Nessun test copre ancora `MaintenanceService` (cache evict su `#result`, confronto di `expectedVersion`): li coprirà `MaintenanceOptimisticLockIT` (M6.2), che richiede V5.
+- Flusso media mai provato contro un MinIO vero (POST policy, `statObject`, lettura dei primi byte): serve il compose (M0.2) e V7. Da valutare `MediaUploadIT` con il modulo Testcontainers MinIO.
 
 **Correzioni della review completa (22/09, sera):**
 - `RateLimitFilter`: un bucket per policy (`rl:auth:*` separato da `rl:*`). Con la chiave condivisa le GET pubbliche ricaricavano il bucket del login, aggirando il limite di 5 al minuto. `Retry-After` arrotondato per eccesso. Test: `RateLimitFilterTest`.
@@ -240,7 +269,24 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 **Revisione del piano (22/09):** aggiunte le decisioni D11 (password max 72 byte UTF-8, BCrypt) e D12 (`Idempotency-Key` su SOS e prenotazioni), il task M0.5 (CI + Dependabot), login a tempo costante e limite per account, scadenza assoluta della sessione di refresh, magic bytes e `Content-Disposition: attachment` sui media, recupero delle notifiche SOS perse (`notified_at`), conservazione delle posizioni SOS.
 - Nel PATH c'è `javap` di un JDK 15; Maven usa correttamente il JDK 21 (`JAVA_HOME`).
 
-**Prossimo passo:** M1.1, migrazioni Flyway V1–V7 (senza, l'app non parte con `ddl-auto=validate`). V1+V2 bastano per far partire `identity`; V3 deve includere le colonne di audit anche su `pois` (`Poi` estende `AuditableEntity`) e `hazard_reports.reporter_id` come `uuid` con FK e indice. Il web di `trail` è fatto: le sue rotte si potranno provare appena c'è V3. Anche `refuge` è completo (web incluso): le sue rotte si provano con V4. Lo stesso vale per `maintenance` con V5 (colonne nel master plan: target multipli, `assigned_to`, `resolved_at`, audit). Resta da scrivere solo `media` (M3); `emergency` si prova con V6. In parallelo restano da chiudere M0.2 (compose + `.env.example`), M0.4 (Dockerfile) e M0.5 (CI).
+**M1.1 — migrazioni V1–V7 + seed scritti dall'utente, riscritti da Claude su richiesta (28/09):**
+- File: `V1__extensions`, `V2__users_and_auth`, `V3__trails_and_refuges` (trails, pois, refuges, bookings), `V4__hazard_reports`, `V5__maintenance`, `V6__emergency`, `V7__media`, `db/seed/R__local_seed.sql`. Nomi dell'utente mantenuti (la tabella del master plan è allineata).
+- Le versioni dell'utente non corrispondevano alle entità (l'app non sarebbe partita): tabelle (`refuge_bookings` invece di `bookings`, `pois` e `refresh_tokens` assenti), colonne (`route`/`path`, `is_open`/`status`, `hazard_type`/`type`, `username`, `first_name`…), niente `created_by`/`updated_by`, enum diversi (`HARD`, `URGENT`, `CLOSED`, `PENDING`, `DELETED`), `version` su tabelle senza `@Version`, mancavano `length_m` generata, `idempotency_key`, `location_updated_at`, `operator_id`, `anonymized_at`, `manager_id`, i GiST su `::geography`, `UNIQUE (user_id, idempotency_key)` e l'indice unico dell'allerta attiva. Il vincolo "esattamente un target" dei ticket rompeva `forHazard` (ha anche il sentiero): ora `num_nonnulls(...) >= 1`. Tolte `uuid-ossp`/`pgcrypto` (inutili).
+- Seed: l'hash BCrypt era inventato e senza `{bcrypt}` (il `DelegatingPasswordEncoder` avrebbe fallito): ora hash vero di `Password123!`; email minuscole; niente media (oggetto assente nel bucket). Utenti: `admin@`, `manager@`, `rescuer@`, `hiker@`, `hiker2@geosentinel.dev`.
+- Verificato sul Postgres del compose: 8 migrazioni applicate, `validate` passa, app avviata; `length_m` 3193 e 4525 m; `EXPLAIN` usa `idx_trails_path_geog`; login di `hiker@` → 200, password errata → 401, GET di un sentiero → 200.
+- Sul PC dell'utente la 8080 è occupata da un'altra applicazione (non GeoSentinel): per provare in parallelo `--server.port=...`.
+- **Migrazioni ora applicate: sono immutabili.** Ogni modifica va in una `V8__...` nuova (altrimenti Flyway rifiuta l'avvio per checksum diverso).
+
+**M0 completata (28/09, scritta da Claude su richiesta):**
+- Tracing: `spring-boot-micrometer-tracing-opentelemetry` + `micrometer-tracing-bridge-otel` (servono entrambi in Boot 4: il bridge nel modulo è opzionale). `ProblemDetailWriter` aggiunge il `traceId` dall'MDC come `GlobalExceptionHandler`. Verificato: 404 e 401 hanno `traceId`.
+- `.github/workflows/ci.yml` (job `verify` con `./mvnw -B verify` + job `docker`), `.github/dependabot.yml` (maven, docker, docker-compose, github-actions). Action: `checkout@v7`, `setup-java@v6`.
+- Checkpoint di M0.1 e M0.3 verificati e spuntati.
+- **Resta all'utente:** secret scanning + push protection (Settings → Code security su GitHub). Checkpoint di M0.5 (PR rossa con un test rotto, prima PR di Dependabot) verificabili solo dopo il push.
+- **La CI sarà rossa finché:** `GeoSentinelApplicationTests` cerca Postgres sulla 5432 e `support/AbstractIntegrationTest.java` (in scrittura dall'utente) non compila (`org.springframework.boot.test.autoconfigure.web.servlet` non esiste in Boot 4: il package è cambiato).
+
+**Prossimo passo:**
+1. **M6.1 `AbstractIntegrationTest`** (in corso) + **`MigrationIT`**, che sostituisce `GeoSentinelApplicationTests`: la CI torna verde.
+2. Checkpoint manuali di M2 (curl: register → login → logout → 401, refresh riusato, 429), poi M3 (upload su MinIO vero) e M4.
 
 ## Comandi
 ```bash
