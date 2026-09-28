@@ -1,5 +1,5 @@
 # Build & Dependency Resolution
-FROM eclipse-temurin:21-jdk-alpine AS builder
+FROM eclipse-temurin:24-jdk-alpine AS builder
 WORKDIR /workspace
 
 # Cache delle dipendenze Maven (mvnw è uno script sh: scarica Maven con il wget/unzip di busybox, niente bash)
@@ -18,7 +18,7 @@ RUN java -Djarmode=tools -jar target/*.jar extract --layers --launcher --destina
 
 
 # Lightweight Runtime Image
-FROM eclipse-temurin:21-jre-alpine AS runner
+FROM eclipse-temurin:24-jre-alpine AS runner
 WORKDIR /app
 
 # Hardening di sicurezza: crea utente e gruppo di sistema non privilegiati
