@@ -8,7 +8,7 @@
         <version>4.1.1</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
-    <groupId>org.example</groupId>
+    <groupId>it.unical</groupId>
     <artifactId>GeoSentinel-Backend</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>GeoSentinel</name>

@@ -14,6 +14,7 @@ import it.unical.geosentinel.trail.application.PoiService;
 import it.unical.geosentinel.trail.application.dto.PoiCommands.PoiView;
 import it.unical.geosentinel.trail.web.dto.PoiDtos.CreatePoiRequest;
 import it.unical.geosentinel.trail.web.dto.PoiDtos.PoiResponse;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -68,6 +70,7 @@ public class PoiController {
     }
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(summary = "Create a new POI", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<PoiResponse> create(@Valid @RequestBody CreatePoiRequest request) {
         PoiView created = poiService.create(trailMapper.toCommand(request));

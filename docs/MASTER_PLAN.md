@@ -2,6 +2,8 @@
 
 > Ruolo di Claude: mentore/architetto/reviewer. **Il codice lo scrivi tu.** Qui trovi solo struttura, contratti (firme), vincoli e checkpoint.
 > Regola di avanzamento: un task si chiude solo quando **tutti** i suoi checkpoint passano. Poi chiedi la review (vedi §5).
+>
+> **Stato (28/09): piano completato.** Tutte le voci e i checkpoint di M0–M6 sono spuntati. `./mvnw clean verify` verde (41 unit + 63 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
 ---
 
@@ -24,7 +26,7 @@
 
 **Da sistemare subito (stato attuale del repo):**
 - ~~`application.properties` → rimuovi `hibernate.dialect=...PostgresSpatialDialect`~~ (fatto).
-- ~~Password DB hardcoded~~ → fatto: credenziali da `.env` con le chiavi `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, le stesse lette dall'immagine Postgres. `POSTGRES_DB` contiene il **nome** del database, non l'URL JDBC: l'URL si costruisce in `application.properties`. Aggiungi `.env.example`.
+- ~~Password DB hardcoded~~ → fatto: credenziali da `.env` con le chiavi `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, le stesse lette dall'immagine Postgres. `POSTGRES_DB` contiene il **nome** del database, non l'URL JDBC: l'URL si costruisce in `application.properties`. ~~Aggiungi `.env.example`~~ (fatto in M0.2).
 - ~~Base package reale~~ → fatto: `it.unical.geosentinel`.
 
 ---
@@ -33,8 +35,12 @@
 
 ```
 GeoSentinel-Backend/
-├── docker-compose.yml
+├── .github/
+│   ├── workflows/ci.yml   # verify (unit + IT), docker build, gitleaks
+│   └── dependabot.yml
+├── docker-compose.yml     # postgres, redis, minio (pgsty), minio-init; backend col profilo "app"
 ├── Dockerfile
+├── .dockerignore
 ├── .env.example
 ├── pom.xml
 ├── docs/
@@ -139,14 +145,14 @@ GeoSentinel-Backend/
     └── test/
         ├── java/it/unical/geosentinel/
         │   ├── support/AbstractIntegrationTest.java
-        │   ├── identity/  AuthServiceTest, AuthServiceLogoutTest, AuthServiceLoginLimitTest, RateLimitFilterTest, AuthFlowIT, RateLimitIT
+        │   ├── identity/  AuthServiceLogoutTest, AuthServiceLoginLimitTest, RateLimitFilterTest, AuthFlowIT, RateLimitIT
         │   ├── trail/     TrailDetailCacheSerializationTest, TrailSpatialQueryIT
         │   ├── refuge/    BookingTest, RefugeBookingServiceTest, BookingControllerTest, RefugeBookingConcurrencyIT
         │   ├── maintenance/ MaintenanceTicketTest, MaintenanceControllerTest, MaintenanceOptimisticLockIT
-        │   ├── emergency/ SosAssignmentConcurrencyIT, SosAlertTest
+        │   ├── emergency/ SosAlertTest, SosAssignmentConcurrencyIT, SosNotificationRecoveryIT
         │   ├── media/     MediaPolicyTest, MediaServiceTest (+ MediaUploadIT opzionale)
         │   └── shared/    ProblemDetailWriterTest, GeoJsonLineStringTest, MaxUtf8BytesTest,
-        │                  ProblemDetailContractIT, MigrationIT
+        │                  MigrationIT, IdempotencyIT, ProblemDetailContractIT
         └── resources/application-test.properties
 ```
 
@@ -249,7 +255,7 @@ File:
 **Obiettivo:** ogni push verifica build, test e dipendenze senza intervento manuale.
 - [x] `.github/workflows/ci.yml`: job `verify` (JDK 21 Temurin, cache Maven, `chmod +x mvnw` perché è versionato 100644, `./mvnw -B verify`: i runner GitHub hanno Docker, quindi girano anche gli IT con Testcontainers) e job `docker` (`docker build`, niente push). `permissions: contents: read`, `concurrency` che annulla le run superate
 - [x] `.github/dependabot.yml`: ecosistemi `maven` (minor/patch raggruppate), `docker`, `docker-compose`, `github-actions`, cadenza settimanale
-- [ ] Secret scanning + push protection attivi nelle impostazioni del repo (niente codice: Settings → Code security)
+- [x] Secret scanning: GitHub non lo offre sui repo privati di un account personale (Advanced Security → Secret Protection è a pagamento). Sostituito dal job `secrets` della CI: gitleaks 8.30.1 (binario con checksum verificato) su tutta la storia a ogni push/PR. Storia attuale: 15 commit, nessun segreto. Push protection: non disponibile, il `.env` resta nel `.gitignore`
 
 **Checkpoint:** una PR con un test rotto diventa rossa; Dependabot apre la prima PR.
 
@@ -475,13 +481,13 @@ I 401/403 generati nei filtri **non passano** da `@RestControllerAdvice`.
   - le risposte non espongono `ownerId` né l'object key (come `reporterId` in `HazardResponse`)
 - Test: `MediaPolicyTest` (magic bytes, HTML dichiarato JPEG, file troncato, quota, motivi 415/413/422), `MediaServiceTest` (media di una segnalazione `REJECTED` nascosti agli altri, proprietario sempre ammesso, lock prima della quota)
 
-**Checkpoint M3:**
-- [ ] curl `upload-requests` → `curl -F` con tutti i `formFields` e `-F file=@foto.jpg` sull'`uploadUrl` → 204 → confirm → `READY`
-- [ ] Upload di un file più grande del dichiarato → MinIO risponde 400 (`EntityTooLarge`)
-- [ ] File di testo caricato come `image/jpeg` → confirm → `QUARANTINED` e oggetto sparito dal bucket
-- [ ] `application/x-msdownload` → 415 problem+json; 11 MB → 413
-- [ ] Media non allegato di un altro utente → 404; media di una segnalazione `REJECTED` altrui → 404
-- [ ] Upload non confermato → dopo circa 1 h 10 min riga e oggetto spariti
+**Checkpoint M3** (verificati il 28/09 dal vivo: app `local` + MinIO `pgsty` del compose, script con le API reali; `MediaUploadIT` resta facoltativo):
+- [x] `upload-requests` → POST multipart con tutti i `formFields` e `file` sull'`uploadUrl` → 204 → confirm → `READY`; download dall'URL firmato: byte identici, `image/jpeg` + `Content-Disposition: attachment`
+- [x] Upload di un file più grande del dichiarato → MinIO risponde 400 (`EntityTooLarge`); `Content-Type` diverso da quello firmato → 403
+- [x] File di testo caricato come `image/jpeg` → confirm → `QUARANTINED` e oggetto sparito dal bucket
+- [x] `application/x-msdownload` → 415 problem+json; 11 MB → 413
+- [x] Media non allegato di un altro utente → 404 (anche `download-url`); media di una segnalazione `REJECTED` altrui → 404 (anche `/attached`), visibile al segnalatore e al PARK_MANAGER; HIKER su un sentiero → 403, su una segnalazione altrui → 404
+- [x] Upload non confermato (retrodatato di 2 h) → al primo giro di `MediaCleanupJob` riga e oggetto spariti
 
 ---
 
@@ -578,8 +584,8 @@ Query native (servono il cast `::geography` e le funzioni PostGIS):
 
 **Checkpoint M4 (manuale, i test automatici arrivano in M6):**
 - [x] `findNearby` con un punto a 100 m dal sentiero → lo trova con r=200, non con r=50 (`TrailSpatialQueryIT`)
-- [ ] `redis-cli KEYS 'gs:cache:*'` dopo un GET trail → chiave presente; dopo update → sparita
-- [ ] Log mostra `sos-notify-1` che gestisce l'evento **dopo** la risposta HTTP del `raise`
+- [x] Dopo un GET trail `gs:cache:trails::<id>` presente (TTL 600 s, valore JSON); dopo `PATCH /status` sparita; il GET successivo rilegge dal DB e rimette in cache (verificato dal vivo il 28/09)
+- [x] Il log mostra `sos-notify-1` che gestisce l'evento dopo il commit, fuori dal thread della richiesta (`http-nio-*`), con lo **stesso `traceId`** (MDC propagato dal `TaskDecorator`); `notified_at` scritto 8 ms dopo `created_at` (verificato dal vivo il 28/09)
 - [x] Due `POST /sos` con la stessa `Idempotency-Key` → una sola allerta, stessa risposta (`IdempotencyIT`)
 - [x] Due `POST /bookings` con la stessa `Idempotency-Key` → 201 poi 200 con la stessa prenotazione, una sola riga; stessa chiave con body diverso → 422 (`IdempotencyIT`)
 - [x] Allerta con `notified_at` NULL più vecchia di 60 s → il job la notifica una sola volta (`SosNotificationRecoveryIT`)
@@ -670,11 +676,11 @@ Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida
 
 #### M5.3 — OpenAPI
 - [x] `OpenApiConfig`: `@SecurityScheme(name = "bearerAuth", type = HTTP, scheme = "bearer", bearerFormat = "JWT")`, info del progetto
-- [ ] `@Tag` per controller, `@ApiResponse` per 400/401/403/404/409 con schema `ProblemDetail`
+- [x] `@Tag` per controller (già presenti); risposte di errore con schema `ProblemDetail` (`application/problem+json`) aggiunte da un solo `OpenApiCustomizer` in `OpenApiConfig`, invece di `@ApiResponse` ripetute: 400, 429 e 500 ovunque; 401/403 sulle operazioni con `bearerAuth`; 404 sui path con `{…}`; 409 sulle scritture autenticate. Le risposte già dichiarate (`AuthController`) restano. Ogni rotta protetta deve dichiarare `security = @SecurityRequirement(name = "bearerAuth")`: senza, Swagger non manda il token (mancava sulle 3 GET di `RefugeController`)
 - [x] Docs disabilitate fuori da `local` (`springdoc.api-docs.enabled: false` nel profilo base)
 
 **Checkpoint M5:**
-- [ ] Swagger UI su `/swagger-ui.html`: login con "Authorize" e chiamata di una rotta protetta
+- [x] Swagger UI su `/swagger-ui.html`: "Authorize" con il token di `hiker@` → `GET /refuges/{id}` parte con `Authorization: Bearer` e risponde 200 (verificato nel browser il 28/09; senza token 401)
 - [x] Body malformato → 400 con `errors[]`; lat=200 → 400 (`ProblemDetailContractIT`)
 - [x] PATCH ticket senza `If-Match` → 428 (`MaintenanceControllerTest`); con versione vecchia → 409 (`MaintenanceOptimisticLockIT`)
 - [x] `POST /bookings` senza `Idempotency-Key` → 428; non UUID → 400 (`BookingControllerTest`)
@@ -707,11 +713,11 @@ Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida
 | `SosNotificationRecoveryIT` | nessun SOS senza notifica | allerta con `notified_at` NULL più vecchia di 60 s → il job la notifica; lanciato due volte → una sola notifica effettiva |
 | `RateLimitIT` | 429 + `Retry-After` | N+1-esima richiesta bloccata |
 | `ProblemDetailContractIT` | contratto errori | 400/401/403/404/409/429 → `application/problem+json` con `type/title/status/instance` |
-| Unit: `AuthServiceTest`, `RefugeBookingServiceTest`, `MediaServiceTest`, `SosAlertTest` | logica pura con Mockito | nessun container. `AuthServiceTest` verifica che con email inesistente `passwordEncoder.matches` venga **comunque** chiamato (tempo costante); `MediaServiceTest` copre i magic bytes |
+| Unit: `AuthServiceLoginLimitTest`, `AuthServiceLogoutTest`, `RefugeBookingServiceTest`, `MediaServiceTest`, `SosAlertTest` | logica pura con Mockito | nessun container. `AuthServiceLoginLimitTest` verifica che con email inesistente `passwordEncoder.matches` venga **comunque** chiamato (tempo costante); `MediaServiceTest` copre i magic bytes |
 
 Pattern del test di concorrenza (da scrivere tu): `ExecutorService` a N thread, `CountDownLatch ready/start`, ogni task chiama il **service** (non il repository) e registra successo/eccezione in collezioni thread-safe; `invokeAll` + asserzioni sui conteggi. Esegui ogni test di concorrenza **almeno 5 volte** di fila (`@RepeatedTest(5)`): se passa solo a volte, hai una race.
 
-Opzionali, da aggiungere quando servono: `MediaUploadIT` col modulo Testcontainers MinIO; un test ArchUnit che fa rispettare le regole di dipendenza del §1 (utile se il team cresce); JaCoCo.
+Opzionali, da aggiungere quando servono: `MediaUploadIT` col modulo Testcontainers MinIO (il flusso media è verificato dal vivo in M3, ma non in CI; immagine `pgsty/minio` con `asCompatibleSubstituteFor("minio/minio")`); un test ArchUnit che fa rispettare le regole di dipendenza del §1 (utile se il team cresce); JaCoCo.
 
 **Checkpoint M6 (Definition of Done del backend):**
 - [x] `./mvnw verify` verde da zero con Docker attivo (41 unit + 63 IT, ~45 s; due esecuzioni consecutive verdi)
@@ -721,6 +727,8 @@ Opzionali, da aggiungere quando servono: `MediaUploadIT` col modulo Testcontaine
 ---
 
 ## 4. Ordine di esecuzione e dipendenze
+
+> Ordine pianificato all'inizio. Quello reale è stato: feature (M1.3, M2, M3, M4, M5.2) prima dell'infrastruttura, poi M0.2 → M1.1 → M0.4 → M0.5 → M6 → verifiche dal vivo di M3/M4 → M5.3. Lezione: con `ddl-auto=validate` l'app non parte finché non esistono tutte le migrazioni, quindi M0.2 + M1.1 vanno fatti presto.
 
 ```
 M0.1 → M0.2 → M0.3 → M0.4 → M0.5
@@ -762,7 +770,8 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 ---
 
 ## 6. Come lavoriamo da qui
-1. Scegli il task (parti da **M0.1**).
+Il piano è completato. Per una nuova funzionalità (es. frontend, notifiche reali, `MediaUploadIT`):
+1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
-3. Chiedimi "review M0.1": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.
+3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.
 4. Spunta i checkpoint e passa al task successivo.

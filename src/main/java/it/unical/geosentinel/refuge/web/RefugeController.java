@@ -18,6 +18,7 @@ import it.unical.geosentinel.refuge.web.dto.RefugeDtos.CreateRefugeRequest;
 import it.unical.geosentinel.refuge.web.dto.RefugeDtos.RefugeResponse;
 import it.unical.geosentinel.refuge.web.dto.RefugeDtos.UpdateCapacityRequest;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -49,14 +51,14 @@ public class RefugeController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get refuge details by ID")
+    @Operation(summary = "Get refuge details by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RefugeResponse> getById(@PathVariable UUID id) {
         RefugeView view = refugeBookingService.getRefuge(id);
         return ResponseEntity.ok(refugeMapper.toResponse(view));
     }
 
     @GetMapping("/nearby")
-    @Operation(summary = "Find refuges within a given distance in meters from coordinates")
+    @Operation(summary = "Find refuges within a given distance in meters from coordinates", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<RefugeResponse>> findNearby(
             @RequestParam("lon") @DecimalMin("-180") @DecimalMax("180") double lon,
             @RequestParam("lat") @DecimalMin("-90") @DecimalMax("90") double lat,
@@ -68,7 +70,7 @@ public class RefugeController {
     }
 
     @GetMapping("/{id}/availability")
-    @Operation(summary = "Check bed availability per night in a date range [from, to)")
+    @Operation(summary = "Check bed availability per night in a date range [from, to)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<AvailableResponse> checkAvailability(
             @PathVariable UUID id,
             @RequestParam("from") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -79,6 +81,7 @@ public class RefugeController {
     }
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(summary = "Register a new refuge", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RefugeResponse> create(@Valid @RequestBody CreateRefugeRequest request){
         RefugeView created = refugeBookingService.createRefuge(

@@ -14,6 +14,7 @@ import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.Bookin
 import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.BookingView;
 import it.unical.geosentinel.refuge.web.dto.BookingDtos.BookingResponse;
 import it.unical.geosentinel.refuge.web.dto.BookingDtos.CreateBookingRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -44,6 +46,7 @@ public class BookingController {
     }
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(
             summary = "Book beds in a refuge",
             security = @SecurityRequirement(name = "bearerAuth"),
@@ -94,6 +97,7 @@ public class BookingController {
     }
 
     @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(summary = "Cancel a confirmed booking", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<Void> cancelBooking(@PathVariable UUID id){
         UUID userId = currentUser.getRequiredUserId();

@@ -1,7 +1,7 @@
 # GeoSentinel — Backend
 
 Piattaforma per la sicurezza dei sentieri montani, il monitoraggio ambientale e le emergenze outdoor.
-Fase attuale: **solo backend**. Il piano completo, con milestone, task, firme e checkpoint, è in [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md).
+Fase attuale: **solo backend, completato il 28/09** (tutte le milestone M0–M6 chiuse, `./mvnw clean verify` verde). Il piano completo, con milestone, task, firme e checkpoint, è in [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md).
 
 ## Come lavoriamo (regola tassativa)
 - **Il codice lo scrive l'utente, riga per riga.** Claude fa da mentore, architetto e reviewer: definisce struttura e contratti, poi revisiona.
@@ -21,8 +21,11 @@ Fase attuale: **solo backend**. Il piano completo, con milestone, task, firme e 
 | Storage | MinIO 9.0.3 (+ `okhttp-jvm` esplicito) con **presigned POST policy** per l'upload e GET firmato per il download |
 | DTO / mapping | Record Java + MapStruct 1.6.3 (`componentModel=spring`, `unmappedTargetPolicy=ERROR`). Niente Lombok |
 | Errori | RFC 7807 `ProblemDetail`, `type` = `https://geosentinel.dev/problems/<slug>` |
-| API docs | springdoc-openapi 3.1.1 |
-| Test | JUnit 5, Mockito, Testcontainers (`postgis/postgis:16-3.4`, `redis:7-alpine`). Test `*IT` con failsafe |
+| API docs | springdoc-openapi 3.1.1 (solo profilo `local`); errori `ProblemDetail` documentati da un `OpenApiCustomizer` in `OpenApiConfig` |
+| Osservabilità | Micrometer Tracing OTel (`spring-boot-micrometer-tracing-opentelemetry` + `micrometer-tracing-bridge-otel`, servono entrambi): `traceId` nell'MDC e in ogni `ProblemDetail`. Nessun exporter |
+| Test | JUnit 5, Mockito, Testcontainers 2 (`postgis/postgis:16-3.4-alpine`, `redis:7.2-alpine`). Test `*IT` con failsafe, base `support/AbstractIntegrationTest` |
+| Infrastruttura | `docker-compose.yml`: PostGIS, Redis con password, MinIO **`pgsty/minio`** (le immagini ufficiali non sono più scaricabili) + `minio-init` (bucket privato). `Dockerfile` multi-stage alpine, `jarmode=tools` |
+| CI | GitHub Actions (`verify`, `docker`, `secrets` con gitleaks), Dependabot (maven, docker, docker-compose, github-actions) |
 
 ## Struttura
 ```
@@ -63,6 +66,13 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
   - `@TransactionalEventListener(AFTER_COMMIT)` con eventi che contengono dati, non entità.
 - **Jackson:** usare `tools.jackson.databind.json.JsonMapper` (Jackson 3). Jackson 2 (`com.fasterxml...ObjectMapper`) arriva solo come dipendenza transitiva di springdoc: **non esiste come bean**.
 - **Eccezioni:** la rinomina `OptimisticConflictException` serve a evitare lo scontro con `java.util.ConcurrentModificationException`. Occhio agli auto-import.
+- **Migrazioni:** V1–V7 sono applicate, quindi immutabili. Ogni modifica allo schema va in una `V8__...` nuova (altrimenti Flyway rifiuta l'avvio per checksum diverso). `validate` non controlla `NOT NULL` né lunghezze: vanno replicati a mano nel DDL. Il seed `R__local_seed.sql` è repeatable e si può modificare.
+- **OpenAPI:** ogni rotta protetta dichiara `security = @SecurityRequirement(name = "bearerAuth")` nella `@Operation` (senza, Swagger non manda il token). Le creazioni hanno `@ResponseStatus(HttpStatus.CREATED)`, le cancellazioni `NO_CONTENT` (solo per la documentazione). Le risposte di errore le aggiunge il customizer: niente `@ApiResponse` ripetute.
+- **Test di integrazione:**
+  - estendono `AbstractIntegrationTest`, senza `@Transactional`; fixture con `insertTrail/insertRefuge/insertTeam`, utenti con `createUser/obtainToken(Role)`;
+  - concorrenza con `runConcurrently(n, task)` + `@RepeatedTest(5)` e richieste HTTP reali (`call(...)`), non MockMvc;
+  - ogni test resta sotto le 5 chiamate a `/api/v1/auth/**` (rate limit per IP, azzerato da `FLUSHALL` prima di ogni test);
+  - `Content-Type` degli errori: confrontare tipo e sottotipo (`isProblemJson`), dai filtri arriva `;charset=UTF-8`.
 
 ## Stato di avanzamento
 **Fatto e revisionato:**
@@ -236,7 +246,7 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - Configurazione: nel `.env` servono `MINIO_ROOT_USER` e `MINIO_ROOT_PASSWORD` (le sceglie chi installa, le legge anche l'immagine MinIO), altrimenti l'avvio fallisce. `MINIO_BUCKET`, `MINIO_ENDPOINT` e `MINIO_PUBLIC_ENDPOINT` hanno un default (`geosentinel-media`, `http://localhost:9000`); il public endpoint va cambiato per un telefono (IP del PC) o per l'emulatore Android (`10.0.2.2`).
 - Test: `MediaPolicyTest`, `MediaServiceTest`. Master plan aggiornato: §1, M0.1–M0.3, M3 riscritta, V7, M5.1, M5.2, catena di review di M3.
 
-**Tutte le feature sono scritte** (M2 compreso), le migrazioni V1–V7 sono applicate e l'app parte: restano i checkpoint.
+**Tutte le feature sono scritte e verificate** (M2 compreso), le migrazioni V1–V7 sono applicate, tutti i checkpoint del piano sono chiusi.
 
 **M0.4 — `Dockerfile` + `.dockerignore` scritti dall'utente, corretti da Claude su richiesta (28/09):** multi-stage alpine, utente non root, layer estratti con `-Djarmode=tools extract --layers --launcher` (Boot 4 ha rimosso `layertools`: `Unsupported jarmode`), file dell'app di proprietà di root (niente `--chown`), tolti `bash` e `java.security.egd`. Verificato: `docker build` verde, una modifica solo a `src` lascia in cache `go-offline` e il layer delle dipendenze, il processo gira come `geosentinel` (uid 100) e non può scrivere in `/app`, Boot 4.1.1 parte e si ferma su Flyway (nessun DB: atteso). 
 
@@ -248,12 +258,18 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 
 **Configurazione:** un solo formato, `.properties` (i file `.yml` sono stati rimossi). I profili si aggiungono come `application-<profilo>.properties`.
 
-**Aperti:**
+**Aperti (nessuno blocca il backend):**
+- IntelliJ: la run configuration in `.idea/workspace.xml` punta ancora a `org.example.geosentinel.GeoSentinelApplication`: va cambiata in `it.unical.geosentinel.GeoSentinelApplication` dall'IDE.
+- Commit e push delle modifiche della chiusura del piano (poi, con GitHub Pro, regola "status checks" su `main`).
 - `RoleHierarchy`: verificata per la method security (`AuthFlowIT`). Da riverificare per `authorizeHttpRequests` solo se una rotta userà `hasRole(...)` in `SecurityConfig` (oggi solo `authenticated()`).
-- `pom.xml`: `groupId` ancora `org.example` (il package è `it.unical.geosentinel`).
-- `src/main/resources/static` e `templates`: cartelle vuote del progetto iniziale, da rimuovere.
+
+**Limiti noti accettati** (scelte documentate, non bug):
+- `updateCapacity` può scendere sotto le prenotazioni confermate; `GET /bookings/my` senza paginazione; il lock sulla riga del rifugio serializza tutte le prenotazioni di quel rifugio.
+- Notifica SOS finta (solo log) e consegnabile due volte (chi la riceve deve tollerare i duplicati).
+- La registrazione rivela che un'email esiste (422); il refresh token viaggia nel body (va bene per mobile, non per una SPA).
+- MinIO da un fork della community (`pgsty`): da tenere d'occhio con Dependabot. La versione di gitleaks in `ci.yml` si aggiorna a mano.
 - `application-local.properties` fatto (28/09): solo differenze dal base (flyway con `db/seed`, springdoc acceso, logging SQL), nessun segreto. Redis nel base: `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD` (vuota di default).
-- Flusso media mai provato contro un MinIO vero (POST policy, `statObject`, lettura dei primi byte): serve il compose (M0.2) e V7. Da valutare `MediaUploadIT` con il modulo Testcontainers MinIO.
+- Flusso media verificato dal vivo il 28/09 (vedi M3 sotto), non ancora coperto da un test automatico: `MediaUploadIT` (modulo `testcontainers-minio` + `pgsty/minio` come `asCompatibleSubstituteFor("minio/minio")`) resta facoltativo.
 
 **Correzioni della review completa (22/09, sera):**
 - `RateLimitFilter`: un bucket per policy (`rl:auth:*` separato da `rl:*`). Con la chiave condivisa le GET pubbliche ricaricavano il bucket del login, aggirando il limite di 5 al minuto. `Retry-After` arrotondato per eccesso. Test: `RateLimitFilterTest`.
@@ -294,17 +310,44 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - `RoleHierarchy` verificata per la method security (token ADMIN su `POST /refuges` → 201). Le rotte HTTP usano solo `authenticated()`, quindi il dubbio su `authorizeHttpRequests` non ha effetti oggi.
 - **`./mvnw verify` verde da zero: 41 unit + 63 IT in ~45 s, due esecuzioni consecutive verdi.** Nessun bug trovato nel codice di produzione.
 
-**Prossimo passo:**
-1. Commit + push: il job `verify` della CI dovrebbe diventare verde. Poi, con Pro, la regola "status checks" su `main`.
+**Checkpoint M3 verificati dal vivo (28/09):** app `local` sulla 18080 + MinIO `pgsty` del compose, script Python con le API reali (utenti del seed). Tutti verdi: upload → confirm → `READY` e download con byte identici e `Content-Disposition: attachment`; file più grande → `EntityTooLarge`, `Content-Type` diverso → 403 da MinIO; testo dichiarato JPEG → `QUARANTINED` e oggetto cancellato; 415 e 413; visibilità (404 su media altrui e su una `REJECTED` altrui, anche `/attached`; 403 HIKER su un sentiero); `MediaCleanupJob` cancella riga e oggetto di un upload non confermato. Nessun bug nel codice. Dati di prova rimasti nel DB e nel bucket di sviluppo.
+
+**Prossimo passo:** **piano chiuso al 100% (28/09)**, nessuna voce aperta in `docs/MASTER_PLAN.md`. Restano le azioni dell'utente in "Aperti" (commit + push con i tre job della CI verdi, run configuration di IntelliJ). Una nuova funzionalità parte da una nuova milestone nel piano (§6).
+
+**Chiusura del piano (28/09, scritta da Claude su richiesta):**
+- CI: job `secrets` con gitleaks 8.30.1 (binario + checksum, `fetch-depth: 0`, tutta la storia) al posto del secret scanning di GitHub, non disponibile sui repo privati personali. Provato in un container Ubuntu: 15 commit, nessun segreto. In locale gitleaks segnala solo `.env` e la cache di `graphify-out`, entrambi ignorati da git. La versione di gitleaks nel workflow va aggiornata a mano (Dependabot non la vede).
+- `pom.xml`: `groupId` `it.unical` (era `org.example`). `static/` e `templates/` non esistevano più.
+- OpenAPI: `@ResponseStatus(CREATED)` sulle 10 creazioni e `(NO_CONTENT)` sulle 3 cancellazioni (solo documentazione: a runtime vince la `ResponseEntity`, i retry restano 200, lo dimostra `IdempotencyIT`); il customizer documenta anche il 200 dei retry con `Idempotency-Key` e il 428 sugli header obbligatori.
+- `./mvnw clean verify` verde: 41 unit + 63 IT.
+- IntelliJ: in `.idea/workspace.xml` la run configuration punta ancora a `org.example.geosentinel.GeoSentinelApplication` (vecchio package): va aggiornata a `it.unical.geosentinel.GeoSentinelApplication` dall'IDE.
+
+**M5.3 completata (28/09, scritta da Claude su richiesta):**
+- `OpenApiConfig`: bean `OpenApiCustomizer` che registra lo schema `ProblemDetail` e aggiunge a ogni operazione le risposte RFC 7807 che può dare (400/429/500 ovunque, 401/403 se ha `bearerAuth`, 404 se il path ha `{…}`, 409 sulle scritture autenticate), senza toccare quelle già dichiarate. Un solo punto invece di ~250 `@ApiResponse`.
+- **Bug trovato:** le 3 GET di `RefugeController` (`/{id}`, `/nearby`, `/{id}/availability`) non dichiaravano `bearerAuth`: da Swagger partivano senza token → 401 anche dopo "Authorize". Aggiunto `security = @SecurityRequirement(name = "bearerAuth")`. Regola: ogni rotta protetta la dichiara.
+- Verificato nel browser (Chrome DevTools): "Authorize" → `GET /refuges/{id}` con `Authorization: Bearer` → 200. `./mvnw verify` verde (41 + 63).
+- I codici di successo (201/204) li ha corretti la chiusura del piano (sotto).
+
+**Checkpoint M4 verificati dal vivo (28/09):** cache `gs:cache:trails::<id>` creata dal GET (TTL 600 s), cancellata dal `PATCH /status` dopo il commit, ricreata al GET successivo con lo stato nuovo; notifica SOS su `sos-notify-1`, fuori dal thread della richiesta e con lo stesso `traceId` (MDC propagato). M4 completa. Nel DB di sviluppo resta un SOS attivo di `hiker@` (prova).
 2. Checkpoint manuali di M2 (curl: register → login → logout → 401, refresh riusato, 429), poi M3 (upload su MinIO vero) e M4.
+
+## Avvio locale
+- `docker compose up -d` avvia PostGIS, Redis e MinIO (+ `minio-init`); le credenziali arrivano dal `.env` (vedi `.env.example`).
+- Sul PC dell'utente la **5432** è occupata da un PostgreSQL di Windows: nel `.env` c'è `DB_PORT=5433` (la leggono compose e app). La **8080** è occupata da un'altra applicazione: per provare in parallelo `--server.port=18080`.
+- App dall'IDE o con `java -jar target/GeoSentinel-Backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=local`: il profilo `local` applica il seed e accende Swagger (`/swagger-ui.html`).
+- Utenti del seed, password `Password123!`: `admin@`, `manager@`, `rescuer@`, `hiker@`, `hiker2@geosentinel.dev`.
+- Su Windows il jar in uso da un'istanza accesa non si può sovrascrivere: fermarla prima di `package`/`verify`.
 
 ## Comandi
 ```bash
 ./mvnw -q -DskipTests compile                          # compilazione
 ./mvnw test                                            # unit test (surefire)
-./mvnw verify                                          # + integration test *IT (failsafe, richiede Docker)
-./mvnw test -Dtest='GeoJsonLineStringTest'             # singolo test
+./mvnw verify                                          # + integration test *IT (failsafe, richiede Docker): ~45 s
+./mvnw test -Dtest='GeoJsonLineStringTest'             # singolo unit test
+./mvnw verify -Dtest=Nessuno -Dsurefire.failIfNoSpecifiedTests=false -Dit.test='AuthFlowIT'   # singolo IT
+./mvnw -q package -Dmaven.test.skip=true               # solo il jar
 docker compose up -d                                   # Postgres/PostGIS, Redis, MinIO
+docker compose --profile app up -d --build             # anche il backend in container
+docker build -t geosentinel-backend:dev .              # immagine
 ```
 
 ## Review a fine milestone

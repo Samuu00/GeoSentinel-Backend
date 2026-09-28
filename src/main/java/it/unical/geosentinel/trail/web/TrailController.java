@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
@@ -96,6 +97,7 @@ public class TrailController {
     }
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(summary = "Create a new trail", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TrailDetailResponse> create(@Valid @RequestBody CreateTrailRequest request) {
         TrailDetail created = trailService.create(trailMapper.toCommand(request));

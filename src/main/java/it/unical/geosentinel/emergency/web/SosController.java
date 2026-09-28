@@ -33,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
@@ -61,6 +62,7 @@ public class SosController {
 
     // Idempotency-Key facoltativo (D12): un SOS senza chiave non si rifiuta mai. Retry → 200 con l'allerta esistente
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(summary = "Raise an SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<SosAlertResponse> raiseSos(
             @RequestHeader(name = "Idempotency-Key", required = false) UUID idempotencyKey,
@@ -100,6 +102,7 @@ public class SosController {
     }
 
     @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(summary = "Cancel an active SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<Void> cancelSos(@PathVariable UUID id){
         UUID hikerId = currentUser.getRequiredUserId();

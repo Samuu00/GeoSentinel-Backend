@@ -13,6 +13,7 @@ import it.unical.geosentinel.emergency.application.SosService;
 import it.unical.geosentinel.emergency.application.dto.SosCommands.RescueTeamView;
 import it.unical.geosentinel.emergency.web.dto.RescueTeamDtos.CreateRescueTeamRequest;
 import it.unical.geosentinel.emergency.web.dto.RescueTeamDtos.RescueTeamResponse;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -40,6 +42,7 @@ public class RescueTeamController {
     }
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(summary = "Register a new rescue team unit", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RescueTeamResponse> createTeam(@Valid @RequestBody CreateRescueTeamRequest request){
         RescueTeamView created = sosService.createTeam(sosMapper.toCommand(request));

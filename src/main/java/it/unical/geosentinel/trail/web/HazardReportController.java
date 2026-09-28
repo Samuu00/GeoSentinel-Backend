@@ -11,6 +11,7 @@ import it.unical.geosentinel.trail.application.dto.HazardCommands.HazardView;
 import it.unical.geosentinel.trail.web.dto.HazardDtos.CreateHazardRequest;
 import it.unical.geosentinel.trail.web.dto.HazardDtos.HazardResponse;
 import it.unical.geosentinel.trail.web.dto.HazardDtos.UpdateHazardStatusRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -54,6 +56,7 @@ public class HazardReportController {
     }
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(summary = "Submit a hazard report", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<HazardResponse> create(@Valid @RequestBody CreateHazardRequest request) {
         UUID reporterId = currentUser.getRequiredUserId();

@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
@@ -83,6 +84,7 @@ public class MaintenanceController {
     }
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(summary = "Open a new maintenance ticket", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TicketResponse> create(@Valid @RequestBody CreateTicketRequest request) {
         TicketView created = maintenanceService.createTicket(maintenanceMapper.toCommand(request));
