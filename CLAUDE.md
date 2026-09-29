@@ -68,12 +68,14 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - **Eccezioni:** la rinomina `OptimisticConflictException` serve a evitare lo scontro con `java.util.ConcurrentModificationException`. Occhio agli auto-import.
 - **Migrazioni:** V1–V8 sono applicate, quindi immutabili. Ogni modifica allo schema va in una `V9__...` nuova (V9 è riservata a `device_tokens` di M7.4) (altrimenti Flyway rifiuta l'avvio per checksum diverso). `validate` non controlla `NOT NULL` né lunghezze: vanno replicati a mano nel DDL. Il seed `R__local_seed.sql` è repeatable e si può modificare.
 - **OpenAPI:** ogni rotta protetta dichiara `security = @SecurityRequirement(name = "bearerAuth")` nella `@Operation` (senza, Swagger non manda il token). Le creazioni hanno `@ResponseStatus(HttpStatus.CREATED)`, le cancellazioni `NO_CONTENT` (solo per la documentazione). Le risposte di errore le aggiunge il customizer: niente `@ApiResponse` ripetute.
+- **Cancellazione dell'account (M7.2):** ogni feature che salva dati di un utente espone `…Of(UUID userId)` nel suo service (`cancelAllFutureOf`, `cancelActiveOf`, `deleteAllOf`) e `UserAccountService.deleteAccount` lo chiama. Una feature nuova con dati personali (es. `notification/` in M7.4) si aggiunge lì. Nel metodo, gli effetti irreversibili (Redis, MinIO) vanno per ultimi.
 - **Contratto del client KMP (M7.1):** ogni `@Operation` ha `operationId` (verbo + risorsa, unico, mai cambiato); nei record `*Response` i campi mai null hanno `@Schema(requiredMode = REQUIRED)` (import statico di `REQUIRED`), quelli nullable nel DDL no; ogni `Pageable` è `@ParameterObject @PageableDefault(...)`. Ogni modifica alle API cambia `docs/openapi.json`: `OpenApiContractIT` fallisce finché non si rigenera (`-Dopenapi.update=true`) e si committa il file. Nessun valore nuovo negli enum delle risposte senza un aggiornamento dell'app (gli enum generati sono rigidi).
 - **Test di integrazione:**
   - estendono `AbstractIntegrationTest`, senza `@Transactional`; fixture con `insertTrail/insertRefuge/insertTeam`, utenti con `createUser/obtainToken(Role)`;
   - concorrenza con `runConcurrently(n, task)` + `@RepeatedTest(5)` e richieste HTTP reali (`call(...)`), non MockMvc;
   - ogni test resta sotto le 5 chiamate a `/api/v1/auth/**` (rate limit per IP, azzerato da `FLUSHALL` prima di ogni test);
   - `Content-Type` degli errori: confrontare tipo e sottotipo (`isProblemJson`), dai filtri arriva `;charset=UTF-8`.
+  - password e token di prova mai letterali nel JSON dei test (`"password":"valore"`): gitleaks in CI li prende per segreti (`generic-api-key`). Passarli con `%s` da una costante (`TEST_PASSWORD`). Un falso positivo già pubblicato va in `.gitleaksignore` (fingerprint), senza riscrivere la storia.
 
 ## Stato di avanzamento
 **Fatto e revisionato:**

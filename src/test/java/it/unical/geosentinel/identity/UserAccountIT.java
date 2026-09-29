@@ -74,8 +74,9 @@ class UserAccountIT extends AbstractIntegrationTest {
         String access = oldSession.get("accessToken").asString();
         String newPassword = "Un'altra-Password-456";
 
+        // password nel %s, non letterale nel JSON: gitleaks (generic-api-key) scambia "currentPassword":"<valore>" per un segreto
         HttpResult wrong = call(HttpMethod.POST, "/api/v1/users/me/password", access, """
-                {"currentPassword":"sbagliata-123456","newPassword":"%s"}""".formatted(newPassword));
+                {"currentPassword":"%s","newPassword":"%s"}""".formatted("wrong-" + newPassword, newPassword));
         // 422 e non 401: l'app non deve credere che il token sia scaduto
         assertThat(wrong.status()).isEqualTo(422);
 

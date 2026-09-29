@@ -85,7 +85,8 @@ GeoSentinel-Backend/
     │   │   │
     │   │   ├── identity/                             # utenti, auth, sicurezza
     │   │   │   ├── domain/        User, Role, RefreshToken
-    │   │   │   ├── application/   AuthService, UserQueryService (letture per le altre feature), RefreshTokenCleanupJob,
+    │   │   │   ├── application/   AuthService (anche changePassword), UserQueryService (letture per le altre feature),
+    │   │   │   │                  UserAccountService + UserProfile (M7.2), RefreshTokenCleanupJob,
     │   │   │   │                  port/TokenBlacklist, port/LoginAttemptLimiter
     │   │   │   ├── infrastructure/
     │   │   │   │   ├── persistence/  UserRepository, RefreshTokenRepository
@@ -93,7 +94,7 @@ GeoSentinel-Backend/
     │   │   │   │   └── security/     SecurityConfig, JwtTokenService, JtiBlacklistValidator,
     │   │   │   │                     RateLimitFilter, ProblemAuthenticationEntryPoint,
     │   │   │   │                     ProblemAccessDeniedHandler, JwtProperties, CurrentUser
-    │   │   │   └── web/           AuthController, dto/*
+    │   │   │   └── web/           AuthController, UserController (/users/me, M7.2), dto/* (UserDtos)
     │   │   │
     │   │   ├── trail/                                # sentieri, POI, segnalazioni pericoli
     │   │   │   ├── domain/        Trail, TrailStatus, Difficulty, Poi, PoiType,
@@ -146,7 +147,8 @@ GeoSentinel-Backend/
     └── test/
         ├── java/it/unical/geosentinel/
         │   ├── support/AbstractIntegrationTest.java
-        │   ├── identity/  AuthServiceLogoutTest, AuthServiceLoginLimitTest, RateLimitFilterTest, AuthFlowIT, RateLimitIT
+        │   ├── identity/  AuthServiceLogoutTest, AuthServiceLoginLimitTest, RateLimitFilterTest, AuthFlowIT, RateLimitIT,
+        │   │              UserAccountIT, RegistrationAgeIT (M7.2)
         │   ├── trail/     TrailDetailCacheSerializationTest, TrailSpatialQueryIT
         │   ├── refuge/    BookingTest, RefugeBookingServiceTest, BookingControllerTest, RefugeBookingConcurrencyIT
         │   ├── maintenance/ MaintenanceTicketTest, MaintenanceControllerTest, MaintenanceOptimisticLockIT
@@ -366,6 +368,7 @@ Firme chiave (solo contratti):
 |---|---|
 | `POST /api/v1/auth/register`, `/login`, `/refresh` | permitAll |
 | `POST /api/v1/auth/logout` | `authenticated()`: senza access token non si può mettere il `jti` in blacklist |
+| `/api/v1/users/me/**` (M7.2) | `authenticated()`; `DELETE` solo HIKER, il personale riceve 409 `account-managed` (controllo nel service) |
 | `GET /api/v1/trails/**`, `GET /api/v1/pois/**` | permitAll (informazioni di sicurezza pubbliche) |
 | `/v3/api-docs/**`, `/swagger-ui/**`, `/actuator/health` | permitAll (docs solo in `local`) |
 | tutto il resto | `authenticated()` + `@PreAuthorize` sui service |
@@ -619,6 +622,10 @@ Stato: in `GlobalExceptionHandler` sono gestite tutte le righe, comprese le ecce
 | `MediaRejectedException` (motivo `UNSUPPORTED_TYPE` / `TOO_LARGE` / `QUOTA_EXCEEDED`) | 415 / 413 / 422 | `media-unsupported-type` / `media-payload-too-large` / `media-quota-exceeded` |
 | `StorageUnavailableException` | 503 + `Retry-After` | `storage-unavailable` (detail generico: il messaggio di MinIO può contenere host e bucket interni) |
 | `AccessDeniedException` / `AuthorizationDeniedException` (da `@PreAuthorize`) | 403 | `forbidden` |
+| `AuthenticationException` (credenziali o refresh token non validi, lanciati dai service) | 401 | `unauthorized` |
+| `RateLimitExceededException` (limite per account sul login) | 429 + `Retry-After` | `rate-limit-exceeded` |
+| `AccountManagedException` (`DELETE /users/me` del personale, M7.2) | 409 | `account-managed` |
+| `AgeRequirementNotMetException` (registrazione sotto `geosentinel.registration.min-age`, M7.2.1) | 422 | `age-requirement-not-met` (detail generico, senza la soglia) |
 | `Exception` (fallback) | 500 | `internal-error`, detail generico, log con `traceId`, **mai** stack trace |
 
 **Trappola:** le eccezioni di `@PreAuthorize` sono lanciate dentro l'invocazione del controller e quindi **arrivano** all'advice. Senza un handler dedicato le prende il fallback `Exception` → 500 invece di 403.
@@ -651,6 +658,10 @@ Endpoint:
 | `POST /api/v1/bookings` (`refugeId` nel body) | HIKER | 201 + `Location`; 409 se pieno; **`Idempotency-Key` (UUID) obbligatorio** → 428 se manca, 400 se non è un UUID; retry con la stessa chiave → 200 con la prenotazione esistente (`BookingResult.created`) |
 | `GET /api/v1/bookings/my` · `GET /api/v1/bookings/{id}` | owner | 404 per una prenotazione altrui |
 | `DELETE /api/v1/bookings/{id}` | owner | 204 |
+| `GET /api/v1/users/me` · `PATCH /api/v1/users/me` (M7.2) | authenticated | profilo (`UserProfileResponse`); il PATCH cambia `displayName` e restituisce il profilo |
+| `POST /api/v1/users/me/password` (M7.2) | authenticated | 200 + nuovi token, tutte le altre sessioni revocate; password attuale sbagliata → 422 |
+| `DELETE /api/v1/users/me` (M7.2) | HIKER | 204, anonimizzazione; personale → 409 `account-managed` |
+| `POST /api/v1/auth/register` (M7.2.1) | public | `birthDate` obbligatoria; sotto i 14 anni → 422 `age-requirement-not-met` |
 | `PATCH /api/v1/refuges/{id}/capacity` | PARK_MANAGER **gestore del rifugio**, o ADMIN | capacità; un altro PARK_MANAGER → 403 |
 | `POST /api/v1/maintenance-tickets` (`trailId` / `refugeId` / `hazardReportId` nel body, esattamente uno) | PARK_MANAGER | 201 + `Location` + `ETag` |
 | `GET /api/v1/maintenance-tickets/{id}` · `?status&priority&assignedTo` (paginato, `PagedModel`) | PARK_MANAGER | `ETag` sul singolo |
@@ -842,6 +853,7 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
   - destinatari per ruolo: `notification` non conosce i ruoli e non usa `UserRepository`. `identity/application/UserQueryService.activeUserIdsWithRole(Role)` (solo `enabled`) → `DeviceService.tokensOf(ids)`. Niente ruolo copiato in `device_tokens` (diventerebbe vecchio al primo cambio di ruolo) e niente **topic FCM** per gli SOS: l'iscrizione al topic va gestita a ogni cambio di ruolo o logout, e un operatore disabilitato continuerebbe a ricevere gli allarmi. Invio diretto ai token con `sendEachForMulticast`, a blocchi di 500 (limite FCM)
   - `infrastructure/push/FcmPushNotifier` (Firebase Admin SDK, credenziali da `GOOGLE_APPLICATION_CREDENTIALS` nel `.env`, mai nel repo) e `LoggingPushNotifier` quando `geosentinel.push.enabled=false` (default in `local` e `test`)
   - token rifiutati da FCM come `UNREGISTERED`/`INVALID_ARGUMENT` → cancellati
+  - `DeviceService.deleteAllOf(userId)`, chiamato da `UserAccountService.deleteAccount` (M7.2): i token dei dispositivi sono dati personali, e un account cancellato non deve più ricevere push
 - [ ] Rotte `POST /api/v1/devices` (`{token, platform}`, 204) e `DELETE /api/v1/devices/{token}` (204); il logout dell'app chiama il `DELETE` prima di `/auth/logout`
 - [ ] `V9__device_tokens.sql`: tabella + indice su `user_id` + `CHECK` su `platform`
 - [ ] `SosNotificationListener.deliver`: push agli utenti `RESCUE_OPERATOR` (dati: solo `alertId` e tipo evento, **mai** posizione o note mediche nel payload: si leggono dall'API con il token). Se l'invio fallisce, `notified_at` resta NULL e `SosNotificationRecovery` riprova (M4.3)

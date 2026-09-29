@@ -1,0 +1,5 @@
+# Falsi positivi già nella storia (commit pubblicati: non si riscrivono). Formato: fingerprint di `gitleaks git`.
+# Si aggiunge una riga solo dopo aver verificato che non è un segreto vero; un segreto vero va ruotato, non ignorato.
+
+# UserAccountIT: password sbagliata di prova ("sbagliata-123456") nel body JSON di un test (generic-api-key)
+3102b6529b0facb8caf714b25f15e0762a229c9a:src/test/java/it/unical/geosentinel/identity/UserAccountIT.java:generic-api-key:78
