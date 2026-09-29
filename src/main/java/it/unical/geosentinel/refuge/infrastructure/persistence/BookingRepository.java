@@ -1,6 +1,7 @@
 package it.unical.geosentinel.refuge.infrastructure.persistence;
 
 import it.unical.geosentinel.refuge.domain.Booking;
+import it.unical.geosentinel.refuge.domain.BookingStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -36,6 +37,7 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>{
     Optional<Booking> findByIdAndUserId(UUID id, UUID userId);
     Optional<Booking> findByUserIdAndIdempotencyKey(UUID userId, UUID idempotencyKey);
     List<Booking> findByUserIdOrderByCheckInDesc(UUID userId);
+    List<Booking> findByUserIdAndStatusAndCheckInGreaterThanEqual(UUID userId, BookingStatus status, LocalDate from);
     @Query(value = """
             SELECT b.* FROM bookings b
             WHERE b.refuge_id = :refugeId

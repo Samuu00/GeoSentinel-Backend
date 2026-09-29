@@ -6,8 +6,10 @@ import it.unical.geosentinel.identity.domain.RefreshToken;
 import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
+import it.unical.geosentinel.shared.domain.exception.AgeRequirementNotMetException;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
 import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
+import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -22,6 +24,8 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.Period;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Objects;
@@ -42,6 +46,7 @@ public class AuthService {
     private final Duration refreshTtl;
     // scadenza assoluta della sessione: le rotazioni non la estendono
     private final Duration sessionMaxTtl;
+    private final int minAge;
     // Hash fittizio: il login esegue sempre un confronto BCrypt, così il tempo di risposta non rivela se l'email esiste
     private final String dummyPasswordHash;
 
@@ -57,7 +62,9 @@ public class AuthService {
             Clock clock,
             // @Value e non JwtProperties: application non dipende da infrastructure
             @Value("${geosentinel.jwt.refresh-ttl}") Duration refreshTtl,
-            @Value("${geosentinel.jwt.session-max-ttl}") Duration sessionMaxTtl
+            @Value("${geosentinel.jwt.session-max-ttl}") Duration sessionMaxTtl,
+            // GDPR art. 8: 14 in Italia, da 13 a 16 negli altri Stati UE (M7.2.1)
+            @Value("${geosentinel.registration.min-age}") int minAge
     ) {
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
@@ -68,19 +75,43 @@ public class AuthService {
         this.clock = clock;
         this.refreshTtl = refreshTtl;
         this.sessionMaxTtl = sessionMaxTtl;
+        this.minAge = minAge;
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
     // Email già registrata → 422: rivela che l'account esiste. Scelta accettata, limitata dal rate limit su /auth/**
+    // Età prima di ogni lettura o scrittura (M7.2.1): di chi è sotto la soglia non resta nessun dato, e un minore non
+    // scopre se un'email è registrata
     @Transactional
     public AuthTokens register(RegisterCommand cmd) {
+        if (Period.between(cmd.birthDate(), LocalDate.now(clock)).getYears() < minAge) {
+            throw new AgeRequirementNotMetException("Registration is not available for this age");
+        }
+
         String email = User.normalizeEmail(cmd.email());
         if (userRepository.existsByEmail(email)) {
             throw new BusinessRuleViolationException("Email already registered");
         }
 
         String encodedPassword = passwordEncoder.encode(cmd.rawPassword());
-        User user = userRepository.save(User.createHiker(email, encodedPassword, cmd.displayName()));
+        User user = User.createHiker(email, encodedPassword, cmd.displayName());
+        user.confirmAge(clock.instant());
+        return createAuthSession(userRepository.save(user), null);
+    }
+
+    // Password attuale sbagliata → 422, non 401: un 401 farebbe credere all'app che il token sia scaduto (refresh/logout).
+    // Revoca tutte le sessioni (anche quelle di un eventuale ladro) e ne apre una nuova per chi ha cambiato la password
+    @Transactional
+    public AuthTokens changePassword(UUID userId, String currentPassword, String newPassword) {
+        User user = userRepository.findById(userId)
+                .filter(User::isEnabled)
+                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            throw new BusinessRuleViolationException("Current password is incorrect");
+        }
+
+        user.updatePassword(passwordEncoder.encode(newPassword));
+        refreshTokenRepository.revokeAllOfUser(userId, clock.instant());
         return createAuthSession(user, null);
     }
 

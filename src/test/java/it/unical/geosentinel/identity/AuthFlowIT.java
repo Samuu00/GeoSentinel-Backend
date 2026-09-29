@@ -66,7 +66,7 @@ class AuthFlowIT extends AbstractIntegrationTest {
     @Test
     void passwordLongerThan72BytesIsA400NotA500() {
         HttpResult result = call(HttpMethod.POST, "/api/v1/auth/register", null, """
-                {"email":"lunga@test.dev","password":"%s","displayName":"Password lunga"}
+                {"email":"lunga@test.dev","password":"%s","displayName":"Password lunga","birthDate":"1990-01-01"}
                 """.formatted("a".repeat(80)));
 
         assertThat(result.status()).isEqualTo(400);
@@ -108,7 +108,7 @@ class AuthFlowIT extends AbstractIntegrationTest {
 
     private JsonNode register() {
         HttpResult result = call(HttpMethod.POST, "/api/v1/auth/register", null, """
-                {"email":"%s@test.dev","password":"%s","displayName":"Escursionista"}
+                {"email":"%s@test.dev","password":"%s","displayName":"Escursionista","birthDate":"1990-01-01"}
                 """.formatted(UUID.randomUUID(), TEST_PASSWORD));
         assertThat(result.status()).isEqualTo(201);
         return json(result.body());

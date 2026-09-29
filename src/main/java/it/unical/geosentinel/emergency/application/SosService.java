@@ -75,6 +75,19 @@ public class SosService {
         return new SosRaiseResult(SosAlertView.from(saved, geometryMapper), true);
     }
 
+    // Cancellazione dell'account (M7.2). Stesso advisory lock di raiseSos: un SOS lanciato in parallelo non sfugge.
+    // Poi l'ordine fisso alert → team, come in cancelSos
+    @Transactional
+    public void cancelActiveOf(UUID hikerId) {
+        sosAlertRepository.lockHiker(hikerId.getMostSignificantBits() ^ hikerId.getLeastSignificantBits());
+        sosAlertRepository.findFirstByHikerIdAndStatusIn(hikerId, ACTIVE_STATUSES)
+                .flatMap(active -> sosAlertRepository.findByIdForUpdate(active.getId()))
+                .ifPresent(alert -> {
+                    lockAssignedTeam(alert);
+                    alert.cancel(clock.instant());
+                });
+    }
+
     @Transactional
     public SosAlertView updateLiveLocation(UUID alertId, UUID hikerId, UpdateLocationCommand cmd) {
         SosAlert alert = sosAlertRepository.findByIdAndHikerIdForUpdate(alertId, hikerId)

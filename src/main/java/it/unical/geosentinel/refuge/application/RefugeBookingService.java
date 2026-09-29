@@ -7,6 +7,7 @@ import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.Bookin
 import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.CreateRefugeCommand;
 import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.RefugeView;
 import it.unical.geosentinel.refuge.domain.Booking;
+import it.unical.geosentinel.refuge.domain.BookingStatus;
 import it.unical.geosentinel.refuge.domain.Refuge;
 import it.unical.geosentinel.refuge.infrastructure.persistence.BookingRepository;
 import it.unical.geosentinel.refuge.infrastructure.persistence.RefugeRepository;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -90,6 +92,17 @@ public class RefugeBookingService {
         Booking booking = Booking.create(refuge, userId, idempotencyKey, cmd.checkIn(), cmd.checkOut(), cmd.guests());
         return new BookingResult(BookingView.from(bookingRepository.save(booking)), true);
     }
+
+    // Cancellazione dell'account: solo le prenotazioni non ancora iniziate (check-in da oggi in poi, UTC come
+    // Booking.cancel). Quelle in corso o passate restano: sono storia, non posti da liberare
+    @Transactional
+    public void cancelAllFutureOf(UUID userId) {
+        Instant now = Instant.now(clock);
+        bookingRepository.findByUserIdAndStatusAndCheckInGreaterThanEqual(
+                        userId, BookingStatus.CONFIRMED, LocalDate.ofInstant(now, ZoneOffset.UTC))
+                .forEach(booking -> booking.cancel(now));
+    }
+
     @Transactional
     public void cancel(UUID userId, UUID bookingId){
         // 404 anche se la prenotazione è di un altro utente: un 403/422 rivelerebbe che esiste
@@ -97,12 +110,14 @@ public class RefugeBookingService {
                 .orElseThrow(() -> new ResourceNotFoundException("Booking", bookingId));
         booking.cancel(Instant.now(clock));
     }
+
     @Transactional(readOnly = true)
     public BookingView getBooking(UUID userId, UUID bookingId) {
         // 404 anche per una prenotazione altrui, come in cancel
         return BookingView.from(bookingRepository.findByIdAndUserId(bookingId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking", bookingId)));
     }
+
     @Transactional(readOnly = true)
     public AvailabilityView availability(UUID refugeId, LocalDate from, LocalDate to) {
         validateBookingDates(from, to);
@@ -127,6 +142,7 @@ public class RefugeBookingService {
         }
         return new AvailabilityView(refuge.getId(), refuge.getCapacity(), from, to, availablePerNight);
     }
+
     @Transactional(readOnly = true)
     public RefugeView getRefuge(UUID refugeId){
         return RefugeView.from(getRefugeOrThrow(refugeId), geometryMapper);
@@ -137,6 +153,7 @@ public class RefugeBookingService {
         return refugeRepository.findById(refugeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Refuge", refugeId));
     }
+
     @Transactional(readOnly = true)
     public List<RefugeView> findNearby(double lon, double lat, double radiusMeters, int limit){
         double radius = Math.min(radiusMeters, MAX_SEARCH_RADIUS_METERS); // niente query-bomba, come per sentieri e POI
@@ -146,6 +163,7 @@ public class RefugeBookingService {
                 .map(r -> RefugeView.from(r, geometryMapper))
                 .toList();
     }
+
     @Transactional(readOnly = true)
     public List<BookingView> getUserBookings(UUID userId){
         return bookingRepository.findByUserIdOrderByCheckInDesc(userId)
@@ -153,12 +171,14 @@ public class RefugeBookingService {
                 .map(BookingView::from)
                 .toList();
     }
+
     @Transactional
     @PreAuthorize("hasRole('PARK_MANAGER')")
     public RefugeView createRefuge(CreateRefugeCommand cmd){
         Refuge refuge = new Refuge(cmd.name(), cmd.location(), cmd.capacity(), cmd.managerId());
         return RefugeView.from(refugeRepository.save(refuge), geometryMapper);
     }
+
     @Transactional
     @PreAuthorize("hasRole('PARK_MANAGER')")
     public RefugeView updateCapacity(UUID actorId, boolean actorIsAdmin, UUID refugeId, Integer capacity){

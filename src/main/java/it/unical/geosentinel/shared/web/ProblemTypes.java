@@ -23,6 +23,8 @@ public final class ProblemTypes {
     public static final URI UNAUTHORIZED = URI.create(BASE_URL + "unauthorized");
     public static final URI RATE_LIMIT_EXCEEDED = URI.create(BASE_URL + "rate-limit-exceeded");
     public static final URI INTERNAL_ERROR = URI.create(BASE_URL + "internal-error");
+    public static final URI ACCOUNT_MANAGED = URI.create(BASE_URL + "account-managed");
+    public static final URI AGE_REQUIREMENT_NOT_MET = URI.create(BASE_URL + "age-requirement-not-met");
 
     private ProblemTypes() {
     }

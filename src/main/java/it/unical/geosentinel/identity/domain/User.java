@@ -8,6 +8,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import it.unical.geosentinel.shared.domain.AuditableEntity;
 
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Objects;
 
@@ -32,6 +33,12 @@ public class User extends AuditableEntity {
     @Column(name = "enabled", nullable = false)
     private boolean enabled;
 
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    @Column(name = "age_confirmed_at")
+    private Instant ageConfirmedAt;
+
     @Version
     @Column(name = "version", nullable = false)
     private Long version;
@@ -54,6 +61,26 @@ public class User extends AuditableEntity {
 
     public static User create(String email, String passwordHash, String displayName, Role role) {
         return new User(email, passwordHash, displayName, role);
+    }
+
+    // Anonimizzazione, non DELETE fisico: le FK (segnalazioni, prenotazioni, SOS) restano valide.
+    // L'email libera quella originale per una nuova registrazione; unusablePasswordHash è l'hash di un valore casuale
+    // mai restituito (un hash vero, non una stringa qualsiasi: il DelegatingPasswordEncoder lancerebbe su un id sconosciuto)
+    public void markDeleted(Instant now, String unusablePasswordHash) {
+        this.email = "deleted-" + getId() + "@invalid";
+        this.displayName = "Deleted user";
+        this.passwordHash = Objects.requireNonNull(unusablePasswordHash, "unusablePasswordHash cannot be null");
+        this.enabled = false;
+        this.deletedAt = Objects.requireNonNull(now, "now cannot be null");
+    }
+
+    // Controllo dell'età passato in registrazione: la data di nascita non si salva, solo quando è stato fatto
+    public void confirmAge(Instant now) {
+        this.ageConfirmedAt = Objects.requireNonNull(now, "now cannot be null");
+    }
+
+    public boolean isDeleted() {
+        return this.deletedAt != null;
     }
 
     // Pubblico: il service normalizza allo stesso modo prima di cercare, così la query usa l'indice unico su email

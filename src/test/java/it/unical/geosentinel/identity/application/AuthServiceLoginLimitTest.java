@@ -36,7 +36,7 @@ class AuthServiceLoginLimitTest {
     private final AuthService service = new AuthService(
             users, mock(RefreshTokenRepository.class), passwordEncoder, mock(TokenBlacklist.class),
             limiter, mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC),
-            Duration.ofDays(7), Duration.ofDays(30));
+            Duration.ofDays(7), Duration.ofDays(30), 14);
 
     @Test
     void rejectedAttemptSkipsLookupAndBcrypt() {

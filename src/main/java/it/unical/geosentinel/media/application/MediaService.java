@@ -143,6 +143,18 @@ public class MediaService {
         return MediaFileView.from(mediaFile);
     }
 
+    // Cancellazione dell'account (M7.2): tutti i media, anche PENDING (la delete di un oggetto mai caricato non fallisce).
+    // Come deleteMedia: prima le righe (flush, così un errore del DB arriva prima di toccare lo storage), poi gli oggetti.
+    // ponytail: se lo storage fallisce a metà la transazione torna indietro ma gli oggetti già cancellati no; restano
+    // righe senza oggetto finché l'utente non riprova la cancellazione (idempotente). Serve un outbox se diventa un problema
+    @Transactional
+    public void deleteAllOf(UUID ownerId) {
+        List<MediaFile> files = mediaRepository.findByOwnerId(ownerId, Pageable.unpaged()).getContent();
+        mediaRepository.deleteAll(files);
+        mediaRepository.flush();
+        files.forEach(file -> objectStorage.deleteObject(file.getObjectKey()));
+    }
+
     @Transactional(readOnly = true)
     public String getPresignedDownloadUrl(UUID requesterId, UUID mediaId) {
         MediaFile mediaFile = findVisible(requesterId, mediaId);

@@ -2,6 +2,7 @@ package it.unical.geosentinel.shared.web.validation;
 
 import it.unical.geosentinel.identity.web.dto.RegisterRequest;
 import jakarta.validation.Validation;
+import java.time.LocalDate;
 import jakarta.validation.Validator;
 import org.junit.jupiter.api.Test;
 
@@ -11,7 +12,7 @@ class MaxUtf8BytesTest {
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
 
     private boolean passwordValid(String password) {
-        return validator.validate(new RegisterRequest("a@example.com", password, "Mario"))
+        return validator.validate(new RegisterRequest("a@example.com", password, "Mario", LocalDate.of(1990, 1, 1)))
                 .stream().noneMatch(v -> v.getPropertyPath().toString().equals("password"));
     }
 

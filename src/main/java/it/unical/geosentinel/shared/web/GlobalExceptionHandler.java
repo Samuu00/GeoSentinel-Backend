@@ -1,6 +1,8 @@
 package it.unical.geosentinel.shared.web;
 
 import jakarta.validation.ConstraintViolationException;
+import it.unical.geosentinel.shared.domain.exception.AccountManagedException;
+import it.unical.geosentinel.shared.domain.exception.AgeRequirementNotMetException;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
 import it.unical.geosentinel.shared.domain.exception.AlertAlreadyTakenException;
 import it.unical.geosentinel.shared.domain.exception.CapacityExceededException;
@@ -232,6 +234,21 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         log.error("Unhandled exception on {}", request.getDescription(false), ex);
         return problem(ex, HttpStatus.INTERNAL_SERVER_ERROR, ProblemTypes.INTERNAL_ERROR, "Internal server error",
                 "An unexpected internal error occurred", new HttpHeaders(), request);
+    }
+
+    // ---- account (M7.2) --------------------------------------------------------------------------------------
+
+    @ExceptionHandler(AccountManagedException.class)
+    public ResponseEntity<Object> handleAccountManaged(AccountManagedException ex, WebRequest request) {
+        return problem(ex, HttpStatus.CONFLICT, ProblemTypes.ACCOUNT_MANAGED, "Account managed by the organization",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
+    // detail generico: non rivela la soglia (age gate neutro, M7.2.1)
+    @ExceptionHandler(AgeRequirementNotMetException.class)
+    public ResponseEntity<Object> handleAgeRequirementNotMet(AgeRequirementNotMetException ex, WebRequest request) {
+        return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.AGE_REQUIREMENT_NOT_MET, "Age requirement not met",
+                "Registration is not available for this age", new HttpHeaders(), request);
     }
 
     // ---- metodi di supporto ----------------------------------------------------------------------------------------------

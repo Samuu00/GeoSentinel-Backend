@@ -3,7 +3,11 @@ package it.unical.geosentinel.identity.web.dto;
 import it.unical.geosentinel.shared.web.validation.MaxUtf8Bytes;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Size;
+
+import java.time.LocalDate;
 
 public record RegisterRequest(
         @NotBlank(message = "Email is required")
@@ -19,5 +23,11 @@ public record RegisterRequest(
 
         @NotBlank(message = "Display name is required")
         @Size(min = 2, max = 100, message = "Display name must be between 2 and 100 characters")
-        String displayName
+        String displayName,
+
+        // Age gate neutro (M7.2.1): la soglia la controlla AuthService con il Clock. @Past usa il fuso della JVM, ma
+        // sbaglia solo sulle date di oggi/domani, che la soglia rifiuta comunque: nessuna richiesta valida ne è colpita
+        @NotNull(message = "Birth date is required")
+        @Past(message = "Birth date must be in the past")
+        LocalDate birthDate
 ) {}

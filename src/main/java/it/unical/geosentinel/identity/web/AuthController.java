@@ -42,7 +42,7 @@ public class AuthController {
             @ApiResponse(responseCode = "429", description = "Rate limit exceeded")
     })
     public ResponseEntity<TokenResponse> register(@Valid @RequestBody RegisterRequest request) {
-        RegisterCommand command = new RegisterCommand(request.email(), request.password(), request.displayName());
+        RegisterCommand command = new RegisterCommand(request.email(), request.password(), request.displayName(), request.birthDate());
         AuthTokens tokens = authService.register(command);
         return ResponseEntity.status(HttpStatus.CREATED).body(TokenResponse.from(tokens));
     }

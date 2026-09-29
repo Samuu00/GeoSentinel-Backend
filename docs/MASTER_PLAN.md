@@ -153,8 +153,10 @@ GeoSentinel-Backend/
         │   ├── emergency/ SosAlertTest, SosAssignmentConcurrencyIT, SosNotificationRecoveryIT
         │   ├── media/     MediaPolicyTest, MediaServiceTest (+ MediaUploadIT opzionale)
         │   └── shared/    ProblemDetailWriterTest, GeoJsonLineStringTest, MaxUtf8BytesTest,
-        │                  MigrationIT, IdempotencyIT, ProblemDetailContractIT
-        └── resources/application-test.properties
+        │                  MigrationIT, IdempotencyIT, ProblemDetailContractIT, OpenApiContractIT (M7.1)
+        └── resources/application-test.properties   (springdoc acceso solo per OpenApiContractIT)
+
+docs/openapi.json   contratto per il client KMP (M7.1): lo scrive OpenApiContractIT con -Dopenapi.update=true
 ```
 
 **Regole di dipendenza (hexagonal):**
@@ -679,6 +681,7 @@ Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida
 - [x] `OpenApiConfig`: `@SecurityScheme(name = "bearerAuth", type = HTTP, scheme = "bearer", bearerFormat = "JWT")`, info del progetto
 - [x] `@Tag` per controller (già presenti); risposte di errore con schema `ProblemDetail` (`application/problem+json`) aggiunte da un solo `OpenApiCustomizer` in `OpenApiConfig`, invece di `@ApiResponse` ripetute: 400, 429 e 500 ovunque; 401/403 sulle operazioni con `bearerAuth`; 404 sui path con `{…}`; 409 sulle scritture autenticate. Le risposte già dichiarate (`AuthController`) restano. Ogni rotta protetta deve dichiarare `security = @SecurityRequirement(name = "bearerAuth")`: senza, Swagger non manda il token (mancava sulle 3 GET di `RefugeController`)
 - [x] Docs disabilitate fuori da `local` (`springdoc.api-docs.enabled: false` nel profilo base)
+- [x] Da M7.1 il documento è il contratto del client: ogni `@Operation` ha un `operationId` (verbo + risorsa), i campi mai null dei `*Response` hanno `@Schema(requiredMode = REQUIRED)`, ogni `Pageable` ha `@ParameterObject`. Lo controlla `OpenApiContractIT` contro `docs/openapi.json`
 
 **Checkpoint M5:**
 - [x] Swagger UI su `/swagger-ui.html`: "Authorize" con il token di `hiker@` → `GET /refuges/{id}` parte con `Authorization: Bearer` e risponde 200 (verificato nel browser il 28/09; senza token 401)
@@ -765,22 +768,22 @@ Ordine consigliato: M7.1 → M7.2 + M7.2.1 (stessa `V8`) → M7.3 (servono al cl
 
 #### M7.2 — Profilo utente e cancellazione dell'account
 **Obiettivo:** l'app mostra e modifica il profilo; l'utente può cancellare l'account dall'app (**obbligatorio**: App Store Review Guideline 5.1.1(v); Google Play chiede anche un link web per la richiesta di cancellazione).
-- [ ] `identity/web/UserController` (`/api/v1/users/me`):
+- [x] `identity/web/UserController` (`/api/v1/users/me`):
   - `GET` → `UserProfileResponse(id, email, displayName, role, createdAt)` (il JWT contiene solo `sub` e `roles`, niente dati personali)
   - `PATCH` → `UpdateProfileRequest(@NotBlank @Size(2..100) displayName)`
   - `POST /password` → `ChangePasswordRequest(currentPassword, @Size(min=12) @MaxUtf8Bytes(72) newPassword)`: verifica la password attuale, revoca tutte le famiglie di refresh token dell'utente
   - `DELETE` → 204: cancellazione dell'account (sotto)
-- [ ] `identity/application/UserAccountService`: `deleteAccount(UUID userId, Jwt accessToken)` in una transazione:
+- [x] `identity/application/UserAccountService`: `deleteAccount(UUID userId, Jwt accessToken)` in una transazione:
   - revoca refresh token (tutte le famiglie) + blacklist del `jti` corrente
   - anonimizzazione, non `DELETE` fisico: le FK (segnalazioni, prenotazioni, SOS, ticket) restano valide. `email` → `deleted-<uuid>@invalid`, `display_name` → `Utente cancellato`, `password_hash` → hash non verificabile, `enabled = false`, `deleted_at = now`
   - prenotazioni future `CONFIRMED` → `CANCELLED`; allerta SOS attiva → `CANCELLED`
   - media dell'utente: cancellati (riga + oggetto) tramite `MediaService`, non via repository (regola del §1). Un HIKER può caricare foto solo sulle sue segnalazioni, quindi sono dati suoi e non contenuto condiviso
   - segnalazioni di pericolo: restano (servono agli altri escursionisti), `reporter_id` punta all'utente anonimizzato
   - le altre feature espongono un metodo nel loro service (`RefugeBookingService.cancelAllFutureOf(userId)`, `SosService.cancelActiveOf(userId)`, `MediaService.deleteAllOf(userId)`): `identity` non usa i loro repository
-- [ ] **Self-service solo per `HIKER`.** `DELETE /users/me` con ruolo `PARK_MANAGER`, `RESCUE_OPERATOR` o `ADMIN` → 409 `account-managed` ("contact an administrator"). Motivo (pratica comune degli account aziendali, es. Google Workspace, Microsoft Entra): gli account del personale li crea e li chiude l'organizzazione, perché hanno in carico rifugi (`manager_id`), ticket assegnati, missioni e foto dei sentieri. L'obbligo degli store riguarda gli account che l'utente crea dall'app, cioè solo gli HIKER (la registrazione crea solo HIKER). La chiusura di un account del personale (riassegnazione di rifugi e ticket, poi anonimizzazione) è una funzione ADMIN, fuori da M7
+- [x] **Self-service solo per `HIKER`.** `DELETE /users/me` con ruolo `PARK_MANAGER`, `RESCUE_OPERATOR` o `ADMIN` → 409 `account-managed` ("contact an administrator"). Motivo (pratica comune degli account aziendali, es. Google Workspace, Microsoft Entra): gli account del personale li crea e li chiude l'organizzazione, perché hanno in carico rifugi (`manager_id`), ticket assegnati, missioni e foto dei sentieri. L'obbligo degli store riguarda gli account che l'utente crea dall'app, cioè solo gli HIKER (la registrazione crea solo HIKER). La chiusura di un account del personale (riassegnazione di rifugi e ticket, poi anonimizzazione) è una funzione ADMIN, fuori da M7
   - nuovo slug `ACCOUNT_MANAGED` in `ProblemTypes` + eccezione in `shared/domain/exception` + handler 409
-- [ ] `V8__users_account.sql`: `users.deleted_at timestamptz NULL`, `users.age_confirmed_at timestamptz NULL` (vedi M7.2.1); `User.markDeleted(Instant now)` nel dominio
-- [ ] Login e refresh rifiutano un utente con `deleted_at` (già coperto da `enabled = false`: verificarlo in un test)
+- [x] `V8__users_account.sql`: `users.deleted_at timestamptz NULL`, `users.age_confirmed_at timestamptz NULL` (vedi M7.2.1); `User.markDeleted(Instant now)` nel dominio
+- [x] Login e refresh rifiutano un utente con `deleted_at` (già coperto da `enabled = false`: verificarlo in un test)
 
 **Checkpoint:** `UserAccountIT`: dopo `DELETE /users/me` → login 401, refresh 401, access token corrente 401; prenotazione futura `CANCELLED`; email originale riutilizzabile per una nuova registrazione; `DELETE /users/me` con un token `PARK_MANAGER` → 409 `account-managed` e l'account resta attivo.
 
@@ -788,18 +791,33 @@ Ordine consigliato: M7.1 → M7.2 + M7.2.1 (stessa `V8`) → M7.3 (servono al cl
 **Norma:** per i servizi della società dell'informazione il GDPR (art. 8) fissa a 16 anni l'età per acconsentire da soli, e ogni Stato può abbassarla fino a 13. In Italia è **14 anni** (art. 2-quinquies del Codice privacy, D.Lgs. 101/2018). Sotto quella soglia servirebbe il consenso verificato di un genitore: GeoSentinel non lo gestisce, quindi sotto i 14 anni non si registra.
 
 Scelte (prassi delle linee guida ICO, *Age Appropriate Design Code*, e dell'EDPB):
-- [ ] **Age gate neutro:** `RegisterRequest.birthDate` (`@NotNull LocalDate`, ISO-8601). Mai una casella "ho almeno 14 anni": suggerisce la risposta. L'app mostra un campo data vuoto, senza indicare la soglia
-- [ ] **Minimizzazione (art. 5.1.c):** la data di nascita serve solo al controllo e **non si salva**. Si salva `users.age_confirmed_at` (quando il controllo è passato), che basta a dimostrare di averlo fatto (accountability, art. 5.2). Gli utenti del seed e quelli creati da un ADMIN restano con `NULL`
-- [ ] Controllo in `AuthService.register`, **prima** di ogni scrittura (del minore non resta nessun dato): `Period.between(birthDate, LocalDate.now(clock)).getYears() >= minAge`. Non con `@Past` sul DTO: usa il fuso della JVM invece del `Clock` (stesso problema già visto con `@FutureOrPresent` sulle prenotazioni)
-  - data nel futuro o prima del 1900 → 400 (dato non valido, `errors[]` come la validazione)
+- [x] **Age gate neutro:** `RegisterRequest.birthDate` (`@NotNull LocalDate`, ISO-8601). Mai una casella "ho almeno 14 anni": suggerisce la risposta. L'app mostra un campo data vuoto, senza indicare la soglia
+- [x] **Minimizzazione (art. 5.1.c):** la data di nascita serve solo al controllo e **non si salva**. Si salva `users.age_confirmed_at` (quando il controllo è passato), che basta a dimostrare di averlo fatto (accountability, art. 5.2). Gli utenti del seed e quelli creati da un ADMIN restano con `NULL`
+- [x] Controllo in `AuthService.register`, **prima** di ogni scrittura (del minore non resta nessun dato): `Period.between(birthDate, LocalDate.now(clock)).getYears() >= minAge`. La soglia con il `Clock`, non con un'annotazione sul DTO (fuso della JVM, come `@FutureOrPresent` sulle prenotazioni)
+  - data nel futuro o mancante → 400 (`@NotNull @Past` sul DTO, `errors[]`): `@Past` usa il fuso della JVM, ma sbaglia solo su oggi/domani, che la soglia rifiuta comunque. Niente limite inferiore (1900): una data vecchia passa solo la soglia, come qualsiasi data adulta
   - età sotto la soglia → 422 `age-requirement-not-met`, `detail` generico ("registration is not available for this age") senza la soglia
-- [ ] Soglia configurabile: `geosentinel.registration.min-age=14`. Cambia da Stato a Stato (13–16), e un'apertura in altri paesi UE non richiede codice
-- [ ] Nuovo slug `AGE_REQUIREMENT_NOT_MET` in `ProblemTypes` + eccezione in `shared/domain/exception` + handler 422; catalogo degli errori di M7.1 aggiornato
-- [ ] Dopo un rifiuto l'app non permette di ripetere subito la registrazione con un'altra data: lo ricorda in locale. È compito dell'app, il backend non conserva nulla del tentativo
+- [x] Soglia configurabile: `geosentinel.registration.min-age=14`. Cambia da Stato a Stato (13–16), e un'apertura in altri paesi UE non richiede codice
+- [x] Nuovo slug `AGE_REQUIREMENT_NOT_MET` in `ProblemTypes` + eccezione in `shared/domain/exception` + handler 422; catalogo degli errori di M7.1 aggiornato
+- [x] Dopo un rifiuto l'app non permette di ripetere subito la registrazione con un'altra data: lo ricorda in locale. È compito dell'app, il backend non conserva nulla del tentativo
 
 Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età degli store (iOS *Declared Age Range*, Google Play *Age Signals*). Si valutano lato app se le leggi USA sull'età negli store diventano rilevanti.
 
 **Checkpoint:** `RegistrationAgeIT`: 14 anni compiuti oggi → 201 e `age_confirmed_at` valorizzato; un giorno prima del compleanno → 422 `age-requirement-not-met` e nessuna riga in `users`; data futura → 400; `birthDate` mancante → 400; nessuna colonna con la data di nascita nello schema.
+
+**Fatto (29/09): M7.2 e M7.2.1 scritti dall'utente, revisionati e corretti da Claude su richiesta.**
+- Non compilava: classi inesistenti (`booking.application`, `JwtTokenBlacklistService`, `RefreshTokenService`, `getFirstName`), `req`/`minAge`/`User.registerHiker` in `register`, `SosService.cancelActiveOf` con due parametri, `MediaService.deleteAllOf` con `markDeleted()`/`getBucketName()`, handler vuoti.
+- Bug corretti:
+  - `register` salvava l'utente due volte e prima del controllo sull'email;
+  - `User.markDeleted`, `cancelAllFutureOf` e `cancelActiveOf` vuoti o senza effetto: niente anonimizzazione, prenotazioni e SOS non cancellati;
+  - `UUID id(UUID id)` in `SosAlertRepository`: query derivata non valida, l'app non sarebbe partita;
+  - password attuale sbagliata → `IllegalArgumentException` → 500: ora 422 (non 401, l'app crederebbe scaduto il token);
+  - `@Size(max = 72)` contava caratteri: `@MaxUtf8Bytes(72)` su entrambe le password (anche la attuale, oltre 72 byte BCrypt lancia);
+  - hash inutilizzabile di 73 byte (`UUID:UUID`) → BCrypt lancia → 500 sulla cancellazione: ora un solo UUID;
+  - `birthDate` assente da `RegisterRequest`/`RegisterCommand`.
+- Allineamenti: eccezioni che estendono `DomainException`, slug in `ProblemTypes`, DTO in `identity/web/dto/UserDtos` (non nel controller), `role` come enum, niente `@Validated` né import `*`, `@ResponseStatus(NO_CONTENT)` sul DELETE.
+- Scelte: `changePassword` sta in `AuthService` e restituisce nuovi token (200 `TokenResponse`: tutte le sessioni revocate, l'app resta connessa, gli altri dispositivi no); `PATCH /users/me` restituisce il profilo (200); `deleteAccount` esegue prima tutto ciò che il rollback annulla, poi la blacklist del `jti` (Redis giù → rollback), per ultimi gli oggetti MinIO; nome anonimizzato `Deleted user`, email `deleted-<id>@invalid`.
+- Test: `UserAccountIT` (4), `RegistrationAgeIT` (4); aggiornati `AuthFlowIT`, `MaxUtf8BytesTest`, i due unit test di `AuthService`, `MigrationIT` (V8). `docs/openapi.json` rigenerato. `./mvnw clean verify` verde: 41 unit + 74 IT.
+- Limite noto: se MinIO fallisce a metà di `deleteAllOf`, gli oggetti già cancellati non tornano; la riprova della cancellazione è idempotente.
 
 #### M7.3 — Rete mobile: rate limit, compressione, timeout
 - [ ] **Rate limit su `/auth/**` adatto al CGNAT**, con tre policy configurabili invece di costanti (`@ConfigurationProperties` `geosentinel.rate-limit.*`, così `RateLimitIT` imposta i suoi valori), ognuna con il proprio prefisso di bucket:

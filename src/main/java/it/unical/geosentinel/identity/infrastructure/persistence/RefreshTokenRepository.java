@@ -18,6 +18,10 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     @Modifying
     @Query("UPDATE RefreshToken r SET r.revokedAt = :now WHERE r.familyId = :familyId AND r.revokedAt IS NULL")
     int revokeFamily(@Param("familyId") UUID familyId, @Param("now") Instant now);
+    // Tutte le sessioni dell'utente: cambio password e cancellazione dell'account (M7.2)
+    @Modifying
+    @Query("UPDATE RefreshToken r SET r.revokedAt = :now WHERE r.user.id = :userId AND r.revokedAt IS NULL")
+    int revokeAllOfUser(@Param("userId") UUID userId, @Param("now") Instant now);
 
     // Si cancellano solo le famiglie con la sessione scaduta, non i singoli token scaduti: finché la sessione vive,
     // un token vecchio deve restare nel DB, altrimenti il suo riuso non viene riconosciuto e la famiglia non si revoca

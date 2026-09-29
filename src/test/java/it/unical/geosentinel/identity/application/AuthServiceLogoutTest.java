@@ -30,7 +30,7 @@ class AuthServiceLogoutTest {
     private final RefreshTokenRepository refreshTokens = mock(RefreshTokenRepository.class);
     private final AuthService service = new AuthService(
             mock(UserRepository.class), refreshTokens, mock(PasswordEncoder.class), mock(TokenBlacklist.class),
-            mock(LoginAttemptLimiter.class), mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofDays(7), Duration.ofDays(30));
+            mock(LoginAttemptLimiter.class), mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofDays(7), Duration.ofDays(30), 14);
 
     private final UUID ownerId = UUID.randomUUID();
     private final UUID familyId = UUID.randomUUID();

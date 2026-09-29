@@ -1,7 +1,7 @@
 # GeoSentinel — Backend
 
 Piattaforma per la sicurezza dei sentieri montani, il monitoraggio ambientale e le emergenze outdoor.
-Fase attuale: **solo backend**. M0–M6 completate il 28/09 (`./mvnw clean verify` verde); **da fare M7**: adattamenti per l'unico client, un'app mobile **Kotlin Multiplatform** (Android + iOS, nessun frontend web, decisione D13). Il piano completo, con milestone, task, firme e checkpoint, è in [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md).
+Fase attuale: **solo backend**. M0–M6 completate il 28/09 (`./mvnw clean verify` verde); **M7 in corso** (M7.1, M7.2 e M7.2.1 fatte il 29/09, prossimo M7.3): adattamenti per l'unico client, un'app mobile **Kotlin Multiplatform** (Android + iOS, nessun frontend web, decisione D13). Il piano completo, con milestone, task, firme e checkpoint, è in [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md).
 
 ## Come lavoriamo (regola tassativa)
 - **Il codice lo scrive l'utente, riga per riga.** Claude fa da mentore, architetto e reviewer: definisce struttura e contratti, poi revisiona.
@@ -66,8 +66,9 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
   - `@TransactionalEventListener(AFTER_COMMIT)` con eventi che contengono dati, non entità.
 - **Jackson:** usare `tools.jackson.databind.json.JsonMapper` (Jackson 3). Jackson 2 (`com.fasterxml...ObjectMapper`) arriva solo come dipendenza transitiva di springdoc: **non esiste come bean**.
 - **Eccezioni:** la rinomina `OptimisticConflictException` serve a evitare lo scontro con `java.util.ConcurrentModificationException`. Occhio agli auto-import.
-- **Migrazioni:** V1–V7 sono applicate, quindi immutabili. Ogni modifica allo schema va in una `V8__...` nuova (altrimenti Flyway rifiuta l'avvio per checksum diverso). `validate` non controlla `NOT NULL` né lunghezze: vanno replicati a mano nel DDL. Il seed `R__local_seed.sql` è repeatable e si può modificare.
+- **Migrazioni:** V1–V8 sono applicate, quindi immutabili. Ogni modifica allo schema va in una `V9__...` nuova (V9 è riservata a `device_tokens` di M7.4) (altrimenti Flyway rifiuta l'avvio per checksum diverso). `validate` non controlla `NOT NULL` né lunghezze: vanno replicati a mano nel DDL. Il seed `R__local_seed.sql` è repeatable e si può modificare.
 - **OpenAPI:** ogni rotta protetta dichiara `security = @SecurityRequirement(name = "bearerAuth")` nella `@Operation` (senza, Swagger non manda il token). Le creazioni hanno `@ResponseStatus(HttpStatus.CREATED)`, le cancellazioni `NO_CONTENT` (solo per la documentazione). Le risposte di errore le aggiunge il customizer: niente `@ApiResponse` ripetute.
+- **Contratto del client KMP (M7.1):** ogni `@Operation` ha `operationId` (verbo + risorsa, unico, mai cambiato); nei record `*Response` i campi mai null hanno `@Schema(requiredMode = REQUIRED)` (import statico di `REQUIRED`), quelli nullable nel DDL no; ogni `Pageable` è `@ParameterObject @PageableDefault(...)`. Ogni modifica alle API cambia `docs/openapi.json`: `OpenApiContractIT` fallisce finché non si rigenera (`-Dopenapi.update=true`) e si committa il file. Nessun valore nuovo negli enum delle risposte senza un aggiornamento dell'app (gli enum generati sono rigidi).
 - **Test di integrazione:**
   - estendono `AbstractIntegrationTest`, senza `@Transactional`; fixture con `insertTrail/insertRefuge/insertTeam`, utenti con `createUser/obtainToken(Role)`;
   - concorrenza con `runConcurrently(n, task)` + `@RepeatedTest(5)` e richieste HTTP reali (`call(...)`), non MockMvc;
@@ -314,7 +315,7 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 
 **Prossimo passo:** M0–M6 chiuse al 100% (28/09). Restano le azioni dell'utente in "Aperti" (commit + push con i tre job della CI verdi, run configuration di IntelliJ), poi **M7 — backend per l'app mobile KMP** (piano, sezione M7), nell'ordine M7.1 → M7.7:
 1. ~~M7.1~~ **fatto (29/09, scritto da Claude su richiesta):** 53 `operationId` espliciti, `required` sulle risposte, snapshot `docs/openapi.json` verificato da `shared/OpenApiContractIT` (`-Dopenapi.update=true` per riscriverlo dopo una modifica voluta alle API, poi commit). Bug corretto: `Pageable` senza `@ParameterObject` (il client avrebbe mandato `?pageable=`). Client KMP generato e controllato. `./mvnw clean verify` verde: 41 unit + 66 IT. Regola: ogni nuova `@Operation` ha `operationId`, ogni nuovo `*Response` ha `@Schema(requiredMode = REQUIRED)` sui campi mai null, ogni `Pageable` ha `@ParameterObject`;
-2. M7.2 + M7.2.1 (età minima GDPR, stessa `V8`) `/api/v1/users/me` (profilo, cambio password, cancellazione dell'account: obbligatoria per App Store e Google Play), migrazione `V8`;
+2. ~~M7.2 + M7.2.1~~ **fatto (29/09, scritto dall'utente, corretto da Claude su richiesta):** `/api/v1/users/me` (GET, PATCH, POST `/password` → nuovi token, DELETE → anonimizzazione solo per HIKER, 409 `account-managed` per il personale), età minima 14 anni in registrazione (422 `age-requirement-not-met`, data di nascita mai salvata, soglia `geosentinel.registration.min-age`), `V8` applicata (le migrazioni ora sono V1–V8, immutabili: la prossima è `V9`). Dettagli e bug corretti nel piano (fine di M7.2.1). `./mvnw clean verify` verde: 41 unit + 74 IT;
 3. M7.3 rete mobile: rate limit per IP su `/auth` troppo stretto per il CGNAT degli operatori, compressione, GET condizionali, `/bookings/my` paginato, contratti di retry e refresh;
 4. M7.4 notifiche push FCM (nuova feature `notification/`, `V9`), 5. M7.5 media dal telefono (HEIC → JPEG lato app), 6. M7.6 ambiente raggiungibile dai dispositivi (HTTPS per iOS), 7. M7.7 test e review.
 
@@ -348,6 +349,7 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 ./mvnw verify                                          # + integration test *IT (failsafe, richiede Docker): ~45 s
 ./mvnw test -Dtest='GeoJsonLineStringTest'             # singolo unit test
 ./mvnw verify -Dtest=Nessuno -Dsurefire.failIfNoSpecifiedTests=false -Dit.test='AuthFlowIT'   # singolo IT
+./mvnw verify -Dtest=Nessuno -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=OpenApiContractIT -Dopenapi.update=true   # rigenera docs/openapi.json
 ./mvnw -q package -Dmaven.test.skip=true               # solo il jar
 docker compose up -d                                   # Postgres/PostGIS, Redis, MinIO
 docker compose --profile app up -d --build             # anche il backend in container
