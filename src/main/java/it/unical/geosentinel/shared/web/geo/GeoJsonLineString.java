@@ -1,10 +1,17 @@
 package it.unical.geosentinel.shared.web.geo;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import java.util.List;
+
+import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
 // GeoJSON LineString: le coordinate sono coppie [longitudine, latitudine].
 // Gli invarianti sono verificati nel costruttore: un body malformato fallisce la deserializzazione (400) e non arriva mai al mapper.
-public record GeoJsonLineString(String type, List<List<Double>> coordinates) {
+public record GeoJsonLineString(
+        @Schema(requiredMode = REQUIRED) String type,
+        @Schema(requiredMode = REQUIRED) List<List<Double>> coordinates
+) {
     public static final String TYPE = "LineString";
 
     public GeoJsonLineString {

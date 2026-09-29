@@ -1,7 +1,7 @@
 # GeoSentinel — Backend
 
 Piattaforma per la sicurezza dei sentieri montani, il monitoraggio ambientale e le emergenze outdoor.
-Fase attuale: **solo backend, completato il 28/09** (tutte le milestone M0–M6 chiuse, `./mvnw clean verify` verde). Il piano completo, con milestone, task, firme e checkpoint, è in [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md).
+Fase attuale: **solo backend**. M0–M6 completate il 28/09 (`./mvnw clean verify` verde); **da fare M7**: adattamenti per l'unico client, un'app mobile **Kotlin Multiplatform** (Android + iOS, nessun frontend web, decisione D13). Il piano completo, con milestone, task, firme e checkpoint, è in [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md).
 
 ## Come lavoriamo (regola tassativa)
 - **Il codice lo scrive l'utente, riga per riga.** Claude fa da mentore, architetto e reviewer: definisce struttura e contratti, poi revisiona.
@@ -312,7 +312,11 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 
 **Checkpoint M3 verificati dal vivo (28/09):** app `local` sulla 18080 + MinIO `pgsty` del compose, script Python con le API reali (utenti del seed). Tutti verdi: upload → confirm → `READY` e download con byte identici e `Content-Disposition: attachment`; file più grande → `EntityTooLarge`, `Content-Type` diverso → 403 da MinIO; testo dichiarato JPEG → `QUARANTINED` e oggetto cancellato; 415 e 413; visibilità (404 su media altrui e su una `REJECTED` altrui, anche `/attached`; 403 HIKER su un sentiero); `MediaCleanupJob` cancella riga e oggetto di un upload non confermato. Nessun bug nel codice. Dati di prova rimasti nel DB e nel bucket di sviluppo.
 
-**Prossimo passo:** **piano chiuso al 100% (28/09)**, nessuna voce aperta in `docs/MASTER_PLAN.md`. Restano le azioni dell'utente in "Aperti" (commit + push con i tre job della CI verdi, run configuration di IntelliJ). Una nuova funzionalità parte da una nuova milestone nel piano (§6).
+**Prossimo passo:** M0–M6 chiuse al 100% (28/09). Restano le azioni dell'utente in "Aperti" (commit + push con i tre job della CI verdi, run configuration di IntelliJ), poi **M7 — backend per l'app mobile KMP** (piano, sezione M7), nell'ordine M7.1 → M7.7:
+1. ~~M7.1~~ **fatto (29/09, scritto da Claude su richiesta):** 53 `operationId` espliciti, `required` sulle risposte, snapshot `docs/openapi.json` verificato da `shared/OpenApiContractIT` (`-Dopenapi.update=true` per riscriverlo dopo una modifica voluta alle API, poi commit). Bug corretto: `Pageable` senza `@ParameterObject` (il client avrebbe mandato `?pageable=`). Client KMP generato e controllato. `./mvnw clean verify` verde: 41 unit + 66 IT. Regola: ogni nuova `@Operation` ha `operationId`, ogni nuovo `*Response` ha `@Schema(requiredMode = REQUIRED)` sui campi mai null, ogni `Pageable` ha `@ParameterObject`;
+2. M7.2 + M7.2.1 (età minima GDPR, stessa `V8`) `/api/v1/users/me` (profilo, cambio password, cancellazione dell'account: obbligatoria per App Store e Google Play), migrazione `V8`;
+3. M7.3 rete mobile: rate limit per IP su `/auth` troppo stretto per il CGNAT degli operatori, compressione, GET condizionali, `/bookings/my` paginato, contratti di retry e refresh;
+4. M7.4 notifiche push FCM (nuova feature `notification/`, `V9`), 5. M7.5 media dal telefono (HEIC → JPEG lato app), 6. M7.6 ambiente raggiungibile dai dispositivi (HTTPS per iOS), 7. M7.7 test e review.
 
 **Chiusura del piano (28/09, scritta da Claude su richiesta):**
 - CI: job `secrets` con gitleaks 8.30.1 (binario + checksum, `fetch-depth: 0`, tutta la storia) al posto del secret scanning di GitHub, non disponibile sui repo privati personali. Provato in un container Ubuntu: 15 commit, nessun segreto. In locale gitleaks segnala solo `.env` e la cache di `graphify-out`, entrambi ignorati da git. La versione di gitleaks nel workflow va aggiornata a mano (Dependabot non la vede).

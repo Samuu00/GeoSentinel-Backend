@@ -1,5 +1,6 @@
 package it.unical.geosentinel.maintenance.web.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -8,6 +9,8 @@ import it.unical.geosentinel.maintenance.domain.TicketStatus;
 
 import java.time.Instant;
 import java.util.UUID;
+
+import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
 public class MaintenanceDtos {
     // esattamente uno tra trailId, refugeId e hazardReportId: lo verifica il service (422)
@@ -51,11 +54,11 @@ public class MaintenanceDtos {
 
     // niente version: va nell'ETag
     public record TicketResponse(
-            UUID id,
-            String title,
+            @Schema(requiredMode = REQUIRED) UUID id,
+            @Schema(requiredMode = REQUIRED) String title,
             String description,
-            TicketPriority priority,
-            TicketStatus status,
+            @Schema(requiredMode = REQUIRED) TicketPriority priority,
+            @Schema(requiredMode = REQUIRED) TicketStatus status,
             UUID trailId,
             String trailName,
             UUID refugeId,
@@ -63,6 +66,6 @@ public class MaintenanceDtos {
             UUID hazardReportId,
             UUID assignedTo,
             Instant resolvedAt,
-            Instant createdAt
+            @Schema(requiredMode = REQUIRED) Instant createdAt
     ) {}
 }

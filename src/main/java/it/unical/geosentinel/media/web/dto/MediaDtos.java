@@ -1,5 +1,6 @@
 package it.unical.geosentinel.media.web.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import it.unical.geosentinel.media.domain.MediaStatus;
 import it.unical.geosentinel.media.domain.MediaTargetType;
 import jakarta.validation.constraints.NotBlank;
@@ -10,6 +11,8 @@ import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
+
+import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
 public class MediaDtos {
     public record InitUploadRequest(
@@ -35,26 +38,27 @@ public class MediaDtos {
     // POST multipart verso uploadUrl: tutti i formFields, poi il campo "file". MinIO rifiuta un file più grande del
     // dichiarato o con un Content-Type diverso; dopo il 204 di MinIO il client chiama /{mediaId}/confirm
     public record UploadSessionResponse(
-            UUID mediaId,
-            String uploadUrl,
-            Map<String, String> formFields,
-            Instant expiresAt
+            @Schema(requiredMode = REQUIRED) UUID mediaId,
+            @Schema(requiredMode = REQUIRED) String uploadUrl,
+            @Schema(requiredMode = REQUIRED) Map<String, String> formFields,
+            @Schema(requiredMode = REQUIRED) Instant expiresAt
     ) {}
 
     public record DownloadUrlResponse(
-            UUID mediaId,
-            String downloadUrl
+            @Schema(requiredMode = REQUIRED) UUID mediaId,
+            @Schema(requiredMode = REQUIRED) String downloadUrl
     ) {}
 
+    // checksum: null finché l'upload non è confermato
     public record MediaResponse(
-            UUID id,
-            String originalFilename,
-            String contentType,
-            long sizeBytes,
-            MediaStatus status,
+            @Schema(requiredMode = REQUIRED) UUID id,
+            @Schema(requiredMode = REQUIRED) String originalFilename,
+            @Schema(requiredMode = REQUIRED) String contentType,
+            @Schema(requiredMode = REQUIRED) long sizeBytes,
+            @Schema(requiredMode = REQUIRED) MediaStatus status,
             MediaTargetType entityType,
             UUID entityId,
             String checksum,
-            Instant createdAt
+            @Schema(requiredMode = REQUIRED) Instant createdAt
     ) {}
 }

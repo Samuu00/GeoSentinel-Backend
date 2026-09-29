@@ -43,14 +43,14 @@ public class PoiController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get POI by ID")
+    @Operation(operationId = "getPoi", summary = "Get POI by ID")
     public ResponseEntity<PoiResponse> getById(@PathVariable UUID id) {
         PoiView view = poiService.getPoi(id);
         return ResponseEntity.ok(trailMapper.toResponse(view));
     }
 
     @GetMapping("/nearby")
-    @Operation(summary = "Find POIs nearby coordinates with optional type filter")
+    @Operation(operationId = "findPoisNearby", summary = "Find POIs nearby coordinates with optional type filter")
     public ResponseEntity<List<PoiResponse>> findNearby(
             @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") double lon,
             @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") double lat,
@@ -63,7 +63,7 @@ public class PoiController {
     }
 
     @GetMapping("/trail/{trailId}")
-    @Operation(summary = "List all POIs associated with a specific trail")
+    @Operation(operationId = "findPoisByTrail", summary = "List all POIs associated with a specific trail")
     public ResponseEntity<List<PoiResponse>> findByTrail(@PathVariable UUID trailId) {
         List<PoiView> views = poiService.findByTrail(trailId);
         return ResponseEntity.ok(views.stream().map(trailMapper::toResponse).toList());
@@ -71,7 +71,7 @@ public class PoiController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Create a new POI", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "createPoi", summary = "Create a new POI", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<PoiResponse> create(@Valid @RequestBody CreatePoiRequest request) {
         PoiView created = poiService.create(trailMapper.toCommand(request));
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()

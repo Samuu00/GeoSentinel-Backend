@@ -17,9 +17,17 @@ import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
+import it.unical.geosentinel.shared.web.ProblemTypes;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.lang.reflect.Modifier;
+import java.net.URI;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeSet;
 
 @Configuration
 @OpenAPIDefinition(
@@ -51,6 +59,7 @@ public class OpenApiConfig {
                 openApi.setComponents(new Components());
             }
             openApi.getComponents().addSchemas(PROBLEM_SCHEMA, problemDetailSchema());
+            requirePageFields(openApi.getComponents().getSchemas());
 
             openApi.getPaths().forEach((path, item) -> item.readOperationsMap().forEach((method, operation) -> {
                 boolean secured = operation.getSecurity() != null && !operation.getSecurity().isEmpty();
@@ -108,10 +117,15 @@ public class OpenApiConfig {
 
     // Lo schema del JSON che esce davvero: ProblemDetail di Spring con le properties portate al primo livello
     // (ProblemDetailJacksonMixin) da GlobalExceptionHandler e ProblemDetailWriter
+    // M7.1: type/title/status ci sono sempre. Gli slug sono elencati nella descrizione e non come enum: un client
+    // generato con un enum rigido fallirebbe la deserializzazione al primo slug nuovo
     private static Schema<?> problemDetailSchema() {
         return new ObjectSchema()
                 .description("RFC 7807 problem details")
+                .required(List.of("type", "title", "status"))
                 .addProperty("type", new StringSchema().format("uri")
+                        .description("https://geosentinel.dev/problems/<slug>, stable slugs: " + String.join(", ", problemSlugs())
+                                + ". Clients must map the slug, never the detail text, and tolerate unknown slugs")
                         .example("https://geosentinel.dev/problems/validation-error"))
                 .addProperty("title", new StringSchema().example("Validation error"))
                 .addProperty("status", new IntegerSchema().example(400))
@@ -121,8 +135,39 @@ public class OpenApiConfig {
                 .addProperty("traceId", new StringSchema().example("4bf92f3577b34da6a3ce929d0e0e4736"))
                 .addProperty("errors", new ArraySchema()
                         .description("Only for validation-error")
+                        // title: nome della classe nel client generato (altrimenti ProblemDetailErrorsInner)
                         .items(new ObjectSchema()
+                                .title("FieldError")
+                                .required(List.of("field", "message"))
                                 .addProperty("field", new StringSchema())
                                 .addProperty("message", new StringSchema())));
+    }
+
+    // Una sola fonte: le costanti di ProblemTypes, in ordine alfabetico (la reflection non garantisce l'ordine)
+    private static List<String> problemSlugs() {
+        return Arrays.stream(ProblemTypes.class.getFields())
+                .filter(f -> Modifier.isStatic(f.getModifiers()) && f.getType() == URI.class)
+                .map(f -> {
+                    try {
+                        String path = ((URI) f.get(null)).getPath();
+                        return path.substring(path.lastIndexOf('/') + 1);
+                    } catch (IllegalAccessException e) {
+                        throw new IllegalStateException(e);
+                    }
+                })
+                .sorted()
+                .toList();
+    }
+
+    // Gli schemi della paginazione (PagedModel di Spring Data) non sono record nostri: content e page ci sono sempre
+    private static void requirePageFields(Map<String, Schema> schemas) {
+        if (schemas == null) {
+            return;
+        }
+        schemas.forEach((name, schema) -> {
+            if (name.startsWith("PagedModel") || name.equals("PageMetadata")) {
+                schema.setRequired(schema.getProperties() == null ? null : List.copyOf(new TreeSet<>(schema.getProperties().keySet())));
+            }
+        });
     }
 }

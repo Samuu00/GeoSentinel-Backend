@@ -1,5 +1,6 @@
 package it.unical.geosentinel.refuge.web.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
@@ -7,6 +8,8 @@ import it.unical.geosentinel.refuge.domain.BookingStatus;
 
 import java.time.LocalDate;
 import java.util.UUID;
+
+import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
 public class BookingDtos {
     public record CreateBookingRequest(
@@ -24,12 +27,12 @@ public class BookingDtos {
             Integer guests
     ) {}
     public record BookingResponse(
-            UUID id,
-            UUID refugeId,
-            UUID userId,
-            LocalDate checkIn,
-            LocalDate checkOut,
-            int guests,
-            BookingStatus status
+            @Schema(requiredMode = REQUIRED) UUID id,
+            @Schema(requiredMode = REQUIRED) UUID refugeId,
+            @Schema(requiredMode = REQUIRED) UUID userId,
+            @Schema(requiredMode = REQUIRED) LocalDate checkIn,
+            @Schema(requiredMode = REQUIRED) LocalDate checkOut,
+            @Schema(requiredMode = REQUIRED) int guests,
+            @Schema(requiredMode = REQUIRED) BookingStatus status
     ) {}
 }

@@ -51,14 +51,14 @@ public class TrailController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get trail details by ID including GeoJSON path")
+    @Operation(operationId = "getTrail", summary = "Get trail details by ID including GeoJSON path")
     public ResponseEntity<TrailDetailResponse> getById(@PathVariable UUID id) {
         TrailDetail detail = trailService.getTrail(id);
         return ResponseEntity.ok(trailMapper.toResponse(detail));
     }
 
     @GetMapping("/nearby")
-    @Operation(summary = "Find trails within a given distance in meters from coordinates")
+    @Operation(operationId = "findTrailsNearby", summary = "Find trails within a given distance in meters from coordinates")
     public ResponseEntity<List<TrailSummaryResponse>> findNearby(
             @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") double lon,
             @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") double lat,
@@ -71,7 +71,7 @@ public class TrailController {
     }
 
     @GetMapping
-    @Operation(summary = "Find trails contained within a map bounding box")
+    @Operation(operationId = "findTrailsInBoundingBox", summary = "Find trails contained within a map bounding box")
     public ResponseEntity<List<TrailSummaryResponse>> findInBoundingBox(@RequestParam String bbox) {
         List<TrailSummary> summaries = trailService.findInBoundingBox(parseBoundingBox(bbox));
         return ResponseEntity.ok(summaries.stream().map(trailMapper::toResponse).toList());
@@ -98,7 +98,7 @@ public class TrailController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Create a new trail", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "createTrail", summary = "Create a new trail", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TrailDetailResponse> create(@Valid @RequestBody CreateTrailRequest request) {
         TrailDetail created = trailService.create(trailMapper.toCommand(request));
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
@@ -109,7 +109,7 @@ public class TrailController {
     }
 
     @PutMapping("/{id}")
-    @Operation(summary = "Update trail details", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "updateTrail", summary = "Update trail details", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TrailDetailResponse> update(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateTrailRequest request
@@ -119,7 +119,7 @@ public class TrailController {
     }
 
     @PatchMapping("/{id}/status")
-    @Operation(summary = "Change trail operational status", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "changeTrailStatus", summary = "Change trail operational status", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TrailDetailResponse> changeStatus(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateTrailStatusRequest request

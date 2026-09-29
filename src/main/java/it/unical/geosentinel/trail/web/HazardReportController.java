@@ -42,14 +42,14 @@ public class HazardReportController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get hazard report by ID", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getHazard", summary = "Get hazard report by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<HazardResponse> getById(@PathVariable UUID id) {
         HazardView view = hazardReportService.getHazard(id);
         return ResponseEntity.ok(trailMapper.toResponse(view));
     }
 
     @GetMapping("/trail/{trailId}")
-    @Operation(summary = "List active hazards near a specific trail (buffer 100m)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findActiveHazardsByTrail", summary = "List active hazards near a specific trail (buffer 100m)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<HazardResponse>> getActiveNearTrail(@PathVariable UUID trailId) {
         List<HazardView> views = hazardReportService.findNearTrail(trailId);
         return ResponseEntity.ok(views.stream().map(trailMapper::toResponse).toList());
@@ -57,7 +57,7 @@ public class HazardReportController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Submit a hazard report", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "createHazard", summary = "Submit a hazard report", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<HazardResponse> create(@Valid @RequestBody CreateHazardRequest request) {
         UUID reporterId = currentUser.getRequiredUserId();
         HazardView created = hazardReportService.create(reporterId, trailMapper.toCommand(request));
@@ -70,7 +70,7 @@ public class HazardReportController {
     }
 
     @PatchMapping("/{id}/status")
-    @Operation(summary = "Verify, reject or resolve a hazard report", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "changeHazardStatus", summary = "Verify, reject or resolve a hazard report", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<HazardResponse> changeStatus(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateHazardStatusRequest request

@@ -17,6 +17,7 @@ import it.unical.geosentinel.maintenance.web.dto.MaintenanceMapper;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.data.web.PagedModel;
 import org.springframework.http.HttpHeaders;
@@ -59,18 +60,18 @@ public class MaintenanceController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get maintenance ticket by ID", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getTicket", summary = "Get maintenance ticket by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TicketResponse> getById(@PathVariable UUID id) {
         return withETag(ResponseEntity.ok(), maintenanceService.getTicket(id));
     }
 
     @GetMapping
-    @Operation(summary = "Search maintenance tickets with pagination and filtering", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "searchTickets", summary = "Search maintenance tickets with pagination and filtering", security = @SecurityRequirement(name = "bearerAuth"))
     public PagedModel<TicketResponse> searchTickets(
             @RequestParam(required = false) TicketStatus status,
             @RequestParam(required = false) TicketPriority priority,
             @RequestParam(required = false) UUID assignedTo,
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
+            @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
     ) {
         checkSortable(pageable.getSort());
         TicketQuery query = new TicketQuery(status, priority, assignedTo);
@@ -78,14 +79,14 @@ public class MaintenanceController {
     }
 
     @GetMapping("/trail/{trailId}")
-    @Operation(summary = "List maintenance tickets of a trail (cached)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findTicketsByTrail", summary = "List maintenance tickets of a trail (cached)", security = @SecurityRequirement(name = "bearerAuth"))
     public List<TicketResponse> byTrail(@PathVariable UUID trailId) {
         return maintenanceMapper.toResponses(maintenanceService.byTrail(trailId));
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Open a new maintenance ticket", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "createTicket", summary = "Open a new maintenance ticket", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TicketResponse> create(@Valid @RequestBody CreateTicketRequest request) {
         TicketView created = maintenanceService.createTicket(maintenanceMapper.toCommand(request));
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
@@ -96,7 +97,7 @@ public class MaintenanceController {
     }
 
     @PutMapping("/{id}")
-    @Operation(summary = "Update ticket details (title, description, priority)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "updateTicket", summary = "Update ticket details (title, description, priority)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TicketResponse> update(
             @PathVariable UUID id,
             @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
@@ -107,7 +108,7 @@ public class MaintenanceController {
     }
 
     @PatchMapping("/{id}/assign")
-    @Operation(summary = "Assign a ticket to an operator", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "assignTicket", summary = "Assign a ticket to an operator", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TicketResponse> assign(
             @PathVariable UUID id,
             @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
@@ -118,7 +119,7 @@ public class MaintenanceController {
     }
 
     @PatchMapping("/{id}/status")
-    @Operation(summary = "Update ticket status (IN_PROGRESS, RESOLVED, CANCELLED)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "changeTicketStatus", summary = "Update ticket status (IN_PROGRESS, RESOLVED, CANCELLED)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TicketResponse> changeStatus(
             @PathVariable UUID id,
             @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,

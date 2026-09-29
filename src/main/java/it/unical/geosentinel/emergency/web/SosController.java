@@ -19,6 +19,7 @@ import it.unical.geosentinel.emergency.web.dto.SosDtos.UpdateSosLocationRequest;
 import it.unical.geosentinel.identity.infrastructure.security.CurrentUser;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.data.web.PagedModel;
 import org.springframework.http.HttpStatus;
@@ -63,7 +64,7 @@ public class SosController {
     // Idempotency-Key facoltativo (D12): un SOS senza chiave non si rifiuta mai. Retry → 200 con l'allerta esistente
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Raise an SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "raiseSos", summary = "Raise an SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<SosAlertResponse> raiseSos(
             @RequestHeader(name = "Idempotency-Key", required = false) UUID idempotencyKey,
             @Valid @RequestBody RaiseSosRequest request
@@ -83,7 +84,7 @@ public class SosController {
     }
 
     @PutMapping("/{id}/location")
-    @Operation(summary = "Update live location of an active SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "updateSosLocation", summary = "Update live location of an active SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<SosAlertResponse> updateLocation(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateSosLocationRequest request
@@ -94,7 +95,7 @@ public class SosController {
     }
 
     @GetMapping("/active")
-    @Operation(summary = "Get the current user's active SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getMyActiveSos", summary = "Get the current user's active SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<SosAlertResponse> getActiveSos(){
         UUID hikerId = currentUser.getRequiredUserId();
         SosAlertView alert = sosService.getActiveAlertForHiker(hikerId);
@@ -103,7 +104,7 @@ public class SosController {
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Cancel an active SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "cancelSos", summary = "Cancel an active SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<Void> cancelSos(@PathVariable UUID id){
         UUID hikerId = currentUser.getRequiredUserId();
         sosService.cancelSos(id, hikerId);
@@ -111,23 +112,23 @@ public class SosController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get SOS alert details by ID", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getSosAlert", summary = "Get SOS alert details by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<SosAlertResponse> getById(@PathVariable UUID id){
         SosAlertView alert = sosService.getAlert(id);
         return ResponseEntity.ok(sosMapper.toResponse(alert));
     }
 
     @GetMapping
-    @Operation(summary = "Find active/dispatched SOS alerts (Rescue Operators only)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findActiveSosAlerts", summary = "Find active/dispatched SOS alerts (Rescue Operators only)", security = @SecurityRequirement(name = "bearerAuth"))
     public PagedModel<SosAlertResponse> findActiveAlerts(
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.ASC) Pageable pageable
+            @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.ASC) Pageable pageable
     ) {
         checkSortable(pageable.getSort());
         return new PagedModel<>(sosService.findActiveAlerts(pageable).map(sosMapper::toResponse));
     }
 
     @GetMapping("/nearby")
-    @Operation(summary = "Find active SOS alerts within radius in meters (Rescue Operators only)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findSosAlertsNearby", summary = "Find active SOS alerts within radius in meters (Rescue Operators only)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<SosAlertResponse>> findNearby(
             @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") double lon,
             @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") double lat,
@@ -139,7 +140,7 @@ public class SosController {
     }
 
     @PatchMapping("/{id}/dispatch")
-    @Operation(summary = "Dispatch a rescue team to the SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "dispatchRescueTeam", summary = "Dispatch a rescue team to the SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<SosAlertResponse> dispatchTeam(
             @PathVariable UUID id,
             @Valid @RequestBody DispatchTeamRequest request
@@ -150,7 +151,7 @@ public class SosController {
     }
 
     @PatchMapping("/{id}/resolve")
-    @Operation(summary = "Mark an SOS alert as resolved and release the rescue team", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "resolveSosAlert", summary = "Mark an SOS alert as resolved and release the rescue team", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<SosAlertResponse> resolve(@PathVariable UUID id){
         SosAlertView resolved = sosService.resolveAlert(id);
         return ResponseEntity.ok(sosMapper.toResponse(resolved));

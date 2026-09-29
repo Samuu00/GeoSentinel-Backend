@@ -43,7 +43,7 @@ public class RescueTeamController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Register a new rescue team unit", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "createRescueTeam", summary = "Register a new rescue team unit", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RescueTeamResponse> createTeam(@Valid @RequestBody CreateRescueTeamRequest request){
         RescueTeamView created = sosService.createTeam(sosMapper.toCommand(request));
 
@@ -55,13 +55,13 @@ public class RescueTeamController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get a rescue team by ID", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getRescueTeam", summary = "Get a rescue team by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RescueTeamResponse> getTeam(@PathVariable UUID id) {
         return ResponseEntity.ok(sosMapper.toResponse(sosService.getTeam(id)));
     }
 
     @GetMapping("/available-nearby")
-    @Operation(summary = "Find available rescue teams ordered by geodesic distance from coordinates", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findAvailableRescueTeamsNearby", summary = "Find available rescue teams ordered by geodesic distance from coordinates", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<RescueTeamResponse>> findAvailableNearby(
             @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") double lon,
             @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") double lat,

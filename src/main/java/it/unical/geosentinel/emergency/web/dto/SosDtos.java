@@ -1,5 +1,6 @@
 package it.unical.geosentinel.emergency.web.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import it.unical.geosentinel.emergency.domain.SosStatus;
 import it.unical.geosentinel.emergency.web.dto.RescueTeamDtos.RescueTeamResponse;
 import it.unical.geosentinel.shared.web.geo.GeoPointDto;
@@ -9,6 +10,8 @@ import jakarta.validation.constraints.Size;
 
 import java.time.Instant;
 import java.util.UUID;
+
+import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
 public class SosDtos {
     public record RaiseSosRequest(
@@ -31,14 +34,14 @@ public class SosDtos {
     ){}
 
     public record SosAlertResponse(
-            UUID id,
-            UUID hikerId,
-            GeoPointDto location,
-            Instant locationUpdatedAt,
-            SosStatus status,
+            @Schema(requiredMode = REQUIRED) UUID id,
+            @Schema(requiredMode = REQUIRED) UUID hikerId,
+            @Schema(requiredMode = REQUIRED) GeoPointDto location,
+            @Schema(requiredMode = REQUIRED) Instant locationUpdatedAt,
+            @Schema(requiredMode = REQUIRED) SosStatus status,
             String medicalNotes,
             RescueTeamResponse assignedTeam,
             Instant closedAt,
-            Instant createdAt
+            @Schema(requiredMode = REQUIRED) Instant createdAt
     ){}
 }

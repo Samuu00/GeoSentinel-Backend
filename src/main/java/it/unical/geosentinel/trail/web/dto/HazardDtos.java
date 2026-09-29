@@ -1,5 +1,6 @@
 package it.unical.geosentinel.trail.web.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -9,6 +10,8 @@ import it.unical.geosentinel.trail.domain.HazardType;
 import it.unical.geosentinel.trail.domain.Severity;
 
 import java.util.UUID;
+
+import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
 public class HazardDtos {
     public record CreateHazardRequest(
@@ -31,12 +34,12 @@ public class HazardDtos {
 
     // Senza reporterId: chi ha segnalato cosa, dove e quando è un dato personale (traccia gli spostamenti)
     public record HazardResponse(
-            UUID id,
+            @Schema(requiredMode = REQUIRED) UUID id,
             UUID trailId,
-            HazardType type,
-            Severity severity,
+            @Schema(requiredMode = REQUIRED) HazardType type,
+            @Schema(requiredMode = REQUIRED) Severity severity,
             String description,
-            GeoPointDto location,
-            HazardStatus status
+            @Schema(requiredMode = REQUIRED) GeoPointDto location,
+            @Schema(requiredMode = REQUIRED) HazardStatus status
     ) {}
 }

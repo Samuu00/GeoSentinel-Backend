@@ -1,5 +1,6 @@
 package it.unical.geosentinel.emergency.web.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import it.unical.geosentinel.emergency.domain.TeamStatus;
 import it.unical.geosentinel.shared.web.geo.GeoPointDto;
 import jakarta.validation.Valid;
@@ -8,6 +9,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.util.UUID;
+
+import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
 public class RescueTeamDtos {
     public record CreateRescueTeamRequest(
@@ -29,11 +32,11 @@ public class RescueTeamDtos {
     ) {}
 
     public record RescueTeamResponse(
-            UUID id,
-            String name,
-            String callSign,
-            TeamStatus status,
-            GeoPointDto baseLocation,
-            String contactNumber
+            @Schema(requiredMode = REQUIRED) UUID id,
+            @Schema(requiredMode = REQUIRED) String name,
+            @Schema(requiredMode = REQUIRED) String callSign,
+            @Schema(requiredMode = REQUIRED) TeamStatus status,
+            @Schema(requiredMode = REQUIRED) GeoPointDto baseLocation,
+            @Schema(requiredMode = REQUIRED) String contactNumber
     ) {}
 }

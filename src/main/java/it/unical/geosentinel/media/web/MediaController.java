@@ -16,6 +16,7 @@ import it.unical.geosentinel.media.web.dto.MediaMapper;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.data.web.PagedModel;
 import org.springframework.http.HttpStatus;
@@ -56,7 +57,7 @@ public class MediaController {
 
     @PostMapping("/upload-requests")
     @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Request an upload: returns a presigned POST policy (URL + form fields) for direct upload to storage", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "createUploadRequest", summary = "Request an upload: returns a presigned POST policy (URL + form fields) for direct upload to storage", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<UploadSessionResponse> initiateUpload(@Valid @RequestBody InitUploadRequest request) {
         UUID ownerId = currentUser.getRequiredUserId();
         UploadSessionView session = mediaService.initiateUpload(ownerId, mediaMapper.toCommand(request));
@@ -68,7 +69,7 @@ public class MediaController {
     }
 
     @PostMapping("/{id}/confirm")
-    @Operation(summary = "Confirm upload completion after pushing to storage (size and content are verified)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "confirmUpload", summary = "Confirm upload completion after pushing to storage (size and content are verified)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<MediaResponse> confirmUpload(@PathVariable UUID id) {
         UUID ownerId = currentUser.getRequiredUserId();
         MediaFileView file = mediaService.confirmUpload(ownerId, id);
@@ -76,21 +77,21 @@ public class MediaController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get media file details by ID", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getMedia", summary = "Get media file details by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<MediaResponse> getMedia(@PathVariable UUID id) {
         MediaFileView media = mediaService.getMedia(currentUser.getRequiredUserId(), id);
         return ResponseEntity.ok(mediaMapper.toResponse(media));
     }
 
     @GetMapping("/{id}/download-url")
-    @Operation(summary = "Get a temporary presigned GET URL for downloading media", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getMediaDownloadUrl", summary = "Get a temporary presigned GET URL for downloading media", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<DownloadUrlResponse> getDownloadUrl(@PathVariable UUID id) {
         String url = mediaService.getPresignedDownloadUrl(currentUser.getRequiredUserId(), id);
         return ResponseEntity.ok(new DownloadUrlResponse(id, url));
     }
 
     @GetMapping("/attached")
-    @Operation(summary = "Get media attachments linked to a specific entity (TRAIL or HAZARD_REPORT)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findAttachedMedia", summary = "Get media attachments linked to a specific entity (TRAIL or HAZARD_REPORT)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<MediaResponse>> getAttachedMedia(
             @RequestParam MediaTargetType entityType,
             @RequestParam UUID entityId
@@ -100,9 +101,9 @@ public class MediaController {
     }
 
     @GetMapping("/my")
-    @Operation(summary = "List current user's uploaded media", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findMyMedia", summary = "List current user's uploaded media", security = @SecurityRequirement(name = "bearerAuth"))
     public PagedModel<MediaResponse> getMyMedia(
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
+            @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
     ) {
         checkSortable(pageable.getSort());
         UUID ownerId = currentUser.getRequiredUserId();
@@ -111,7 +112,7 @@ public class MediaController {
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Delete an uploaded media file and purge it from object storage (owner or admin)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "deleteMedia", summary = "Delete an uploaded media file and purge it from object storage (owner or admin)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<Void> deleteMedia(@PathVariable UUID id) {
         mediaService.deleteMedia(currentUser.getRequiredUserId(), currentUser.isAdmin(), id);
         return ResponseEntity.noContent().build();

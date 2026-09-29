@@ -51,14 +51,14 @@ public class RefugeController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get refuge details by ID", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getRefuge", summary = "Get refuge details by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RefugeResponse> getById(@PathVariable UUID id) {
         RefugeView view = refugeBookingService.getRefuge(id);
         return ResponseEntity.ok(refugeMapper.toResponse(view));
     }
 
     @GetMapping("/nearby")
-    @Operation(summary = "Find refuges within a given distance in meters from coordinates", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findRefugesNearby", summary = "Find refuges within a given distance in meters from coordinates", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<RefugeResponse>> findNearby(
             @RequestParam("lon") @DecimalMin("-180") @DecimalMax("180") double lon,
             @RequestParam("lat") @DecimalMin("-90") @DecimalMax("90") double lat,
@@ -70,7 +70,7 @@ public class RefugeController {
     }
 
     @GetMapping("/{id}/availability")
-    @Operation(summary = "Check bed availability per night in a date range [from, to)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getRefugeAvailability", summary = "Check bed availability per night in a date range [from, to)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<AvailableResponse> checkAvailability(
             @PathVariable UUID id,
             @RequestParam("from") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -82,7 +82,7 @@ public class RefugeController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Register a new refuge", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "createRefuge", summary = "Register a new refuge", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RefugeResponse> create(@Valid @RequestBody CreateRefugeRequest request){
         RefugeView created = refugeBookingService.createRefuge(
                 refugeMapper.toCommand(request, currentUser.getRequiredUserId()));
@@ -94,7 +94,7 @@ public class RefugeController {
     }
 
     @PatchMapping("/{id}/capacity")
-    @Operation(summary = "Update refuge capacity", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "updateRefugeCapacity", summary = "Update refuge capacity", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RefugeResponse> updateCapacity(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateCapacityRequest request

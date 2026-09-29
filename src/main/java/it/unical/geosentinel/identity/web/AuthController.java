@@ -33,7 +33,7 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    @Operation(summary = "Register a new hiker account and obtain access tokens")
+    @Operation(operationId = "register", summary = "Register a new hiker account and obtain access tokens")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Registration successful"),
             @ApiResponse(responseCode = "400", description = "Validation error on payload"),
@@ -48,7 +48,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    @Operation(summary = "Authenticate user credentials and obtain access tokens")
+    @Operation(operationId = "login", summary = "Authenticate user credentials and obtain access tokens")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Authentication successful"),
             @ApiResponse(responseCode = "400", description = "Validation error on payload"),
@@ -61,7 +61,7 @@ public class AuthController {
     }
 
     @PostMapping("/refresh")
-    @Operation(summary = "Refresh access tokens")
+    @Operation(operationId = "refreshTokens", summary = "Refresh access tokens")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Token refresh successful"),
             @ApiResponse(responseCode = "401", description = "Invalid refresh token"),
@@ -74,6 +74,7 @@ public class AuthController {
 
     @PostMapping("/logout")
     @Operation(
+            operationId = "logout",
             summary = "Revoke session, blacklist JWT identifier and revoke refresh token family",
             security = @SecurityRequirement(name = "bearerAuth")
     )

@@ -48,6 +48,7 @@ public class BookingController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
     @Operation(
+            operationId = "createBooking",
             summary = "Book beds in a refuge",
             security = @SecurityRequirement(name = "bearerAuth"),
             parameters = {
@@ -81,7 +82,7 @@ public class BookingController {
     }
 
     @GetMapping("/my")
-    @Operation(summary = "List current user's bookings", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findMyBookings", summary = "List current user's bookings", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<BookingResponse>> getMyBookings(){
         UUID userId = currentUser.getRequiredUserId();
         List<BookingView> bookings = refugeBookingService.getUserBookings(userId);
@@ -90,7 +91,7 @@ public class BookingController {
 
     // la Location del POST punta qui
     @GetMapping("/{id}")
-    @Operation(summary = "Get one of the current user's bookings", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "getBooking", summary = "Get one of the current user's bookings", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<BookingResponse> getBooking(@PathVariable UUID id) {
         UUID userId = currentUser.getRequiredUserId();
         return ResponseEntity.ok(refugeMapper.toResponse(refugeBookingService.getBooking(userId, id)));
@@ -98,7 +99,7 @@ public class BookingController {
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
-    @Operation(summary = "Cancel a confirmed booking", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "cancelBooking", summary = "Cancel a confirmed booking", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<Void> cancelBooking(@PathVariable UUID id){
         UUID userId = currentUser.getRequiredUserId();
         refugeBookingService.cancel(userId, id);

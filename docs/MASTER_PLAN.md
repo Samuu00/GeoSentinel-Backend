@@ -3,7 +3,7 @@
 > Ruolo di Claude: mentore/architetto/reviewer. **Il codice lo scrivi tu.** Qui trovi solo struttura, contratti (firme), vincoli e checkpoint.
 > Regola di avanzamento: un task si chiude solo quando **tutti** i suoi checkpoint passano. Poi chiedi la review (vedi §5).
 >
-> **Stato (28/09): piano completato.** Tutte le voci e i checkpoint di M0–M6 sono spuntati. `./mvnw clean verify` verde (41 unit + 63 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
+> **Stato (28/09): M0–M6 completate.** Tutte le voci e i checkpoint di M0–M6 sono spuntati. **Da fare: M7**, il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (41 unit + 63 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
 ---
 
@@ -23,6 +23,7 @@
 | D10 | **Coordinate: JTS `x = longitude`, `y = latitude`**. Sempre. | È la causa n.1 di bug spaziali. Ci sarà un test di regressione dedicato (M6). |
 | D11 | **Password: BCrypt (encoder delegante), lunghezza massima 72 byte UTF-8** | BCrypt usa solo i primi 72 byte e, dalla fix della CVE-2025-22228, Spring Security lancia un'eccezione oltre quella soglia: senza un limite in validazione una password lunga diventa un 500. Il limite è in **byte**, non in caratteri (le lettere accentate valgono 2 byte). Alternativa: Argon2 (`Argon2PasswordEncoder`, richiede Bouncy Castle), che non ha il limite. |
 | D12 | **Idempotenza delle POST critiche (`Idempotency-Key`)** | In montagna la rete è instabile e i client ritentano: senza chiave, un retry crea un secondo SOS o una seconda prenotazione. La chiave (UUID generato dal client) è salvata sulla riga con vincolo `UNIQUE (user_id, idempotency_key)`: un retry restituisce la risorsa già creata. Niente Redis: il vincolo del DB è atomico e transazionale. |
+| D13 | **Unico client: app mobile Kotlin Multiplatform (Android + iOS)**, nessun frontend web | Niente CORS né cookie: il refresh token resta nel body e l'app lo salva cifrato (Keystore / Keychain). Il contratto dell'API è il documento OpenAPI, da cui si genera il client Kotlin. Cosa serve al backend: M7. |
 
 **Da sistemare subito (stato attuale del repo):**
 - ~~`application.properties` → rimuovi `hibernate.dialect=...PostgresSpatialDialect`~~ (fatto).
@@ -726,6 +727,137 @@ Opzionali, da aggiungere quando servono: `MediaUploadIT` col modulo Testcontaine
 
 ---
 
+### Milestone 7 — Backend per l'app mobile Kotlin Multiplatform (Android + iOS)
+
+**Contesto:** non ci sarà un frontend web: l'unico client è un'app **Kotlin Multiplatform** (Android e iOS, rete con Ktor, client generato dal documento OpenAPI). Conseguenze già valide senza lavoro: **niente CORS** (lo usano solo i browser); refresh token **nel body JSON** (corretto per il mobile: l'app lo salva cifrato, Android Keystore / iOS Keychain).
+
+Stato verificato il 28/09 su `/v3/api-docs` e sul codice (motiva i task sotto):
+- 15 `operationId` con suffisso numerico (`create_4`, `getById_5`, …): nel client generato diventano `create4()`, e cambiano quando si aggiunge un controller
+- nessuno schema di risposta ha `required`: in Kotlin ogni proprietà diventerebbe nullable
+- nessuna rotta `/users`: l'app non può leggere il profilo né cancellare l'account (obbligatorio per App Store e Google Play)
+- `MediaPolicy` accetta solo JPEG/PNG/WebP: la fotocamera di iPhone salva in HEIC
+- rate limit di 5 req/min **per IP** su `/auth/**`: sulle reti mobili molti utenti escono con lo stesso IP (CGNAT degli operatori)
+
+Ordine consigliato: M7.1 → M7.2 + M7.2.1 (stessa `V8`) → M7.3 (servono al client per partire) → M7.4 → M7.5 → M7.6 → M7.7.
+
+#### M7.1 — Contratto OpenAPI stabile per la generazione del client
+**Obiettivo:** il client Kotlin si genera da `/v3/api-docs` (openapi-generator, `kotlin` + Ktor, o equivalente KMP) senza ritocchi a mano.
+- [x] `operationId` esplicito e unico su ogni `@Operation` (es. `createBooking`, `getTrail`, `raiseSos`): verbo + risorsa, stabile nel tempo. Checkpoint automatico: un test che legge `/v3/api-docs` e fallisce se un `operationId` finisce con `_<numero>`
+- [x] Campi delle **risposte** marcati obbligatori dove non sono mai null (`@Schema(requiredMode = REQUIRED)` sulle componenti dei record `*Response`, oppure nel `OpenApiCustomizer` a partire dai tipi primitivi e dagli id). Le request hanno già `@NotNull`/`@NotBlank`, che springdoc traduce in `required`
+- [x] Enum pubblicati come enum nello schema (già così) e date come `format: date` / `date-time` (ISO-8601, `Instant` in UTC: in Kotlin `kotlinx.datetime.Instant` / `LocalDate`)
+- [x] Documento OpenAPI versionato con uno **snapshot test**, non con `springdoc-openapi-maven-plugin` (il plugin vuole l'app accesa durante il build, quindi Postgres/Redis fuori da Testcontainers):
+  - `shared/OpenApiContractIT` (estende `AbstractIntegrationTest`) legge `/v3/api-docs`, lo normalizza (JSON indentato, chiavi ordinate, `servers` rimosso: contiene la porta casuale) e lo confronta con `docs/openapi.json`. Diverso → il test fallisce con il diff
+  - `-Dopenapi.update=true` riscrive il file invece di confrontarlo (si lancia a mano dopo una modifica voluta alle API, poi si committa)
+  - in `application-test.properties`: `springdoc.api-docs.enabled=true` (nel profilo base è spento: senza, il test riceve 404)
+  - nello stesso test: nessun `operationId` che finisce con `_<numero>`
+  - il progetto KMP genera il client da questo file, non da un server acceso
+- [x] Catalogo degli errori per il client: gli slug di `ProblemTypes` sono stabili e documentati (tabella in M5.1): il client li mappa su una `sealed class` di errori, mai sul testo di `detail`
+
+**Checkpoint:** generazione del client Kotlin dal file committato senza warning; nessun metodo con suffisso numerico; `TokenResponse.accessToken` non nullable nel codice generato.
+
+**Fatto (29/09, scritto da Claude su richiesta), tutte le voci sopra:**
+- 53 `operationId` espliciti; `@Schema(requiredMode = REQUIRED)` sulle componenti mai null dei record `*Response` (nullable solo quelle con colonna nullable nel DDL); nel customizer `required` su `ProblemDetail`, `FieldError` (item di `errors`, con `title` per il nome della classe generata), `PagedModel*` e `PageMetadata`; slug di `ProblemTypes` nella descrizione di `ProblemDetail.type` (letti per reflection, non un enum).
+- `shared/OpenApiContractIT`: snapshot `docs/openapi.json` (`-Dopenapi.update=true` per riscriverlo), nessun `operationId` mancante/duplicato/`_<n>`, nessun oggetto in query.
+- **Bug trovato:** `Pageable` senza `@ParameterObject` finiva nel contratto come un unico parametro `pageable` (oggetto): il client generato avrebbe mandato `?pageable=...` e Spring, che legge `page`/`size`/`sort`, avrebbe ignorato la paginazione. Corretto su `searchTickets`, `findMyMedia`, `findActiveSosAlerts`; ogni nuovo endpoint paginato usa `@ParameterObject @PageableDefault(...) Pageable`.
+- Trappola: il pretty printer di Jackson usa `System.lineSeparator()` (`\r\n` su Windows): lo snapshot si normalizza a `\n` (anche `.gitattributes`), altrimenti rosso su Windows e verde in CI.
+- Verificato: client generato con `openapi-generator` 7.x (`kotlin`, `--library multiplatform`, `dateLibrary=kotlinx-datetime`): 53 metodi con i nomi del contratto, nessun suffisso numerico, `TokenResponse.accessToken: String` non nullable, date `Instant`/`LocalDate`. Unico warning: "OpenAPI 3.1 support is still in beta" del generatore. `./mvnw clean verify` verde: 41 unit + 66 IT.
+- Per l'app: gli enum generati sono rigidi (un valore nuovo lato server rompe la deserializzazione). Nel client `Json { ignoreUnknownKeys = true }`, e aggiungere valori agli enum delle risposte solo insieme a un aggiornamento dell'app.
+
+#### M7.2 — Profilo utente e cancellazione dell'account
+**Obiettivo:** l'app mostra e modifica il profilo; l'utente può cancellare l'account dall'app (**obbligatorio**: App Store Review Guideline 5.1.1(v); Google Play chiede anche un link web per la richiesta di cancellazione).
+- [ ] `identity/web/UserController` (`/api/v1/users/me`):
+  - `GET` → `UserProfileResponse(id, email, displayName, role, createdAt)` (il JWT contiene solo `sub` e `roles`, niente dati personali)
+  - `PATCH` → `UpdateProfileRequest(@NotBlank @Size(2..100) displayName)`
+  - `POST /password` → `ChangePasswordRequest(currentPassword, @Size(min=12) @MaxUtf8Bytes(72) newPassword)`: verifica la password attuale, revoca tutte le famiglie di refresh token dell'utente
+  - `DELETE` → 204: cancellazione dell'account (sotto)
+- [ ] `identity/application/UserAccountService`: `deleteAccount(UUID userId, Jwt accessToken)` in una transazione:
+  - revoca refresh token (tutte le famiglie) + blacklist del `jti` corrente
+  - anonimizzazione, non `DELETE` fisico: le FK (segnalazioni, prenotazioni, SOS, ticket) restano valide. `email` → `deleted-<uuid>@invalid`, `display_name` → `Utente cancellato`, `password_hash` → hash non verificabile, `enabled = false`, `deleted_at = now`
+  - prenotazioni future `CONFIRMED` → `CANCELLED`; allerta SOS attiva → `CANCELLED`
+  - media dell'utente: cancellati (riga + oggetto) tramite `MediaService`, non via repository (regola del §1). Un HIKER può caricare foto solo sulle sue segnalazioni, quindi sono dati suoi e non contenuto condiviso
+  - segnalazioni di pericolo: restano (servono agli altri escursionisti), `reporter_id` punta all'utente anonimizzato
+  - le altre feature espongono un metodo nel loro service (`RefugeBookingService.cancelAllFutureOf(userId)`, `SosService.cancelActiveOf(userId)`, `MediaService.deleteAllOf(userId)`): `identity` non usa i loro repository
+- [ ] **Self-service solo per `HIKER`.** `DELETE /users/me` con ruolo `PARK_MANAGER`, `RESCUE_OPERATOR` o `ADMIN` → 409 `account-managed` ("contact an administrator"). Motivo (pratica comune degli account aziendali, es. Google Workspace, Microsoft Entra): gli account del personale li crea e li chiude l'organizzazione, perché hanno in carico rifugi (`manager_id`), ticket assegnati, missioni e foto dei sentieri. L'obbligo degli store riguarda gli account che l'utente crea dall'app, cioè solo gli HIKER (la registrazione crea solo HIKER). La chiusura di un account del personale (riassegnazione di rifugi e ticket, poi anonimizzazione) è una funzione ADMIN, fuori da M7
+  - nuovo slug `ACCOUNT_MANAGED` in `ProblemTypes` + eccezione in `shared/domain/exception` + handler 409
+- [ ] `V8__users_account.sql`: `users.deleted_at timestamptz NULL`, `users.age_confirmed_at timestamptz NULL` (vedi M7.2.1); `User.markDeleted(Instant now)` nel dominio
+- [ ] Login e refresh rifiutano un utente con `deleted_at` (già coperto da `enabled = false`: verificarlo in un test)
+
+**Checkpoint:** `UserAccountIT`: dopo `DELETE /users/me` → login 401, refresh 401, access token corrente 401; prenotazione futura `CANCELLED`; email originale riutilizzabile per una nuova registrazione; `DELETE /users/me` con un token `PARK_MANAGER` → 409 `account-managed` e l'account resta attivo.
+
+#### M7.2.1 — Età minima in registrazione (GDPR art. 8)
+**Norma:** per i servizi della società dell'informazione il GDPR (art. 8) fissa a 16 anni l'età per acconsentire da soli, e ogni Stato può abbassarla fino a 13. In Italia è **14 anni** (art. 2-quinquies del Codice privacy, D.Lgs. 101/2018). Sotto quella soglia servirebbe il consenso verificato di un genitore: GeoSentinel non lo gestisce, quindi sotto i 14 anni non si registra.
+
+Scelte (prassi delle linee guida ICO, *Age Appropriate Design Code*, e dell'EDPB):
+- [ ] **Age gate neutro:** `RegisterRequest.birthDate` (`@NotNull LocalDate`, ISO-8601). Mai una casella "ho almeno 14 anni": suggerisce la risposta. L'app mostra un campo data vuoto, senza indicare la soglia
+- [ ] **Minimizzazione (art. 5.1.c):** la data di nascita serve solo al controllo e **non si salva**. Si salva `users.age_confirmed_at` (quando il controllo è passato), che basta a dimostrare di averlo fatto (accountability, art. 5.2). Gli utenti del seed e quelli creati da un ADMIN restano con `NULL`
+- [ ] Controllo in `AuthService.register`, **prima** di ogni scrittura (del minore non resta nessun dato): `Period.between(birthDate, LocalDate.now(clock)).getYears() >= minAge`. Non con `@Past` sul DTO: usa il fuso della JVM invece del `Clock` (stesso problema già visto con `@FutureOrPresent` sulle prenotazioni)
+  - data nel futuro o prima del 1900 → 400 (dato non valido, `errors[]` come la validazione)
+  - età sotto la soglia → 422 `age-requirement-not-met`, `detail` generico ("registration is not available for this age") senza la soglia
+- [ ] Soglia configurabile: `geosentinel.registration.min-age=14`. Cambia da Stato a Stato (13–16), e un'apertura in altri paesi UE non richiede codice
+- [ ] Nuovo slug `AGE_REQUIREMENT_NOT_MET` in `ProblemTypes` + eccezione in `shared/domain/exception` + handler 422; catalogo degli errori di M7.1 aggiornato
+- [ ] Dopo un rifiuto l'app non permette di ripetere subito la registrazione con un'altra data: lo ricorda in locale. È compito dell'app, il backend non conserva nulla del tentativo
+
+Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età degli store (iOS *Declared Age Range*, Google Play *Age Signals*). Si valutano lato app se le leggi USA sull'età negli store diventano rilevanti.
+
+**Checkpoint:** `RegistrationAgeIT`: 14 anni compiuti oggi → 201 e `age_confirmed_at` valorizzato; un giorno prima del compleanno → 422 `age-requirement-not-met` e nessuna riga in `users`; data futura → 400; `birthDate` mancante → 400; nessuna colonna con la data di nascita nello schema.
+
+#### M7.3 — Rete mobile: rate limit, compressione, timeout
+- [ ] **Rate limit su `/auth/**` adatto al CGNAT**, con tre policy configurabili invece di costanti (`@ConfigurationProperties` `geosentinel.rate-limit.*`, così `RateLimitIT` imposta i suoi valori), ognuna con il proprio prefisso di bucket:
+  - `login-per-minute` = 30 per IP su login e register (fail-closed): il brute force lo ferma il limite **per account** (`RedisLoginAttemptLimiter`, 10 / 15 min), l'IP è solo un tetto contro gli abusi
+  - `refresh-per-minute` = 120 per IP su `/auth/refresh` (bucket `rl:refresh:`). Il refresh ignora il bearer, quindi si conta sempre per IP. Il token opaco ha 256 bit (indovinarlo è impossibile) e la reuse detection copre il furto: qui il limite serve solo contro il flood, e sotto CGNAT molti telefoni fanno refresh insieme
+  - `general-per-minute` = 60 per utente autenticato o per IP (invariato). L'app manda sempre il bearer, anche sulle GET pubbliche, così conta per utente e non per IP
+  - `logout` resta nella policy di login ma è autenticato, quindi conta per utente
+- [ ] Compressione delle risposte JSON (risparmia dati mobili): `server.compression.enabled=true`, `mime-types=application/json,application/problem+json`, `min-response-size=1KB`
+- [ ] GET condizionali sulle rotte pubbliche dei sentieri (liste e GeoJSON possono pesare): `ShallowEtagHeaderFilter` su `/api/v1/trails/**` e `/api/v1/pois/**` → `304 Not Modified` con `If-None-Match`
+- [ ] `GET /bookings/my` paginato (`PagedModel`, sort in whitelist) come le altre liste: una lista che cresce non va scaricata tutta su mobile
+- [ ] Contratto dei retry per il client (documentato qui e nella descrizione OpenAPI): `429`, `409 resource-busy` e `503 storage-unavailable` portano `Retry-After` → il client aspetta quel tempo; `Idempotency-Key` generata **una volta per azione** e salvata finché l'azione non riceve una risposta definitiva (anche dopo la chiusura dell'app)
+- [ ] Contratto del refresh: una sola richiesta di refresh alla volta (il plugin `Auth` di Ktor con `bearer { refreshTokens { } }` la serializza). Due refresh paralleli con lo stesso token fanno scattare la reuse detection (M2.3) e chiudono la sessione: comportamento voluto, va scritto nel contratto
+
+**Checkpoint:** 20 login con password errata da 20 account diversi dallo stesso IP → nessun 429; 11 login sbagliati sullo stesso account → 429; 50 refresh dallo stesso IP con token di utenti diversi → nessun 429; una GET da ~10 KB con `Accept-Encoding: gzip` torna compressa; seconda GET di un sentiero con `If-None-Match` → 304.
+
+#### M7.4 — Notifiche push (Firebase Cloud Messaging, anche per iOS)
+**Obiettivo:** la notifica SOS oggi è solo un log. FCM consegna sia su Android sia su iOS (tramite APNs, configurato nella console Firebase).
+- [ ] Nuova feature `notification/`:
+  - `domain/DeviceToken` (`id`, `userId`, `token varchar(4096) UNIQUE`, `platform ANDROID|IOS`, `lastSeenAt`), estende `AuditableEntity`
+  - `application/port/PushNotifier`: `void send(Collection<String> tokens, PushMessage message)` → record `(String title, String body, Map<String,String> data)`
+  - `application/DeviceService`: `register(userId, token, platform)` (upsert: lo stesso token passa all'utente che lo registra), `unregister(userId, token)`, `tokensOf(Collection<UUID> userIds)`
+  - destinatari per ruolo: `notification` non conosce i ruoli e non usa `UserRepository`. `identity/application/UserQueryService.activeUserIdsWithRole(Role)` (solo `enabled`) → `DeviceService.tokensOf(ids)`. Niente ruolo copiato in `device_tokens` (diventerebbe vecchio al primo cambio di ruolo) e niente **topic FCM** per gli SOS: l'iscrizione al topic va gestita a ogni cambio di ruolo o logout, e un operatore disabilitato continuerebbe a ricevere gli allarmi. Invio diretto ai token con `sendEachForMulticast`, a blocchi di 500 (limite FCM)
+  - `infrastructure/push/FcmPushNotifier` (Firebase Admin SDK, credenziali da `GOOGLE_APPLICATION_CREDENTIALS` nel `.env`, mai nel repo) e `LoggingPushNotifier` quando `geosentinel.push.enabled=false` (default in `local` e `test`)
+  - token rifiutati da FCM come `UNREGISTERED`/`INVALID_ARGUMENT` → cancellati
+- [ ] Rotte `POST /api/v1/devices` (`{token, platform}`, 204) e `DELETE /api/v1/devices/{token}` (204); il logout dell'app chiama il `DELETE` prima di `/auth/logout`
+- [ ] `V9__device_tokens.sql`: tabella + indice su `user_id` + `CHECK` su `platform`
+- [ ] `SosNotificationListener.deliver`: push agli utenti `RESCUE_OPERATOR` (dati: solo `alertId` e tipo evento, **mai** posizione o note mediche nel payload: si leggono dall'API con il token). Se l'invio fallisce, `notified_at` resta NULL e `SosNotificationRecovery` riprova (M4.3)
+- [ ] Push all'escursionista su `dispatch` (squadra in arrivo) e `resolve`, con lo stesso schema (`AFTER_COMMIT`, executor dedicato)
+
+**Checkpoint:** `SosPushIT` con un `PushNotifier` finto (bean di test): raise → gli operatori ricevono un messaggio con solo `alertId`; notifier che lancia → `notified_at` NULL e il recupero la rinvia; token `UNREGISTERED` → cancellato. Prova manuale con un dispositivo vero e il progetto Firebase.
+
+#### M7.5 — Media dal telefono
+- [ ] **HEIC** (predefinito della fotocamera iOS). Scelta consigliata: l'app converte in **JPEG** e ridimensiona (lato lungo ≤ 2048 px, qualità ~80%) prima dell'upload: più leggero su rete mobile, visibile ovunque (Android non legge HEIC in tutte le versioni). Il backend resta com'è; se invece si vuole accettare HEIC: `image/heic` nella whitelist di `MediaPolicy` + magic bytes (`ftyp` a offset 4 con brand `heic`/`heix`/`mif1`) + test
+- [ ] Contratto dell'upload per il client (Ktor `submitFormWithBinaryData`): tutti i `formFields` **nell'ordine ricevuto**, poi `file` per ultimo; `Content-Type` della parte file uguale a quello dichiarato; dopo il 204 di MinIO chiamare `/confirm`; upload scaduto (10 min) → nuova `upload-requests`
+- [ ] `MINIO_PUBLIC_ENDPOINT` = indirizzo con cui il **telefono** raggiunge MinIO (la firma include l'host): emulatore Android `http://10.0.2.2:9000`, simulatore iOS `http://localhost:9000`, telefono vero `http://<IP del PC>:9000`, produzione il dominio HTTPS dello storage
+- [ ] `MediaUploadIT` (rimasto facoltativo in M6): con il client mobile diventa il test di regressione del contratto di upload
+
+**Checkpoint:** foto scattata dall'app su emulatore Android e simulatore iOS → `READY` e visibile nella segnalazione; `MediaUploadIT` verde in CI.
+
+#### M7.6 — Ambiente raggiungibile dai dispositivi
+- [ ] **Sviluppo:** documentare in `.env.example` e nel README gli indirizzi per emulatore/simulatore/telefono (vedi M7.5). HTTP in chiaro solo in sviluppo: Android richiede un `network_security_config` che lo permetta verso `10.0.2.2` / IP del PC; iOS `NSAllowsLocalNetworking` in `Info.plist` (configurazione dell'app, non del backend)
+- [ ] **Staging per i tester** (iOS rifiuta HTTP fuori dalla rete locale, App Transport Security):
+  - profilo `application-prod.properties`: logging `INFO`, springdoc spento, `server.forward-headers-strategy=native` (senza, dietro il proxy tutti i client hanno lo stesso IP e il rate limit per IP li blocca insieme)
+  - reverse proxy con TLS automatico (es. Caddy) davanti all'app e a MinIO, due sottodomini (`api.` e `media.`); nel compose un profilo `prod` con il proxy e il servizio `backend`
+  - segreti solo da variabili d'ambiente del server, mai file nel repo; `JWT_SECRET` diverso da quello di sviluppo
+  - backup giornaliero di Postgres (`pg_dump` programmato) e del bucket
+- [ ] `GET /actuator/health` per il monitoraggio esterno (già pubblico, senza dettagli)
+
+**Checkpoint:** l'app di test su un iPhone fisico, fuori dalla rete di casa, fa login, apre un sentiero e carica una foto via HTTPS.
+
+#### M7.7 — Test e review
+- [ ] `UserAccountIT` (M7.2), `RegistrationAgeIT` (M7.2.1), `SosPushIT` (M7.4), `MediaUploadIT` (M7.5), test del contratto OpenAPI (M7.1), `RateLimitIT` aggiornato (M7.3)
+- [ ] Review con la catena del §5 (riga 7)
+
+**Checkpoint M7:** `./mvnw verify` verde; client Kotlin generato dal `docs/openapi.json` committato; flusso completo dall'app su Android e iOS: registrazione → login → sentieri vicini → segnalazione con foto → SOS → notifica push all'operatore → cancellazione dell'account.
+
+---
+
 ## 4. Ordine di esecuzione e dipendenze
 
 > Ordine pianificato all'inizio. Quello reale è stato: feature (M1.3, M2, M3, M4, M5.2) prima dell'infrastruttura, poi M0.2 → M1.1 → M0.4 → M0.5 → M6 → verifiche dal vivo di M3/M4 → M5.3. Lezione: con `ddl-auto=validate` l'app non parte finché non esistono tutte le migrazioni, quindi M0.2 + M1.1 vanno fatti presto.
@@ -756,6 +888,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 | 4 | Service & concorrenza | `ecc:database-reviewer,ecc:java-reviewer` |
 | 5 | API & errori | `ecc:java-reviewer,ecc:code-reviewer` |
 | 6 | Test | `ecc:java-reviewer,ecc:code-reviewer` |
+| 7 | App mobile (KMP) | `ecc:security-reviewer,ecc:java-reviewer` |
 
 ```bash
 /ecc:orchestrate custom "ecc:java-build-resolver,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-0] Review only, do not write feature code: pom.xml deps for Spring Boot 4.1 (flyway-database-postgresql, oauth2-resource-server, mapstruct processor paths, springdoc 3, testcontainers 2), docker-compose healthchecks + minio-init bucket, Dockerfile multi-stage layers; Acceptance: mvnw compile green; all compose services healthy; no secrets in repo"
@@ -765,12 +898,13 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 /ecc:orchestrate custom "ecc:database-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-4] Review only: PostGIS native queries (ST_DWithin geography meters, ST_Contains envelope), refuge booking PESSIMISTIC_WRITE + per-night occupancy via generate_series, SOS lock ordering alert-then-team, @Version plus explicit expectedVersion check, transaction-aware typed Redis cache, dedicated async executor with AFTER_COMMIT listener; Acceptance: no overbooking path; no deadlock ordering; cache holds DTOs only"
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-5] Review only: thin REST controllers with record DTOs and JSR-380, MapStruct mappers with GeometryMapper, If-Match/ETag on maintenance PATCH, GlobalExceptionHandler RFC 7807 mapping incl. AccessDenied from @PreAuthorize and lock failures, OpenAPI bearer scheme; Acceptance: every error is application/problem+json; no entity exposed in responses; 201 with Location"
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-6] Review only: AbstractIntegrationTest singleton PostGIS+Redis Testcontainers with @ServiceConnection, truncate cleanup without @Transactional, concurrency ITs with CountDownLatch for bookings/SOS/optimistic lock, spatial IT with lon/lat regression, ProblemDetail contract IT; Acceptance: mvnw verify green from clean; concurrency tests pass 5/5 repeats; no in-memory DB"
+/ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-7] Review only: stable OpenAPI contract for Kotlin client generation (explicit operationIds, required response fields, committed openapi.json), /users/me profile + account deletion with anonymization and cross-feature cleanup through services, CGNAT-friendly auth rate limit + per-account limit, gzip + conditional GET, FCM push via PushNotifier port with no PII in payload and retry through notified_at, mobile upload contract, prod profile behind TLS proxy with forward headers; Acceptance: generated client compiles without nullable-everything; deleted account cannot log in; push failure is retried; no secrets in repo"
 ```
 
 ---
 
 ## 6. Come lavoriamo da qui
-Il piano è completato. Per una nuova funzionalità (es. frontend, notifiche reali, `MediaUploadIT`):
+M0–M6 sono completate; il prossimo lavoro è **M7** (app mobile KMP). Per altre funzionalità:
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.
