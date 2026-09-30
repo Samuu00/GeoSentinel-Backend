@@ -20,6 +20,7 @@ Fase attuale: **solo backend**. M0–M6 completate il 28/09 (`./mvnw clean verif
 | Cache | Redis tramite Boot `RedisCacheManager`, `transactionAware`, **serializer JSON tipizzato per cache** (niente default typing) |
 | Storage | MinIO 9.0.3 (+ `okhttp-jvm` esplicito) con **presigned POST policy** per l'upload e GET firmato per il download |
 | DTO / mapping | Record Java + MapStruct 1.6.3 (`componentModel=spring`, `unmappedTargetPolicy=ERROR`). Niente Lombok |
+| Push | Firebase Admin SDK 9.11 (`firebase-admin` senza Firestore/Storage + `google-http-client-jackson2` esplicito), FCM anche per iOS via APNs. Spento di default (`LoggingPushNotifier`) |
 | Errori | RFC 7807 `ProblemDetail`, `type` = `https://geosentinel.dev/problems/<slug>` |
 | API docs | springdoc-openapi 3.1.1 (solo profilo `local`); errori `ProblemDetail` documentati da un `OpenApiCustomizer` in `OpenApiConfig` |
 | Osservabilità | Micrometer Tracing OTel (`spring-boot-micrometer-tracing-opentelemetry` + `micrometer-tracing-bridge-otel`, servono entrambi): `traceId` nell'MDC e in ogni `ProblemDetail`. Nessun exporter |
@@ -36,7 +37,8 @@ it.unical.geosentinel
 ├── refuge/            rifugi e prenotazioni (lock pessimistico)
 ├── maintenance/       ticket (lock ottimistico + cache)
 ├── emergency/         SOS e squadre (lock pessimistico + evento asincrono)
-└── media/             metadati file + MinIO
+├── media/             metadati file + MinIO
+└── notification/      token dei dispositivi + push FCM (M7.4)
 ```
 Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - Controller e DTO stanno in `web/`, i service in `application/`, i repository Spring Data in `infrastructure/persistence/`.
@@ -266,16 +268,16 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 
 **Aperti (nessuno blocca il backend):**
 - IntelliJ: la run configuration in `.idea/workspace.xml` punta ancora a `org.example.geosentinel.GeoSentinelApplication`: va cambiata in `it.unical.geosentinel.GeoSentinelApplication` dall'IDE.
-- Commit e push delle modifiche della chiusura del piano (poi, con GitHub Pro, regola "status checks" su `main`).
+- Commit di M7.4 (in stage il 30/09), poi push con i tre job della CI verdi (con GitHub Pro: regola "status checks" su `main`).
 - `RoleHierarchy`: verificata per la method security (`AuthFlowIT`). Da riverificare per `authorizeHttpRequests` solo se una rotta userà `hasRole(...)` in `SecurityConfig` (oggi solo `authenticated()`).
 
 **Limiti noti accettati** (scelte documentate, non bug):
-- `updateCapacity` può scendere sotto le prenotazioni confermate; `GET /bookings/my` senza paginazione; il lock sulla riga del rifugio serializza tutte le prenotazioni di quel rifugio.
-- Notifica SOS finta (solo log) e consegnabile due volte (chi la riceve deve tollerare i duplicati).
+- `updateCapacity` può scendere sotto le prenotazioni confermate; il lock sulla riga del rifugio serializza tutte le prenotazioni di quel rifugio.
+- Push SOS: in sviluppo e nei test solo log (`LoggingPushNotifier`); FCM vero con `PUSH_ENABLED=true` + `GOOGLE_APPLICATION_CREDENTIALS`, provabile solo con l'app KMP. Una notifica può arrivare due volte (l'app deve tollerare i duplicati); quelle all'escursionista (dispatch/resolve) sono best effort, senza recupero.
 - La registrazione rivela che un'email esiste (422); il refresh token viaggia nel body (va bene per mobile, non per una SPA).
 - MinIO da un fork della community (`pgsty`): da tenere d'occhio con Dependabot. La versione di gitleaks in `ci.yml` si aggiorna a mano.
 - `application-local.properties` fatto (28/09): solo differenze dal base (flyway con `db/seed`, springdoc acceso, logging SQL), nessun segreto. Redis nel base: `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD` (vuota di default).
-- Flusso media verificato dal vivo il 28/09 (vedi M3 sotto), non ancora coperto da un test automatico: `MediaUploadIT` (modulo `testcontainers-minio` + `pgsty/minio` come `asCompatibleSubstituteFor("minio/minio")`) resta facoltativo.
+- Flusso media verificato dal vivo il 28/09 (vedi M3 sotto), non ancora coperto da un test automatico: `MediaUploadIT` (modulo `testcontainers-minio` + `pgsty/minio` come `asCompatibleSubstituteFor("minio/minio")`) è previsto in M7.5.
 
 **Correzioni della review completa (22/09, sera):**
 - `RateLimitFilter`: un bucket per policy (`rl:auth:*` separato da `rl:*`). Con la chiave condivisa le GET pubbliche ricaricavano il bucket del login, aggirando il limite di 5 al minuto. `Retry-After` arrotondato per eccesso. Test: `RateLimitFilterTest`.
@@ -295,14 +297,14 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - Seed: l'hash BCrypt era inventato e senza `{bcrypt}` (il `DelegatingPasswordEncoder` avrebbe fallito): ora hash vero di `Password123!`; email minuscole; niente media (oggetto assente nel bucket). Utenti: `admin@`, `manager@`, `rescuer@`, `hiker@`, `hiker2@geosentinel.dev`.
 - Verificato sul Postgres del compose: 8 migrazioni applicate, `validate` passa, app avviata; `length_m` 3193 e 4525 m; `EXPLAIN` usa `idx_trails_path_geog`; login di `hiker@` → 200, password errata → 401, GET di un sentiero → 200.
 - Sul PC dell'utente la 8080 è occupata da un'altra applicazione (non GeoSentinel): per provare in parallelo `--server.port=...`.
-- **Migrazioni ora applicate: sono immutabili.** Ogni modifica va in una `V8__...` nuova (altrimenti Flyway rifiuta l'avvio per checksum diverso).
+- **Migrazioni ora applicate: sono immutabili.** Ogni modifica va in una migrazione nuova (oggi applicate V1–V9: la prossima è `V10`), altrimenti Flyway rifiuta l'avvio per checksum diverso.
 
 **M0 completata (28/09, scritta da Claude su richiesta):**
 - Tracing: `spring-boot-micrometer-tracing-opentelemetry` + `micrometer-tracing-bridge-otel` (servono entrambi in Boot 4: il bridge nel modulo è opzionale). `ProblemDetailWriter` aggiunge il `traceId` dall'MDC come `GlobalExceptionHandler`. Verificato: 404 e 401 hanno `traceId`.
 - `.github/workflows/ci.yml` (job `verify` con `./mvnw -B verify` + job `docker`), `.github/dependabot.yml` (maven, docker, docker-compose, github-actions). Action: `checkout@v7`, `setup-java@v6`.
 - Checkpoint di M0.1 e M0.3 verificati e spuntati.
 - **Resta all'utente:** secret scanning + push protection (Settings → Code security su GitHub). Checkpoint di M0.5 (PR rossa con un test rotto, prima PR di Dependabot) verificabili solo dopo il push.
-- **La CI sarà rossa finché:** `GeoSentinelApplicationTests` cerca Postgres sulla 5432 e `support/AbstractIntegrationTest.java` (in scrittura dall'utente) non compila (`org.springframework.boot.test.autoconfigure.web.servlet` non esiste in Boot 4: il package è cambiato).
+- ~~La CI sarebbe stata rossa~~ (risolto in M6.1: `GeoSentinelApplicationTests` rimosso, `AbstractIntegrationTest` corretto per Boot 4).
 
 **M6.1 — `AbstractIntegrationTest` scritto dall'utente, corretto da Claude su richiesta (28/09):**
 - Non compilava: `AutoConfigureMockMvc` in Boot 4 è in `org.springframework.boot.webmvc.test.autoconfigure`; in Testcontainers 2 `PostgreSQLContainer` è `org.testcontainers.postgresql` (non generico); `MinIOContainer` senza il modulo nel pom.
@@ -318,12 +320,15 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 
 **Checkpoint M3 verificati dal vivo (28/09):** app `local` sulla 18080 + MinIO `pgsty` del compose, script Python con le API reali (utenti del seed). Tutti verdi: upload → confirm → `READY` e download con byte identici e `Content-Disposition: attachment`; file più grande → `EntityTooLarge`, `Content-Type` diverso → 403 da MinIO; testo dichiarato JPEG → `QUARANTINED` e oggetto cancellato; 415 e 413; visibilità (404 su media altrui e su una `REJECTED` altrui, anche `/attached`; 403 HIKER su un sentiero); `MediaCleanupJob` cancella riga e oggetto di un upload non confermato. Nessun bug nel codice. Dati di prova rimasti nel DB e nel bucket di sviluppo.
 
-**Prossimo passo:** M0–M6 chiuse al 100% (28/09). Restano le azioni dell'utente in "Aperti" (commit + push con i tre job della CI verdi, run configuration di IntelliJ), poi **M7 — backend per l'app mobile KMP** (piano, sezione M7), nell'ordine M7.1 → M7.7:
+**Prossimo passo:** M0–M6 chiuse al 100% (28/09). Restano le azioni dell'utente in "Aperti" (commit di M7.4 + push con i tre job della CI verdi, run configuration di IntelliJ) e **M7 — backend per l'app mobile KMP** (piano, sezione M7), nell'ordine M7.1 → M7.7:
 1. ~~M7.1~~ **fatto (29/09, scritto da Claude su richiesta):** 53 `operationId` espliciti, `required` sulle risposte, snapshot `docs/openapi.json` verificato da `shared/OpenApiContractIT` (`-Dopenapi.update=true` per riscriverlo dopo una modifica voluta alle API, poi commit). Bug corretto: `Pageable` senza `@ParameterObject` (il client avrebbe mandato `?pageable=`). Client KMP generato e controllato. `./mvnw clean verify` verde: 41 unit + 66 IT. Regola: ogni nuova `@Operation` ha `operationId`, ogni nuovo `*Response` ha `@Schema(requiredMode = REQUIRED)` sui campi mai null, ogni `Pageable` ha `@ParameterObject`;
 2. ~~M7.2 + M7.2.1~~ **fatto (29/09, scritto dall'utente, corretto da Claude su richiesta):** `/api/v1/users/me` (GET, PATCH, POST `/password` → nuovi token, DELETE → anonimizzazione solo per HIKER, 409 `account-managed` per il personale), età minima 14 anni in registrazione (422 `age-requirement-not-met`, data di nascita mai salvata, soglia `geosentinel.registration.min-age`), `V8` applicata (le migrazioni ora sono V1–V8, immutabili: la prossima è `V9`). Dettagli e bug corretti nel piano (fine di M7.2.1). `./mvnw clean verify` verde: 41 unit + 74 IT;
 3. ~~M7.3~~ **fatto (30/09, scritto da Claude su richiesta):** rate limit configurabile adatto al CGNAT (`RateLimitProperties`, tre bucket), gzip, ETag debole + 304 sul catalogo, `/bookings/my` paginato (cambio incompatibile: rigenerare il client), contratti di retry e refresh nel documento OpenAPI. Dettagli e trappole nel piano (fine di M7.3). `./mvnw clean verify` verde: 42 unit + 85 IT;
 4. ~~M7.4~~ **fatto (30/09, scritto da Claude su richiesta, scheletri dell'utente):** feature `notification/` (`DeviceToken`, `DeviceService`, `PushNotifier` + FCM/log, `POST`/`DELETE /api/v1/devices`), `V9__device_tokens`, push agli operatori sul raise (retry con `notified_at`) e all'escursionista su dispatch/resolve, dispositivi cancellati con l'account. Bug trovati nella verifica: `NoClassDefFoundError` di Firebase, NPE su un codice d'errore null, 429 nascosti ai test da httpclient5. Dettagli nel piano (fine di M7.4). `./mvnw clean verify` verde due volte: 42 unit + 93 IT. Per le push vere: nel `.env` `PUSH_ENABLED=true` + `GOOGLE_APPLICATION_CREDENTIALS`, quando esisterà l'app;
-5. M7.5 media dal telefono (HEIC → JPEG lato app), 6. M7.6 ambiente raggiungibile dai dispositivi (HTTPS per iOS), 7. M7.7 test e review.
+5. M7.5 media dal telefono: **deciso (30/09) che l'app converte HEIC in JPEG** (backend e `MediaPolicy` invariati); restano contratto dell'upload nella descrizione OpenAPI, `MediaUploadIT`, indirizzi di `MINIO_PUBLIC_ENDPOINT`;
+6. M7.6 ambiente raggiungibile dai dispositivi (`application-prod.properties` con `forward-headers-strategy`, Caddy + TLS nel compose `prod`, backup);
+7. M7.7 test e review (catena §5 riga 7). Prima, per la stabilità: scheduler spento nei test (i job girano da soli durante gli IT) e, facoltativo, 409 su `updateCapacity` sotto le prenotazioni confermate.
+- **M7.5–M7.7 li scrive Claude, su richiesta dell'utente (30/09).** Obiettivo: backend completo, stabile e sicuro prima di iniziare l'app KMP (`../GeoSentinel-Mobile`, oggi solo il template del wizard: niente client, rete né login).
 
 **Chiusura del piano (28/09, scritta da Claude su richiesta):**
 - CI: job `secrets` con gitleaks 8.30.1 (binario + checksum, `fetch-depth: 0`, tutta la storia) al posto del secret scanning di GitHub, non disponibile sui repo privati personali. Provato in un container Ubuntu: 15 commit, nessun segreto. In locale gitleaks segnala solo `.env` e la cache di `graphify-out`, entrambi ignorati da git. La versione di gitleaks nel workflow va aggiornata a mano (Dependabot non la vede).
@@ -339,7 +344,6 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - I codici di successo (201/204) li ha corretti la chiusura del piano (sotto).
 
 **Checkpoint M4 verificati dal vivo (28/09):** cache `gs:cache:trails::<id>` creata dal GET (TTL 600 s), cancellata dal `PATCH /status` dopo il commit, ricreata al GET successivo con lo stato nuovo; notifica SOS su `sos-notify-1`, fuori dal thread della richiesta e con lo stesso `traceId` (MDC propagato). M4 completa. Nel DB di sviluppo resta un SOS attivo di `hiker@` (prova).
-2. Checkpoint manuali di M2 (curl: register → login → logout → 401, refresh riusato, 429), poi M3 (upload su MinIO vero) e M4.
 
 ## Avvio locale
 - `docker compose up -d` avvia PostGIS, Redis e MinIO (+ `minio-init`); le credenziali arrivano dal `.env` (vedi `.env.example`).

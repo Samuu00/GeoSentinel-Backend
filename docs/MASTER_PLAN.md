@@ -3,7 +3,7 @@
 > Ruolo di Claude: mentore/architetto/reviewer. **Il codice lo scrivi tu.** Qui trovi solo struttura, contratti (firme), vincoli e checkpoint.
 > Regola di avanzamento: un task si chiude solo quando **tutti** i suoi checkpoint passano. Poi chiedi la review (vedi §5).
 >
-> **Stato (30/09): M0–M6 completate, M7.1–M7.3 fatte.** **Prossimo: M7.4** (notifiche push). M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (42 unit + 85 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
+> **Stato (30/09): M0–M6 completate, M7.1–M7.4 fatte.** **Prossimo: M7.5** (media dal telefono), poi M7.6 e M7.7: li scrive Claude su richiesta. M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (42 unit + 93 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
 ---
 
@@ -122,27 +122,35 @@ GeoSentinel-Backend/
     │   │   │   └── web/           MaintenanceController (/api/v1/maintenance-tickets), dto/ MaintenanceDtos, MaintenanceMapper
     │   │   │
     │   │   ├── emergency/                            # SOS e squadre di soccorso
-    │   │   │   ├── domain/        SosAlert, SosStatus, RescueTeam, TeamStatus, SosAlertRaisedEvent
+    │   │   │   ├── domain/        SosAlert, SosStatus, RescueTeam, TeamStatus, SosAlertRaisedEvent, SosAlertStatusChangedEvent (M7.4)
     │   │   │   ├── application/   SosService, SosDataRetentionJob (GDPR, 90 giorni), dto/SosCommands (command + view + SosRaiseResult)
     │   │   │   ├── infrastructure/
     │   │   │   │   ├── persistence/  SosAlertRepository, RescueTeamRepository
-    │   │   │   │   └── notification/ SosNotificationListener (@Async + AFTER_COMMIT), SosNotificationRecovery (notified_at)
+    │   │   │   │   └── notification/ SosNotificationListener (@Async + AFTER_COMMIT, push via DeviceService), SosNotificationRecovery (notified_at)
     │   │   │   └── web/           SosController (/api/v1/sos), RescueTeamController (/api/v1/rescue-teams), dto/ SosDtos, RescueTeamDtos, SosMapper
     │   │   │
-    │   │   └── media/                                # metadati file + MinIO
-    │   │       ├── domain/        MediaFile, MediaStatus, MediaTargetType, MediaPolicy
-    │   │       ├── application/   MediaService, MediaCleanupJob, port/ObjectStorage, dto/MediaCommands
+    │   │   ├── media/                                # metadati file + MinIO
+    │   │   │   ├── domain/        MediaFile, MediaStatus, MediaTargetType, MediaPolicy
+    │   │   │   ├── application/   MediaService, MediaCleanupJob, port/ObjectStorage, dto/MediaCommands
+    │   │   │   ├── infrastructure/
+    │   │   │   │   ├── persistence/  MediaFileRepository
+    │   │   │   │   └── storage/      MinioObjectStorage, MinioConfig, MinioProperties
+    │   │   │   └── web/           MediaController (/api/v1/media), dto/ MediaDtos, MediaMapper
+    │   │   │
+    │   │   └── notification/                         # dispositivi e push (M7.4)
+    │   │       ├── domain/        DeviceToken, DevicePlatform
+    │   │       ├── application/   DeviceService, port/PushNotifier (+ record Result, PushMessage)
     │   │       ├── infrastructure/
-    │   │       │   ├── persistence/  MediaFileRepository
-    │   │       │   └── storage/      MinioObjectStorage, MinioConfig, MinioProperties
-    │   │       └── web/           MediaController (/api/v1/media), dto/ MediaDtos, MediaMapper
+    │   │       │   ├── persistence/  DeviceTokenRepository (upsert ON CONFLICT)
+    │   │       │   └── push/         FcmPushNotifier (push.enabled=true), LoggingPushNotifier (default)
+    │   │       └── web/           DeviceController (/api/v1/devices), dto/ DeviceDtos
     │   │
     │   └── resources/
     │       ├── application.properties
     │       ├── application-local.properties
     │       ├── scripts/token_bucket.lua
     │       └── db/
-    │           ├── migration/   V1__extensions.sql … V7__media.sql
+    │           ├── migration/   V1__extensions.sql … V9__device_tokens.sql
     │           └── seed/        R__local_seed.sql   (solo profilo local)
     └── test/
         ├── java/it/unical/geosentinel/
@@ -153,9 +161,10 @@ GeoSentinel-Backend/
         │   ├── refuge/    BookingTest, RefugeBookingServiceTest, BookingControllerTest, RefugeBookingConcurrencyIT
         │   ├── maintenance/ MaintenanceTicketTest, MaintenanceControllerTest, MaintenanceOptimisticLockIT
         │   ├── emergency/ SosAlertTest, SosAssignmentConcurrencyIT, SosNotificationRecoveryIT
-        │   ├── media/     MediaPolicyTest, MediaServiceTest (+ MediaUploadIT opzionale)
+        │   ├── notification/ SosPushIT (M7.4)
+        │   ├── media/     MediaPolicyTest, MediaServiceTest (+ MediaUploadIT in M7.5)
         │   └── shared/    ProblemDetailWriterTest, GeoJsonLineStringTest, MaxUtf8BytesTest,
-        │                  MigrationIT, IdempotencyIT, ProblemDetailContractIT, OpenApiContractIT (M7.1)
+        │                  MigrationIT, IdempotencyIT, ProblemDetailContractIT, OpenApiContractIT (M7.1), MobileNetworkIT (M7.3)
         └── resources/application-test.properties   (springdoc acceso solo per OpenApiContractIT)
 
 docs/openapi.json   contratto per il client KMP (M7.1): lo scrive OpenApiContractIT con -Dopenapi.update=true
@@ -291,6 +300,8 @@ File:
 | `V5__maintenance.sql` | `maintenance_tickets` (id, title `varchar(150)`, description `text`, priority CHECK `LOW/MEDIUM/HIGH/CRITICAL`, status CHECK `OPEN/ASSIGNED/IN_PROGRESS/RESOLVED/CANCELLED`, trail_id FK NULL, refuge_id FK NULL, hazard_report_id FK NULL, `CHECK (num_nonnulls(trail_id, refuge_id, hazard_report_id) >= 1)` (un ticket da segnalazione ha anche il sentiero della segnalazione), assigned_to FK `users(id)` NULL, resolved_at NULL, **`version bigint NOT NULL DEFAULT 0`**, audit cols (`MaintenanceTicket` estende `AuditableEntity`)); indici su `(trail_id, created_at)`, `refuge_id`, `hazard_report_id`, `assigned_to`, `(status, priority)` |
 | `V6__emergency.sql` | `rescue_teams` (id, name `varchar(100)` UNIQUE, call_sign `varchar(32)`, contact_number `varchar(30)`, status CHECK `AVAILABLE/ON_MISSION/OFF_DUTY`, `base_location geometry(Point,4326)`, audit cols). `sos_alerts` (id, hiker_id FK `users(id)`, `idempotency_key uuid NULL`, `location geometry(Point,4326) NOT NULL`, `location_updated_at NOT NULL`, medical_notes `text`, status CHECK `ACTIVE/DISPATCHED/RESOLVED/CANCELLED`, assigned_team_id FK `rescue_teams(id)` NULL, operator_id FK `users(id)` NULL, closed_at NULL, `notified_at timestamptz NULL`, `anonymized_at timestamptz NULL`, audit cols; **niente `version`**: le scritture passano da lock pessimistici). **Indice parziale** su `(created_at) WHERE status IN ('ACTIVE','DISPATCHED')` per la dashboard; **`UNIQUE (hiker_id, idempotency_key)`** (D12; i `NULL` non collidono); **`UNIQUE (hiker_id) WHERE status IN ('ACTIVE','DISPATCHED')`** (al più un'allerta attiva per escursionista, rete di sicurezza dell'advisory lock); indice parziale `(created_at) WHERE notified_at IS NULL` (recupero notifiche); indice parziale `(closed_at) WHERE anonymized_at IS NULL` (conservazione); indici su `assigned_team_id`, `operator_id` |
 | `V7__media.sql` | `media_files` (id, owner_id FK `users(id)`, object_key `varchar(64)` UNIQUE, original_filename `varchar(255)`, content_type `varchar(50)`, size_bytes bigint (dichiarata, poi reale dopo il confirm), status `varchar(20)` CHECK `PENDING_UPLOAD/READY/QUARANTINED`, entity_type `varchar(20)` CHECK `TRAIL/HAZARD_REPORT` NULL, entity_id uuid NULL (polimorfico: niente FK, l'esistenza la verifica `MediaService`), `CHECK ((entity_type IS NULL) = (entity_id IS NULL))`, checksum `varchar(64)`, `version bigint NOT NULL DEFAULT 0`, audit cols (`MediaFile` estende `AuditableEntity`)); indici `(owner_id, status, created_at)` (quota e `/my`), `(entity_type, entity_id) WHERE status = 'READY'`, `(created_at) WHERE status = 'PENDING_UPLOAD'` (`MediaCleanupJob`) |
+| `V8__users_account.sql` (M7.2) | `users.deleted_at timestamptz NULL` + indice parziale `WHERE deleted_at IS NOT NULL`, `users.age_confirmed_at timestamptz NULL` (la data di nascita non si salva) |
+| `V9__device_tokens.sql` (M7.4) | `device_tokens` (id, user_id FK `users(id)`, `token varchar(1024)` UNIQUE, platform CHECK `ANDROID/IOS`, `last_seen_at`, audit cols); indice su `user_id`. 1024 e non 4096: un indice B-tree rifiuta righe oltre ~2700 byte |
 
 **Indici spaziali (in ciascuna migrazione, accanto alla tabella):**
 - `USING GIST (path)` / `USING GIST (location)`: per `ST_Contains`, `ST_Intersects`, bbox `&&`
@@ -545,7 +556,7 @@ Query native (servono il cast `::geography` e le funzioni PostGIS):
   - Letture e gestione: `getRefuge`, `findNearby(lon, lat, radius, limit)` (raggio ≤ 50 km e `limit` ≤ 50, come sentieri e POI), `getUserBookings`, `getBooking(userId, bookingId)` (404 se non tua, come `cancel`); `createRefuge` (PARK_MANAGER; il `managerId` è l'utente corrente, **non** arriva dal body) e `updateCapacity(actorId, actorIsAdmin, refugeId, capacity)` (PARK_MANAGER; dopo il lock, solo il gestore del rifugio o un ADMIN, altrimenti `AccessDeniedException` → 403; `findByIdForUpdate`: non si sovrappone a una prenotazione in corso)
   - Le view (`RefugeView`, `BookingView`, `AvailabilityView`) non contengono geometrie JTS: `RefugeView.from(refuge, GeometryMapper)` con `GeoPointDto`
   - Limite noto: `updateCapacity` può scendere sotto le prenotazioni già confermate (serve per un rifugio danneggiato); le prenotazioni in eccesso vanno gestite a mano
-  - Limite noto: `getUserBookings` (`GET /bookings/my`) restituisce una lista senza paginazione; passare a `Pageable` quando le prenotazioni per utente cresceranno
+  - ~~Limite noto: `GET /bookings/my` senza paginazione~~ → paginato in M7.3 (`PagedModel`, sort in whitelist)
 - **Perché per notte:** sommare tutte le prenotazioni che si sovrappongono al range sovrastima (due prenotazioni in notti diverse non si sommano).
 - **Timeout:** `lock_timeout = 3s` (M0.3) → `PessimisticLockingFailureException` → 409 `resource-busy` + `Retry-After` (fatto in `GlobalExceptionHandler`).
 - Limite noto: il lock sulla riga del rifugio serializza tutte le prenotazioni di quel rifugio. Va bene per decine di prenotazioni al secondo per rifugio; oltre quella soglia servirebbe una tabella `refuge_night_availability` con lock per notte.
@@ -656,7 +667,7 @@ Endpoint:
 | `GET /api/v1/refuges/{id}` · `/nearby?lon&lat&radius&limit` | auth | `radius ≤ 50000`, `limit ≤ 50` |
 | `POST /api/v1/refuges` | PARK_MANAGER | 201 + `Location`; il gestore (`managerId`) è chi lo crea, non arriva dal body |
 | `POST /api/v1/bookings` (`refugeId` nel body) | HIKER | 201 + `Location`; 409 se pieno; **`Idempotency-Key` (UUID) obbligatorio** → 428 se manca, 400 se non è un UUID; retry con la stessa chiave → 200 con la prenotazione esistente (`BookingResult.created`) |
-| `GET /api/v1/bookings/my` · `GET /api/v1/bookings/{id}` | owner | 404 per una prenotazione altrui |
+| `GET /api/v1/bookings/my` (`PagedModel`, M7.3) · `GET /api/v1/bookings/{id}` | owner | 404 per una prenotazione altrui; sort solo `checkIn`/`checkOut`/`createdAt` |
 | `DELETE /api/v1/bookings/{id}` | owner | 204 |
 | `GET /api/v1/users/me` · `PATCH /api/v1/users/me` (M7.2) | authenticated | profilo (`UserProfileResponse`); il PATCH cambia `displayName` e restituisce il profilo |
 | `POST /api/v1/users/me/password` (M7.2) | authenticated | 200 + nuovi token, tutte le altre sessioni revocate; password attuale sbagliata → 422 |
@@ -683,6 +694,8 @@ Endpoint:
 | `GET /api/v1/media/attached?entityType&entityId` | auth | solo `READY`; 404 per una segnalazione non visibile |
 | `GET /api/v1/media/my` | auth | `PagedModel`, sort solo `createdAt`/`sizeBytes` |
 | `DELETE /api/v1/media/{id}` | owner o ADMIN | 204 |
+| `POST /api/v1/devices` `{token, platform}` (M7.4) | authenticated | 204; upsert: un token già registrato passa all'utente corrente |
+| `DELETE /api/v1/devices/{token}` (M7.4) | authenticated | 204 idempotente; il token di un altro utente non si tocca |
 
 Mapping: i service restituiscono view (`from(entity, GeometryMapper)`, vedi M4.1); il web ha i suoi record di request e **response** e un mapper MapStruct per feature (`TrailMapper`, `RefugeMapper`, `MaintenanceMapper`, `SosMapper`, `MediaMapper`, `uses = GeometryMapper.class`) per request → command e view → response. La response separata decide cosa esce dall'API: `HazardResponse` non espone `reporterId` (dato personale), `TrailDetailResponse` non espone `version` (va nell'`ETag` quando servirà), `TicketResponse` nemmeno (è nell'`ETag`).
 
@@ -889,7 +902,7 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 **Checkpoint:** `SosPushIT` con un `PushNotifier` finto (bean di test): raise → gli operatori ricevono un messaggio con solo `alertId`; notifier che lancia → `notified_at` NULL e il recupero la rinvia; token `UNREGISTERED` → cancellato. Prova manuale con un dispositivo vero e il progetto Firebase.
 
 #### M7.5 — Media dal telefono
-- [ ] **HEIC** (predefinito della fotocamera iOS). Scelta consigliata: l'app converte in **JPEG** e ridimensiona (lato lungo ≤ 2048 px, qualità ~80%) prima dell'upload: più leggero su rete mobile, visibile ovunque (Android non legge HEIC in tutte le versioni). Il backend resta com'è; se invece si vuole accettare HEIC: `image/heic` nella whitelist di `MediaPolicy` + magic bytes (`ftyp` a offset 4 con brand `heic`/`heix`/`mif1`) + test
+- [ ] **HEIC** (predefinito della fotocamera iOS). **Deciso (30/09): l'app converte in JPEG, backend invariato.** Scelta consigliata: l'app converte in **JPEG** e ridimensiona (lato lungo ≤ 2048 px, qualità ~80%) prima dell'upload: più leggero su rete mobile, visibile ovunque (Android non legge HEIC in tutte le versioni). Il backend resta com'è; se invece si vuole accettare HEIC: `image/heic` nella whitelist di `MediaPolicy` + magic bytes (`ftyp` a offset 4 con brand `heic`/`heix`/`mif1`) + test
 - [ ] Contratto dell'upload per il client (Ktor `submitFormWithBinaryData`): tutti i `formFields` **nell'ordine ricevuto**, poi `file` per ultimo; `Content-Type` della parte file uguale a quello dichiarato; dopo il 204 di MinIO chiamare `/confirm`; upload scaduto (10 min) → nuova `upload-requests`
 - [ ] `MINIO_PUBLIC_ENDPOINT` = indirizzo con cui il **telefono** raggiunge MinIO (la firma include l'host): emulatore Android `http://10.0.2.2:9000`, simulatore iOS `http://localhost:9000`, telefono vero `http://<IP del PC>:9000`, produzione il dominio HTTPS dello storage
 - [ ] `MediaUploadIT` (rimasto facoltativo in M6): con il client mobile diventa il test di regressione del contratto di upload
