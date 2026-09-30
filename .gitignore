@@ -34,3 +34,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Account di servizio Firebase (M7.4): nome predefinito del file scaricato dalla console
+*-firebase-adminsdk-*.json

@@ -7,6 +7,7 @@ import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
 import it.unical.geosentinel.media.application.MediaService;
+import it.unical.geosentinel.notification.application.DeviceService;
 import it.unical.geosentinel.refuge.application.RefugeBookingService;
 import it.unical.geosentinel.shared.domain.exception.AccountManagedException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
@@ -29,6 +30,7 @@ public class UserAccountService {
     private final RefugeBookingService refugeBookingService;
     private final SosService sosService;
     private final MediaService mediaService;
+    private final DeviceService deviceService;
     private final PasswordEncoder passwordEncoder;
     private final Clock clock;
 
@@ -39,6 +41,7 @@ public class UserAccountService {
             RefugeBookingService refugeBookingService,
             SosService sosService,
             MediaService mediaService,
+            DeviceService deviceService,
             PasswordEncoder passwordEncoder,
             Clock clock
     ) {
@@ -48,6 +51,7 @@ public class UserAccountService {
         this.refugeBookingService = refugeBookingService;
         this.sosService = sosService;
         this.mediaService = mediaService;
+        this.deviceService = deviceService;
         this.passwordEncoder = passwordEncoder;
         this.clock = clock;
     }
@@ -79,6 +83,7 @@ public class UserAccountService {
         refreshTokenRepository.revokeAllOfUser(userId, now);
         refugeBookingService.cancelAllFutureOf(userId);
         sosService.cancelActiveOf(userId);
+        deviceService.deleteAllOf(userId);
         // hash vero di un valore casuale mai restituito: nessuna password può più coincidere
         user.markDeleted(now, passwordEncoder.encode(UUID.randomUUID().toString()));
         // @Version: una seconda cancellazione concorrente fallisce qui (409), prima di Redis e dello storage

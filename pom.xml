@@ -99,6 +99,30 @@
             <version>5.3.2</version>
         </dependency>
 
+        <!-- Push FCM (M7.4), Android e iOS. Serve solo FirebaseMessaging: Firestore e Cloud Storage (gRPC) esclusi -->
+        <dependency>
+            <groupId>com.google.firebase</groupId>
+            <artifactId>firebase-admin</artifactId>
+            <version>9.11.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.google.cloud</groupId>
+                    <artifactId>google-cloud-firestore</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.google.cloud</groupId>
+                    <artifactId>google-cloud-storage</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- FirebaseOptions usa JacksonFactory di default, che arrivava solo tramite gli artefatti esclusi sopra:
+             senza, compila ma l'avvio con le push accese va in NoClassDefFoundError. Stessa versione di google-http-client -->
+        <dependency>
+            <groupId>com.google.http-client</groupId>
+            <artifactId>google-http-client-jackson2</artifactId>
+            <version>2.2.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>

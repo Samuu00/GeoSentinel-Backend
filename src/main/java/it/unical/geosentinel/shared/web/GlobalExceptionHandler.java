@@ -244,7 +244,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 ex.getMessage(), new HttpHeaders(), request);
     }
 
-    // detail generico: non rivela la soglia (age gate neutro, M7.2.1)
+    // detail generico: non rivela la soglia (age gate neutro)
     @ExceptionHandler(AgeRequirementNotMetException.class)
     public ResponseEntity<Object> handleAgeRequirementNotMet(AgeRequirementNotMetException ex, WebRequest request) {
         return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.AGE_REQUIREMENT_NOT_MET, "Age requirement not met",

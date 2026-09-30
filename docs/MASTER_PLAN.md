@@ -857,7 +857,7 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 
 #### M7.4 — Notifiche push (Firebase Cloud Messaging, anche per iOS)
 **Obiettivo:** la notifica SOS oggi è solo un log. FCM consegna sia su Android sia su iOS (tramite APNs, configurato nella console Firebase).
-- [ ] Nuova feature `notification/`:
+- [x] Nuova feature `notification/`:
   - `domain/DeviceToken` (`id`, `userId`, `token varchar(4096) UNIQUE`, `platform ANDROID|IOS`, `lastSeenAt`), estende `AuditableEntity`
   - `application/port/PushNotifier`: `void send(Collection<String> tokens, PushMessage message)` → record `(String title, String body, Map<String,String> data)`
   - `application/DeviceService`: `register(userId, token, platform)` (upsert: lo stesso token passa all'utente che lo registra), `unregister(userId, token)`, `tokensOf(Collection<UUID> userIds)`
@@ -865,10 +865,26 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
   - `infrastructure/push/FcmPushNotifier` (Firebase Admin SDK, credenziali da `GOOGLE_APPLICATION_CREDENTIALS` nel `.env`, mai nel repo) e `LoggingPushNotifier` quando `geosentinel.push.enabled=false` (default in `local` e `test`)
   - token rifiutati da FCM come `UNREGISTERED`/`INVALID_ARGUMENT` → cancellati
   - `DeviceService.deleteAllOf(userId)`, chiamato da `UserAccountService.deleteAccount` (M7.2): i token dei dispositivi sono dati personali, e un account cancellato non deve più ricevere push
-- [ ] Rotte `POST /api/v1/devices` (`{token, platform}`, 204) e `DELETE /api/v1/devices/{token}` (204); il logout dell'app chiama il `DELETE` prima di `/auth/logout`
-- [ ] `V9__device_tokens.sql`: tabella + indice su `user_id` + `CHECK` su `platform`
-- [ ] `SosNotificationListener.deliver`: push agli utenti `RESCUE_OPERATOR` (dati: solo `alertId` e tipo evento, **mai** posizione o note mediche nel payload: si leggono dall'API con il token). Se l'invio fallisce, `notified_at` resta NULL e `SosNotificationRecovery` riprova (M4.3)
-- [ ] Push all'escursionista su `dispatch` (squadra in arrivo) e `resolve`, con lo stesso schema (`AFTER_COMMIT`, executor dedicato)
+- [x] Rotte `POST /api/v1/devices` (`{token, platform}`, 204) e `DELETE /api/v1/devices/{token}` (204); il logout dell'app chiama il `DELETE` prima di `/auth/logout`
+- [x] `V9__device_tokens.sql`: tabella + indice su `user_id` + `CHECK` su `platform`
+- [x] `SosNotificationListener.deliver`: push agli utenti `RESCUE_OPERATOR` (dati: solo `alertId` e tipo evento, **mai** posizione o note mediche nel payload: si leggono dall'API con il token). Se l'invio fallisce, `notified_at` resta NULL e `SosNotificationRecovery` riprova (M4.3)
+- [x] Push all'escursionista su `dispatch` (squadra in arrivo) e `resolve`, con lo stesso schema (`AFTER_COMMIT`, executor dedicato)
+
+**Fatto (30/09, scritto da Claude su richiesta; l'utente aveva creato gli scheletri vuoti), tutte le voci sopra:**
+- `notification/`: `domain/DeviceToken` + `DevicePlatform`; `application/port/PushNotifier` (`send` → `Result(delivered, invalidTokens)`, record `PushMessage`); `application/DeviceService` (`register` con upsert `ON CONFLICT (token)`, `unregister` idempotente, `deleteAllOf`, `tokensOf`, `sendToUsers` → `DeliveryReport`); `infrastructure/persistence/DeviceTokenRepository`; `infrastructure/push/FcmPushNotifier` (blocchi da 500, priorità alta Android/APNs) e `LoggingPushNotifier`; `web/DeviceController` + `dto/DeviceDtos`.
+- `emergency`: `SosNotificationListener.deliver` manda la push ai `RESCUE_OPERATOR` attivi (`UserQueryService.activeUserIdsWithRole`); nuovo `SosAlertStatusChangedEvent` pubblicato da `dispatchTeam`/`resolveAlert` → push all'escursionista (`SOS_DISPATCHED`/`SOS_RESOLVED`, best effort, senza recupero). Payload: solo `type` e `alertId`.
+- `UserAccountService.deleteAccount` chiama `DeviceService.deleteAllOf`.
+- Scelte diverse dal piano:
+  - `token varchar(1024)`, non 4096: un indice B-tree rifiuta righe oltre ~2700 byte (500 su un token lungo). I token FCM sono ~160 caratteri;
+  - credenziali da `geosentinel.push.credentials-file=${GOOGLE_APPLICATION_CREDENTIALS:}`: il `.env` diventa property di Spring, non variabile d'ambiente, quindi `GoogleCredentials.getApplicationDefault()` non lo vedrebbe. `PUSH_ENABLED` (default `false`) accende FCM;
+  - SOS notificato se almeno un dispositivo ha ricevuto la push (riprovare finché tutti la ricevono ripeterebbe la push agli altri ogni 30 s per un solo token guasto); nessun dispositivo registrato → notificato con un warning (niente loop);
+  - token cancellati anche per `SENDER_ID_MISMATCH` (token di un altro progetto Firebase).
+- Bug trovati nella verifica:
+  - escludere Firestore/Storage toglieva `google-http-client-jackson2`, che `FirebaseOptions` usa di default: compilava, gli IT erano verdi (usano il notifier finto), ma l'avvio con le push accese andava in `NoClassDefFoundError`. Trovato con una prova diretta di `FcmPushNotifier` (account di servizio finto); dipendenza aggiunta;
+  - NPE in `FcmPushNotifier`: `getMessagingErrorCode()` è null per gli errori non FCM (credenziali, rete) e `Set.of(...).contains(null)` lancia;
+  - `httpclient5` (arriva con firebase-admin) fa scegliere Apache HttpClient a `RestClient.create()`, che ripete da solo i 429 dopo `Retry-After`: `RateLimitIT` e `ProblemDetailContractIT` ricevevano 400 invece di 429. `AbstractIntegrationTest.call` usa `JdkClientHttpRequestFactory`.
+- Test: `notification/SosPushIT` (8, `PushNotifier` finto `@Primary`), `MigrationIT` (V9), TRUNCATE di `device_tokens`. `docs/openapi.json` rigenerato (`registerDevice`, `unregisterDevice`). `./mvnw clean verify` verde due volte: 42 unit + 93 IT.
+- Resta la prova manuale con Firebase e un dispositivo: richiede l'app KMP (senza app non esistono token FCM).
 
 **Checkpoint:** `SosPushIT` con un `PushNotifier` finto (bean di test): raise → gli operatori ricevono un messaggio con solo `alertId`; notifier che lancia → `notified_at` NULL e il recupero la rinvia; token `UNREGISTERED` → cancellato. Prova manuale con un dispositivo vero e il progetto Firebase.
 
@@ -892,7 +908,7 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 **Checkpoint:** l'app di test su un iPhone fisico, fuori dalla rete di casa, fa login, apre un sentiero e carica una foto via HTTPS.
 
 #### M7.7 — Test e review
-- [ ] `UserAccountIT` (M7.2), `RegistrationAgeIT` (M7.2.1), `SosPushIT` (M7.4), `MediaUploadIT` (M7.5), test del contratto OpenAPI (M7.1), `RateLimitIT` aggiornato (M7.3)
+- [ ] `MediaUploadIT` (M7.5). Già fatti: `UserAccountIT` (M7.2), `RegistrationAgeIT` (M7.2.1), `SosPushIT` (M7.4), test del contratto OpenAPI (M7.1), `RateLimitIT` aggiornato (M7.3)
 - [ ] Review con la catena del §5 (riga 7)
 
 **Checkpoint M7:** `./mvnw verify` verde; client Kotlin generato dal `docs/openapi.json` committato; flusso completo dall'app su Android e iOS: registrazione → login → sentieri vicini → segnalazione con foto → SOS → notifica push all'operatore → cancellazione dell'account.
@@ -945,7 +961,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M6 sono completate, M7.1–M7.3 fatte; il prossimo lavoro è **M7.4** (notifiche push). Per altre funzionalità:
+M0–M6 sono completate, M7.1–M7.4 fatte; il prossimo lavoro è **M7.5** (media dal telefono). Per altre funzionalità:
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.

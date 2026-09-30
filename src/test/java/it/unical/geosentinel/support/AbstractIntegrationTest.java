@@ -21,6 +21,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.lifecycle.Startables;
@@ -106,7 +107,7 @@ public abstract class AbstractIntegrationTest {
     @BeforeEach
     void cleanDatabaseAndRedis() {
         jdbcTemplate.execute("""
-                TRUNCATE media_files, sos_alerts, rescue_teams, maintenance_tickets, hazard_reports,
+                TRUNCATE device_tokens, media_files, sos_alerts, rescue_teams, maintenance_tickets, hazard_reports,
                          bookings, refuges, pois, trails, refresh_tokens, users CASCADE
                 """);
         redisTemplate.execute((RedisCallback<Void>) connection -> {
@@ -154,7 +155,12 @@ public abstract class AbstractIntegrationTest {
     }
 
     protected HttpResult call(HttpMethod method, String path, String token, String jsonBody, Map<String, String> headers) {
-        RestClient.RequestBodySpec request = RestClient.create("http://localhost:" + port)
+        // client JDK esplicito: con httpclient5 nel classpath (arriva con firebase-admin) RestClient.create() userebbe
+        // Apache HttpClient, che ripete da solo i 429/503 dopo Retry-After e nasconderebbe i 429 ai test
+        RestClient.RequestBodySpec request = RestClient.builder()
+                .requestFactory(new JdkClientHttpRequestFactory())
+                .baseUrl("http://localhost:" + port)
+                .build()
                 .method(method)
                 .uri(path)
                 .headers(h -> {

@@ -7,7 +7,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Flyway V1-V8 su un vero PostGIS + ddl-auto=validate: se il contesto parte, schema ed entità coincidono.
+// Flyway V1-V9 su un vero PostGIS + ddl-auto=validate: se il contesto parte, schema ed entità coincidono.
 // Sostituisce GeoSentinelApplicationTests (che cercava il Postgres locale)
 class MigrationIT extends AbstractIntegrationTest {
 
@@ -17,7 +17,7 @@ class MigrationIT extends AbstractIntegrationTest {
                 "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank", String.class);
 
         // il seed (db/seed) vive solo nel profilo local: qui non ci sono migrazioni repeatable
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9");
     }
 
     @Test

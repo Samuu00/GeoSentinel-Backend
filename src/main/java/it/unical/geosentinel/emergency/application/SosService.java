@@ -10,6 +10,7 @@ import it.unical.geosentinel.emergency.application.dto.SosCommands.UpdateLocatio
 import it.unical.geosentinel.emergency.domain.RescueTeam;
 import it.unical.geosentinel.emergency.domain.SosAlert;
 import it.unical.geosentinel.emergency.domain.SosAlertRaisedEvent;
+import it.unical.geosentinel.emergency.domain.SosAlertStatusChangedEvent;
 import it.unical.geosentinel.emergency.domain.SosStatus;
 import it.unical.geosentinel.emergency.infrastructure.persistence.RescueTeamRepository;
 import it.unical.geosentinel.emergency.infrastructure.persistence.SosAlertRepository;
@@ -147,6 +148,7 @@ public class SosService {
                 .orElseThrow(() -> new ResourceNotFoundException("RescueTeam", cmd.teamId()));
 
         alert.dispatch(team, operatorId);
+        applicationEventPublisher.publishEvent(new SosAlertStatusChangedEvent(alert.getId(), alert.getHikerId(), alert.getStatus()));
         return SosAlertView.from(alert, geometryMapper);
     }
 
@@ -158,6 +160,7 @@ public class SosService {
         lockAssignedTeam(alert);
 
         alert.resolve(clock.instant());
+        applicationEventPublisher.publishEvent(new SosAlertStatusChangedEvent(alert.getId(), alert.getHikerId(), alert.getStatus()));
         return SosAlertView.from(alert, geometryMapper);
     }
 
