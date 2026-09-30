@@ -11,9 +11,13 @@ import jakarta.validation.Valid;
 import it.unical.geosentinel.identity.infrastructure.security.CurrentUser;
 import it.unical.geosentinel.refuge.application.RefugeBookingService;
 import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.BookingResult;
-import it.unical.geosentinel.refuge.application.dto.RefugeBookingCommands.BookingView;
 import it.unical.geosentinel.refuge.web.dto.BookingDtos.BookingResponse;
 import it.unical.geosentinel.refuge.web.dto.BookingDtos.CreateBookingRequest;
+import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.data.web.PagedModel;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -25,16 +29,20 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
-import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/bookings")
 @Tag(name = "Bookings", description = "Endpoints for managing refuge bed reservations")
 public class BookingController {
+    // status escluso: l'enum è salvato come stringa e si ordinerebbe in ordine alfabetico
+    private static final Set<String> SORTABLE_FIELDS = Set.of("checkIn", "checkOut", "createdAt");
+
     private final RefugeBookingService refugeBookingService;
     private final CurrentUser currentUser;
     private final RefugeMapper refugeMapper;
@@ -83,10 +91,12 @@ public class BookingController {
 
     @GetMapping("/my")
     @Operation(operationId = "findMyBookings", summary = "List current user's bookings", security = @SecurityRequirement(name = "bearerAuth"))
-    public ResponseEntity<List<BookingResponse>> getMyBookings(){
+    public PagedModel<BookingResponse> getMyBookings(
+            @ParameterObject @PageableDefault(size = 20, sort = "checkIn", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        checkSortable(pageable.getSort());
         UUID userId = currentUser.getRequiredUserId();
-        List<BookingView> bookings = refugeBookingService.getUserBookings(userId);
-        return ResponseEntity.ok(bookings.stream().map(refugeMapper::toResponse).toList());
+        return new PagedModel<>(refugeBookingService.getUserBookings(userId, pageable).map(refugeMapper::toResponse));
     }
 
     // la Location del POST punta qui
@@ -104,5 +114,15 @@ public class BookingController {
         UUID userId = currentUser.getRequiredUserId();
         refugeBookingService.cancel(userId, id);
         return ResponseEntity.noContent().build();
+    }
+
+    // ?sort= arriva dal client: un campo sconosciuto darebbe un errore di Spring Data (500)
+    static void checkSortable(Sort sort) {
+        for (Sort.Order order : sort) {
+            if (!SORTABLE_FIELDS.contains(order.getProperty())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Cannot sort by '" + order.getProperty() + "'. Allowed: " + SORTABLE_FIELDS);
+            }
+        }
     }
 }

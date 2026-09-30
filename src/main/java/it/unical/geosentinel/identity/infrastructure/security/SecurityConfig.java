@@ -14,6 +14,7 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -32,6 +33,13 @@ import org.springframework.security.oauth2.server.resource.web.BearerTokenResolv
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.header.writers.CacheControlHeadersWriter;
+import org.springframework.security.web.header.writers.DelegatingRequestMatcherHeaderWriter;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
@@ -44,12 +52,19 @@ import java.util.Set;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@EnableConfigurationProperties(JwtProperties.class)
+@EnableConfigurationProperties({JwtProperties.class, RateLimitProperties.class})
 public class SecurityConfig {
     // register/login/refresh non usano l'access token: se il client ne allega uno scaduto,
     // BearerTokenAuthenticationFilter risponderebbe 401 anche su queste rotte permitAll
     private static final Set<String> TOKENLESS_AUTH_PATHS =
             Set.of("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh");
+
+    // GET pubbliche del catalogo con ETag (HttpCacheConfig): "no-cache" permette all'app di conservare la risposta
+    // e la obbliga a rivalidarla con If-None-Match. Il "no-store" di default impedirebbe sia la cache del client
+    // sia l'ETag (ShallowEtagHeaderFilter lo salta). Tutte le altre rotte restano no-store: contengono dati personali
+    private static final RequestMatcher PUBLIC_CATALOG = new OrRequestMatcher(
+            PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/trails/**"),
+            PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/pois/**"));
 
     private final JtiBlacklistValidator jtiBlacklistValidator;
     private final ProblemAuthenticationEntryPoint authenticationEntryPoint;
@@ -129,14 +144,22 @@ public class SecurityConfig {
     // I bean arrivano come parametri: chiamare jwtDecoder(...) qui creerebbe un secondo decoder, diverso da quello registrato
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http, JwtDecoder jwtDecoder,
-                                           JwtAuthenticationConverter jwtAuthenticationConverter, Clock clock) throws Exception {
-        RateLimitFilter rateLimitFilter = new RateLimitFilter(redisRateLimiter, problemDetailWriter, clock);
+                                           JwtAuthenticationConverter jwtAuthenticationConverter, Clock clock,
+                                           RateLimitProperties rateLimitProperties) throws Exception {
+        RateLimitFilter rateLimitFilter = new RateLimitFilter(redisRateLimiter, problemDetailWriter, clock, rateLimitProperties);
         DefaultBearerTokenResolver defaultResolver = new DefaultBearerTokenResolver();
         BearerTokenResolver bearerTokenResolver = request ->
                 TOKENLESS_AUTH_PATHS.contains(request.getRequestURI()) ? null : defaultResolver.resolve(request);
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .headers(headers -> headers
+                        .cacheControl(HeadersConfigurer.CacheControlConfig::disable)
+                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(
+                                PUBLIC_CATALOG, new StaticHeadersWriter("Cache-Control", "no-cache")))
+                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(
+                                new NegatedRequestMatcher(PUBLIC_CATALOG), new CacheControlHeadersWriter()))
+                )
                 .authorizeHttpRequests(auth -> auth
                         // logout NON è permitAll: serve l'access token da mettere in blacklist
                         .requestMatchers(HttpMethod.POST, TOKENLESS_AUTH_PATHS.toArray(String[]::new)).permitAll()

@@ -3,7 +3,7 @@
 > Ruolo di Claude: mentore/architetto/reviewer. **Il codice lo scrivi tu.** Qui trovi solo struttura, contratti (firme), vincoli e checkpoint.
 > Regola di avanzamento: un task si chiude solo quando **tutti** i suoi checkpoint passano. Poi chiedi la review (vedi §5).
 >
-> **Stato (28/09): M0–M6 completate.** Tutte le voci e i checkpoint di M0–M6 sono spuntati. **Da fare: M7**, il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (41 unit + 63 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
+> **Stato (30/09): M0–M6 completate, M7.1–M7.3 fatte.** **Prossimo: M7.4** (notifiche push). M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (42 unit + 85 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
 ---
 
@@ -831,18 +831,29 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 - Limite noto: se MinIO fallisce a metà di `deleteAllOf`, gli oggetti già cancellati non tornano; la riprova della cancellazione è idempotente.
 
 #### M7.3 — Rete mobile: rate limit, compressione, timeout
-- [ ] **Rate limit su `/auth/**` adatto al CGNAT**, con tre policy configurabili invece di costanti (`@ConfigurationProperties` `geosentinel.rate-limit.*`, così `RateLimitIT` imposta i suoi valori), ognuna con il proprio prefisso di bucket:
+- [x] **Rate limit su `/auth/**` adatto al CGNAT**, con tre policy configurabili invece di costanti (`@ConfigurationProperties` `geosentinel.rate-limit.*`, così `RateLimitIT` imposta i suoi valori), ognuna con il proprio prefisso di bucket:
   - `login-per-minute` = 30 per IP su login e register (fail-closed): il brute force lo ferma il limite **per account** (`RedisLoginAttemptLimiter`, 10 / 15 min), l'IP è solo un tetto contro gli abusi
   - `refresh-per-minute` = 120 per IP su `/auth/refresh` (bucket `rl:refresh:`). Il refresh ignora il bearer, quindi si conta sempre per IP. Il token opaco ha 256 bit (indovinarlo è impossibile) e la reuse detection copre il furto: qui il limite serve solo contro il flood, e sotto CGNAT molti telefoni fanno refresh insieme
   - `general-per-minute` = 60 per utente autenticato o per IP (invariato). L'app manda sempre il bearer, anche sulle GET pubbliche, così conta per utente e non per IP
   - `logout` resta nella policy di login ma è autenticato, quindi conta per utente
-- [ ] Compressione delle risposte JSON (risparmia dati mobili): `server.compression.enabled=true`, `mime-types=application/json,application/problem+json`, `min-response-size=1KB`
-- [ ] GET condizionali sulle rotte pubbliche dei sentieri (liste e GeoJSON possono pesare): `ShallowEtagHeaderFilter` su `/api/v1/trails/**` e `/api/v1/pois/**` → `304 Not Modified` con `If-None-Match`
-- [ ] `GET /bookings/my` paginato (`PagedModel`, sort in whitelist) come le altre liste: una lista che cresce non va scaricata tutta su mobile
-- [ ] Contratto dei retry per il client (documentato qui e nella descrizione OpenAPI): `429`, `409 resource-busy` e `503 storage-unavailable` portano `Retry-After` → il client aspetta quel tempo; `Idempotency-Key` generata **una volta per azione** e salvata finché l'azione non riceve una risposta definitiva (anche dopo la chiusura dell'app)
-- [ ] Contratto del refresh: una sola richiesta di refresh alla volta (il plugin `Auth` di Ktor con `bearer { refreshTokens { } }` la serializza). Due refresh paralleli con lo stesso token fanno scattare la reuse detection (M2.3) e chiudono la sessione: comportamento voluto, va scritto nel contratto
+- [x] Compressione delle risposte JSON (risparmia dati mobili): `server.compression.enabled=true`, `mime-types=application/json,application/problem+json`, `min-response-size=1KB`
+- [x] GET condizionali sulle rotte pubbliche dei sentieri (liste e GeoJSON possono pesare): `ShallowEtagHeaderFilter` su `/api/v1/trails/**` e `/api/v1/pois/**` → `304 Not Modified` con `If-None-Match`
+- [x] `GET /bookings/my` paginato (`PagedModel`, sort in whitelist) come le altre liste: una lista che cresce non va scaricata tutta su mobile
+- [x] Contratto dei retry per il client (documentato qui e nella descrizione OpenAPI): `429`, `409 resource-busy` e `503 storage-unavailable` portano `Retry-After` → il client aspetta quel tempo; `Idempotency-Key` generata **una volta per azione** e salvata finché l'azione non riceve una risposta definitiva (anche dopo la chiusura dell'app)
+- [x] Contratto del refresh: una sola richiesta di refresh alla volta (il plugin `Auth` di Ktor con `bearer { refreshTokens { } }` la serializza). Due refresh paralleli con lo stesso token fanno scattare la reuse detection (M2.3) e chiudono la sessione: comportamento voluto, va scritto nel contratto
 
 **Checkpoint:** 20 login con password errata da 20 account diversi dallo stesso IP → nessun 429; 11 login sbagliati sullo stesso account → 429; 50 refresh dallo stesso IP con token di utenti diversi → nessun 429; una GET da ~10 KB con `Accept-Encoding: gzip` torna compressa; seconda GET di un sentiero con `If-None-Match` → 304.
+
+**Fatto (30/09, scritto da Claude su richiesta), tutte le voci sopra:**
+- `identity/infrastructure/security/RateLimitProperties` (`geosentinel.rate-limit.login-per-minute=30`, `refresh-per-minute=120`, `general-per-minute=60`, `@Validated @Positive`); `RateLimitFilter` costruisce le tre policy dalla configurazione, bucket `rl:auth:`, `rl:refresh:`, `rl:`; login e refresh fail-closed, il resto fail-open. Il filtro gira dopo `BearerTokenAuthenticationFilter`: con il bearer anche le GET pubbliche contano per utente (verificato).
+- Compressione in `application.properties` (`server.compression.*`).
+- `shared/config/HttpCacheConfig`: `ShallowEtagHeaderFilter` su `/api/v1/trails/*` e `/api/v1/pois/*`. Due trappole:
+  - Spring Security manda `Cache-Control: no-store` su tutto, e con `no-store` il filtro non genera l'ETag (e l'app non potrebbe conservare la risposta). In `SecurityConfig` il matcher `PUBLIC_CATALOG` (GET di trails/POI) riceve `Cache-Control: no-cache`; tutte le altre rotte restano `no-store` (`CacheControlHeadersWriter` sul matcher negato);
+  - **Tomcat non comprime una risposta con ETag forte**: l'ETag è debole (`setWriteWeakETag(true)`), altrimenti le GET del catalogo non sarebbero mai gzip. `If-None-Match` usa il confronto debole, il 304 arriva anche dopo una risposta compressa.
+- `GET /bookings/my` → `PagedModel<BookingResponse>`, `@ParameterObject @PageableDefault(size = 20, sort = "checkIn", DESC)`, whitelist `checkIn`, `checkOut`, `createdAt` (`status` escluso: ordine alfabetico). `BookingRepository.findByUserId(userId, Pageable)` al posto di `findByUserIdOrderByCheckInDesc`. **Cambio incompatibile per l'app** (da lista a pagina): il client va rigenerato.
+- Contratti di retry, refresh e GET condizionale nella descrizione del documento OpenAPI (`info.description`); `Retry-After` su 429 / 409 `resource-busy` / 503 `storage-unavailable` era già presente. `docs/openapi.json` rigenerato.
+- Test: `RateLimitIT` riscritto (i checkpoint sopra + bucket per utente + refresh che non consuma il bucket del login), `shared/MobileNetworkIT` (gzip di una risposta > 10 KB, 304, ETag nuovo dopo un cambio di stato, `no-store` sulle rotte personali, paginazione e sort 400), `RateLimitFilterTest` (policy per gruppo di rotte), `ProblemDetailContractIT` aggiornato. Helper `exhaustAuthRateLimit()` in `AbstractIntegrationTest`: si ferma quando il bucket è vuoto, non dopo N richieste (il bucket si ricarica durante il ciclo). `./mvnw clean verify` verde due volte: 42 unit + 85 IT.
+- Nota: il checkpoint "50 refresh con token di utenti diversi" usa token casuali (401): il limite per IP non guarda il token, e 50 token veri richiederebbero 50 login.
 
 #### M7.4 — Notifiche push (Firebase Cloud Messaging, anche per iOS)
 **Obiettivo:** la notifica SOS oggi è solo un log. FCM consegna sia su Android sia su iOS (tramite APNs, configurato nella console Firebase).
@@ -934,7 +945,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M6 sono completate; il prossimo lavoro è **M7** (app mobile KMP). Per altre funzionalità:
+M0–M6 sono completate, M7.1–M7.3 fatte; il prossimo lavoro è **M7.4** (notifiche push). Per altre funzionalità:
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.

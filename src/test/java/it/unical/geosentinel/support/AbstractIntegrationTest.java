@@ -102,7 +102,7 @@ public abstract class AbstractIntegrationTest {
     private String testPasswordHash;
 
     // Prima di ogni test (non dopo): anche se il test precedente è morto a metà, si parte da uno stato pulito.
-    // FLUSHALL azzera anche i bucket del rate limit (5 req/min su /auth, costanti nel codice)
+    // FLUSHALL azzera anche i bucket del rate limit (geosentinel.rate-limit.*) e il limite per account sul login
     @BeforeEach
     void cleanDatabaseAndRedis() {
         jdbcTemplate.execute("""
@@ -144,6 +144,11 @@ public abstract class AbstractIntegrationTest {
     protected record HttpResult(int status, HttpHeaders headers, String body) {
     }
 
+    // per i test che non passano da RestClient (es. risposte gzip lette senza decompressione automatica)
+    protected String baseUrl() {
+        return "http://localhost:" + port;
+    }
+
     protected HttpResult call(HttpMethod method, String path, String token, String jsonBody) {
         return call(method, path, token, jsonBody, Map.of());
     }
@@ -166,6 +171,19 @@ public abstract class AbstractIntegrationTest {
                 res.getStatusCode().value(),
                 res.getHeaders(),
                 new String(res.getBody().readAllBytes(), StandardCharsets.UTF_8)));
+    }
+
+    // Esaurisce il bucket per IP di login/register con register non validi (400 immediati, senza BCrypt).
+    // Si ferma quando il bucket è vuoto, non dopo N richieste: durante il ciclo il bucket si ricarica
+    // (30/min = un gettone ogni 2 s) e su una CI lenta un conteggio fisso lascerebbe un gettone
+    protected void exhaustAuthRateLimit() {
+        for (int i = 0; i < 1_000; i++) {
+            HttpResult result = call(HttpMethod.POST, "/api/v1/auth/register", null, "{}");
+            if (result.status() == 429 || "0".equals(result.headers().getFirst("X-RateLimit-Remaining"))) {
+                return;
+            }
+        }
+        throw new IllegalStateException("auth rate limit never reached");
     }
 
     protected JsonNode json(String body) {

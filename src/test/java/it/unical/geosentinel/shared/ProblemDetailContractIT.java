@@ -68,14 +68,12 @@ class ProblemDetailContractIT extends AbstractIntegrationTest {
                 """.formatted(UUID.randomUUID())), 428, "precondition-required", "/api/v1/bookings");
     }
 
+    // 429 del RateLimitFilter (scrive il ProblemDetail da solo, fuori dal GlobalExceptionHandler).
     @Test
     void tooManyRequestsIs429() {
-        String login = "{\"email\":\"nessuno@test.dev\",\"password\":\"sbagliata\"}";
-        for (int i = 0; i < 5; i++) {
-            call(HttpMethod.POST, "/api/v1/auth/login", null, login);
-        }
+        exhaustAuthRateLimit();
 
-        assertProblem(call(HttpMethod.POST, "/api/v1/auth/login", null, login), 429, "rate-limit-exceeded", "/api/v1/auth/login");
+        assertProblem(call(HttpMethod.POST, "/api/v1/auth/register", null, "{}"), 429, "rate-limit-exceeded", "/api/v1/auth/register");
     }
 
     private HttpResult book(String token, String body) {

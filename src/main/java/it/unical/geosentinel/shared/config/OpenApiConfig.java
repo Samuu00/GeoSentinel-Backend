@@ -34,7 +34,27 @@ import java.util.TreeSet;
         info = @Info(
                 title = "GeoSentinel API",
                 version = "1.0",
-                description = "Enterprise Outdoor Emergency and Trail Management System API",
+                // contratto dei retry e del refresh per il client mobile (M7.3)
+                description = """
+                        Enterprise Outdoor Emergency and Trail Management System API
+
+                        ## Retry contract
+                        - `429 rate-limit-exceeded`, `409 resource-busy` and `503 storage-unavailable` carry a \
+                        `Retry-After` header (seconds): wait at least that long before retrying. Other 4xx are not retried unchanged (on `401` refresh the tokens first, then retry once).
+                        - `Idempotency-Key` (required on `createBooking`, optional on `raiseSos`): generate one UUID per user \
+                        action and persist it until the action gets a definitive response, also across app restarts. \
+                        Every retry of the same action reuses the same key: the server answers `200` with the resource \
+                        already created. A new key means a new action.
+
+                        ## Refresh contract
+                        - Send at most one `refreshTokens` request at a time (e.g. Ktor `Auth` plugin, `bearer { refreshTokens { } }`).
+                        - Each refresh token is single-use. Reusing one (for instance two parallel refreshes with the same token) \
+                        is treated as token theft: the whole session is revoked and the user must log in again.
+
+                        ## Conditional GET
+                        Public `GET` routes under `/api/v1/trails` and `/api/v1/pois` return an `ETag` with `Cache-Control: no-cache`: \
+                        send it back in `If-None-Match` to get `304 Not Modified` without a body.
+                        """,
                 contact = @Contact(name = "GeoSentinel Team")
         )
 )

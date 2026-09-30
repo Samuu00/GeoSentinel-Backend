@@ -16,6 +16,8 @@ import it.unical.geosentinel.shared.domain.exception.CapacityExceededException;
 import it.unical.geosentinel.shared.domain.exception.IdempotencyKeyReusedException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
 import it.unical.geosentinel.shared.web.geo.GeometryMapper;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -165,11 +167,8 @@ public class RefugeBookingService {
     }
 
     @Transactional(readOnly = true)
-    public List<BookingView> getUserBookings(UUID userId){
-        return bookingRepository.findByUserIdOrderByCheckInDesc(userId)
-                .stream()
-                .map(BookingView::from)
-                .toList();
+    public Page<BookingView> getUserBookings(UUID userId, Pageable pageable){
+        return bookingRepository.findByUserId(userId, pageable).map(BookingView::from);
     }
 
     @Transactional
