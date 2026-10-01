@@ -61,7 +61,7 @@ public abstract class AbstractIntegrationTest {
             new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
     // MinIO non serve qui: MinioObjectStorage non fa chiamate di rete all'avvio (bastano le chiavi finte di
-    // application-test.properties). Il futuro MediaUploadIT aggiungerà il suo container.
+    // application-test.properties). MediaUploadIT avvia il suo container.
     static {
         Startables.deepStart(POSTGRES, REDIS).join();
     }

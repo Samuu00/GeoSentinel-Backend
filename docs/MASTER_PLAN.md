@@ -745,7 +745,7 @@ Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida
 
 Pattern del test di concorrenza (da scrivere tu): `ExecutorService` a N thread, `CountDownLatch ready/start`, ogni task chiama il **service** (non il repository) e registra successo/eccezione in collezioni thread-safe; `invokeAll` + asserzioni sui conteggi. Esegui ogni test di concorrenza **almeno 5 volte** di fila (`@RepeatedTest(5)`): se passa solo a volte, hai una race.
 
-Opzionali, da aggiungere quando servono: `MediaUploadIT` col modulo Testcontainers MinIO (il flusso media è verificato dal vivo in M3, ma non in CI; immagine `pgsty/minio` con `asCompatibleSubstituteFor("minio/minio")`); un test ArchUnit che fa rispettare le regole di dipendenza del §1 (utile se il team cresce); JaCoCo.
+Opzionali, da aggiungere quando servono (`MediaUploadIT` fatto in M7.5): un test ArchUnit che fa rispettare le regole di dipendenza del §1 (utile se il team cresce); JaCoCo.
 
 **Checkpoint M6 (Definition of Done del backend):**
 - [x] `./mvnw verify` verde da zero con Docker attivo (41 unit + 63 IT, ~45 s; due esecuzioni consecutive verdi)
@@ -902,12 +902,20 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 **Checkpoint:** `SosPushIT` con un `PushNotifier` finto (bean di test): raise → gli operatori ricevono un messaggio con solo `alertId`; notifier che lancia → `notified_at` NULL e il recupero la rinvia; token `UNREGISTERED` → cancellato. Prova manuale con un dispositivo vero e il progetto Firebase.
 
 #### M7.5 — Media dal telefono
-- [ ] **HEIC** (predefinito della fotocamera iOS). **Deciso (30/09): l'app converte in JPEG, backend invariato.** Scelta consigliata: l'app converte in **JPEG** e ridimensiona (lato lungo ≤ 2048 px, qualità ~80%) prima dell'upload: più leggero su rete mobile, visibile ovunque (Android non legge HEIC in tutte le versioni). Il backend resta com'è; se invece si vuole accettare HEIC: `image/heic` nella whitelist di `MediaPolicy` + magic bytes (`ftyp` a offset 4 con brand `heic`/`heix`/`mif1`) + test
-- [ ] Contratto dell'upload per il client (Ktor `submitFormWithBinaryData`): tutti i `formFields` **nell'ordine ricevuto**, poi `file` per ultimo; `Content-Type` della parte file uguale a quello dichiarato; dopo il 204 di MinIO chiamare `/confirm`; upload scaduto (10 min) → nuova `upload-requests`
-- [ ] `MINIO_PUBLIC_ENDPOINT` = indirizzo con cui il **telefono** raggiunge MinIO (la firma include l'host): emulatore Android `http://10.0.2.2:9000`, simulatore iOS `http://localhost:9000`, telefono vero `http://<IP del PC>:9000`, produzione il dominio HTTPS dello storage
-- [ ] `MediaUploadIT` (rimasto facoltativo in M6): con il client mobile diventa il test di regressione del contratto di upload
+- [x] **HEIC** (predefinito della fotocamera iOS). **Deciso (30/09): l'app converte in JPEG, backend invariato.** Scelta consigliata: l'app converte in **JPEG** e ridimensiona (lato lungo ≤ 2048 px, qualità ~80%) prima dell'upload: più leggero su rete mobile, visibile ovunque (Android non legge HEIC in tutte le versioni). Il backend resta com'è; se invece si vuole accettare HEIC: `image/heic` nella whitelist di `MediaPolicy` + magic bytes (`ftyp` a offset 4 con brand `heic`/`heix`/`mif1`) + test
+- [x] Contratto dell'upload per il client (Ktor `submitFormWithBinaryData`): tutti i `formFields` senza modifiche (ordine libero), poi `file` per ultimo; `Content-Type` della parte file uguale a quello dichiarato; dopo il 204 di MinIO chiamare `/confirm`; upload scaduto (10 min) → nuova `upload-requests`
+- [x] `MINIO_PUBLIC_ENDPOINT` = indirizzo con cui il **telefono** raggiunge MinIO (la firma include l'host): emulatore Android `http://10.0.2.2:9000`, simulatore iOS `http://localhost:9000`, telefono vero `http://<IP del PC>:9000`, produzione il dominio HTTPS dello storage
+- [x] `MediaUploadIT` (rimasto facoltativo in M6): con il client mobile diventa il test di regressione del contratto di upload
 
 **Checkpoint:** foto scattata dall'app su emulatore Android e simulatore iOS → `READY` e visibile nella segnalazione; `MediaUploadIT` verde in CI.
+
+**Fatto (01/10, scritto da Claude su richiesta):**
+- Contratto dell'upload nella descrizione del documento OpenAPI (`info.description`, sezione *Media upload contract*): tipi ammessi e conversione HEIC → JPEG, POST multipart senza bearer, `formFields` invariati e `file` per ultimo, `Content-Length` obbligatorio, errori di MinIO (400 `EntityTooLarge`, 403), confirm (`READY` / `QUARANTINED`, 422 senza file, ripetibile), scadenza a `expiresAt`. `docs/openapi.json` rigenerato.
+- `.env.example`: gli indirizzi di `MINIO_PUBLIC_ENDPOINT` per emulatore, simulatore, telefono (firewall di Windows sulla 9000) e produzione; con l'host sbagliato MinIO risponde 403 `SignatureDoesNotMatch`.
+- `media/MediaUploadIT` (5 test): container `pgsty/minio` (stesso tag del compose, `GenericContainer`: nessuna dipendenza nuova), bucket creato dal test, endpoint e public endpoint dal `@DynamicPropertySource`. Upload di un HIKER sulla sua segnalazione → `READY`, un altro HIKER la vede in `/attached` e la scarica (byte identici, `image/jpeg`, `Content-Disposition: attachment`); PARK_MANAGER su un sentiero; file più grande del dichiarato → 400 `EntityTooLarge` da MinIO e confirm 422; `Content-Type` o `key` manomessi → 403; testo dichiarato JPEG → `QUARANTINED`, oggetto cancellato, confirm ripetuto con lo stesso esito.
+- **Trappola trovata:** MinIO rifiuta un POST policy chunked (`400 EmptyRequestBody`): serve il `Content-Length`. Nel contratto per l'app; con Ktor e parti `ByteArray` la lunghezza è nota. Nel test `BufferingClientHttpRequestFactory`.
+- Backend e `MediaPolicy` invariati (HEIC lo converte l'app). `./mvnw clean verify` verde: 42 unit + 98 IT.
+- Resta il checkpoint manuale con l'app (emulatore e simulatore).
 
 #### M7.6 — Ambiente raggiungibile dai dispositivi
 - [ ] **Sviluppo:** documentare in `.env.example` e nel README gli indirizzi per emulatore/simulatore/telefono (vedi M7.5). HTTP in chiaro solo in sviluppo: Android richiede un `network_security_config` che lo permetta verso `10.0.2.2` / IP del PC; iOS `NSAllowsLocalNetworking` in `Info.plist` (configurazione dell'app, non del backend)
@@ -921,7 +929,7 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 **Checkpoint:** l'app di test su un iPhone fisico, fuori dalla rete di casa, fa login, apre un sentiero e carica una foto via HTTPS.
 
 #### M7.7 — Test e review
-- [ ] `MediaUploadIT` (M7.5). Già fatti: `UserAccountIT` (M7.2), `RegistrationAgeIT` (M7.2.1), `SosPushIT` (M7.4), test del contratto OpenAPI (M7.1), `RateLimitIT` aggiornato (M7.3)
+- [x] `MediaUploadIT` (M7.5). Già fatti: `UserAccountIT` (M7.2), `RegistrationAgeIT` (M7.2.1), `SosPushIT` (M7.4), test del contratto OpenAPI (M7.1), `RateLimitIT` aggiornato (M7.3)
 - [ ] Review con la catena del §5 (riga 7)
 
 **Checkpoint M7:** `./mvnw verify` verde; client Kotlin generato dal `docs/openapi.json` committato; flusso completo dall'app su Android e iOS: registrazione → login → sentieri vicini → segnalazione con foto → SOS → notifica push all'operatore → cancellazione dell'account.
@@ -974,7 +982,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M6 sono completate, M7.1–M7.4 fatte; il prossimo lavoro è **M7.5** (media dal telefono). Per altre funzionalità:
+M0–M6 sono completate, M7.1–M7.5 fatte; il prossimo lavoro è **M7.6** (ambiente raggiungibile dai dispositivi). Per altre funzionalità:
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.

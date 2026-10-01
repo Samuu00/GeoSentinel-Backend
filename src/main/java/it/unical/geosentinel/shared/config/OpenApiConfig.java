@@ -54,6 +54,18 @@ import java.util.TreeSet;
                         ## Conditional GET
                         Public `GET` routes under `/api/v1/trails` and `/api/v1/pois` return an `ETag` with `Cache-Control: no-cache`: \
                         send it back in `If-None-Match` to get `304 Not Modified` without a body.
+
+                        ## Media upload contract
+                        Photos go straight to object storage, never through this API. Allowed types: `image/jpeg`, `image/png`, \
+                        `image/webp` (convert HEIC to JPEG on the device), at most 10 MB.
+                        1. `createUploadRequest` with the exact `contentType` and `sizeBytes` of the file to send.
+                        2. `POST` a `multipart/form-data` request to `uploadUrl`, without the bearer token: every entry of \
+                        `formFields` unchanged (any order), then the `file` part **last**, with the same `Content-Type`. \
+                        The request needs a `Content-Length` (no chunked encoding). Storage answers `204`; a bigger file \
+                        (`400 EntityTooLarge`) or a changed field (`403`) is rejected by storage itself.
+                        3. After the `204`, call `confirmUpload`: `READY`, or `QUARANTINED` if the content is not the declared image. \
+                        `422` means storage has no file yet. `confirmUpload` can be retried and returns the same outcome.
+                        4. The policy expires at `expiresAt` (10 minutes): after that, start again from step 1.
                         """,
                 contact = @Contact(name = "GeoSentinel Team")
         )
