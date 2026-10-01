@@ -44,8 +44,16 @@ GeoSentinel-Backend/
 ├── .dockerignore
 ├── .env.example
 ├── pom.xml
+├── CONTRIBUTING.md, SECURITY.md, CHANGELOG.md
+├── docker-compose.prod.yml + deploy/Caddyfile   # produzione (M7.6)
 ├── docs/
-│   └── MASTER_PLAN.md
+│   ├── README.md          # indice della documentazione
+│   ├── MASTER_PLAN.md
+│   ├── architecture.md    # arc42 + C4
+│   ├── adr/               # Architecture Decision Records (0001–0018 + template)
+│   ├── api-guide.md       # guida per chi sviluppa il client
+│   ├── operations.md      # runbook
+│   └── openapi.json       # contratto (OpenApiContractIT)
 └── src/
     ├── main/
     │   ├── java/it/unical/geosentinel/

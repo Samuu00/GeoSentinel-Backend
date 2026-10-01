@@ -1,7 +1,7 @@
 # GeoSentinel — Backend
 
 Piattaforma per la sicurezza dei sentieri montani, il monitoraggio ambientale e le emergenze outdoor.
-Fase attuale: **solo backend**. M0–M6 completate il 28/09 (`./mvnw clean verify` verde); **M7 completata lato backend** (M7.1, M7.2 e M7.2.1 il 29/09, M7.3 e M7.4 il 30/09, M7.5–M7.7 l'01/10; restano i checkpoint che richiedono l'app): adattamenti per l'unico client, un'app mobile **Kotlin Multiplatform** (Android + iOS, nessun frontend web, decisione D13). Il piano completo, con milestone, task, firme e checkpoint, è in [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md).
+Fase attuale: **solo backend**. M0–M6 completate il 28/09 (`./mvnw clean verify` verde); **M7 completata lato backend** (M7.1, M7.2 e M7.2.1 il 29/09, M7.3 e M7.4 il 30/09, M7.5–M7.7 l'01/10; restano i checkpoint che richiedono l'app): adattamenti per l'unico client, un'app mobile **Kotlin Multiplatform** (Android + iOS, nessun frontend web, decisione D13). Il piano completo, con milestone, task, firme e checkpoint, è in [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md). Documentazione (01/10): indice in [`docs/README.md`](docs/README.md) (architettura arc42 + C4, ADR, guida all'API, runbook) più `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`. Una decisione architetturale nuova → nuovo ADR; una modifica visibile → `CHANGELOG.md`.
 
 ## Come lavoriamo (regola tassativa)
 - **Il codice lo scrive l'utente, riga per riga.** Claude fa da mentore, architetto e reviewer: definisce struttura e contratti, poi revisiona.

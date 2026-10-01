@@ -4,7 +4,18 @@ Backend per la sicurezza dei sentieri montani: sentieri e POI, segnalazioni di p
 ticket di manutenzione, SOS con squadre di soccorso, foto, notifiche push. L'unico client è un'app
 Kotlin Multiplatform (Android + iOS), che genera il suo client dal contratto [`docs/openapi.json`](docs/openapi.json).
 
-Java 21, Spring Boot 4, PostgreSQL 16 + PostGIS, Redis, MinIO. Piano e decisioni: [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md).
+Java 21, Spring Boot 4, PostgreSQL 16 + PostGIS, Redis, MinIO.
+
+## Documentazione
+
+| | |
+|---|---|
+| [Architettura](docs/architecture.md) | arc42 + diagrammi C4 |
+| [Decisioni (ADR)](docs/adr/README.md) | Perché il sistema è fatto così |
+| [Guida all'API](docs/api-guide.md) · [OpenAPI](docs/openapi.json) | Per chi sviluppa l'app |
+| [Runbook](docs/operations.md) | Configurazione, avvio, backup, problemi noti |
+| [Contribuire](CONTRIBUTING.md) · [Sicurezza](SECURITY.md) · [Changelog](CHANGELOG.md) | |
+| [Piano di lavoro](docs/MASTER_PLAN.md) | Milestone e checkpoint |
 
 ## Sviluppo
 
