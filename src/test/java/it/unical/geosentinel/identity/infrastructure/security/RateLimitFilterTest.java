@@ -38,7 +38,7 @@ class RateLimitFilterTest {
         assertThat(keys.getAllValues()).containsExactly("rl:auth:ip:10.0.0.1", "rl:ip:10.0.0.1");
     }
 
-    // M7.3: sotto CGNAT i refresh sono frequenti e non devono consumare i tentativi di login dello stesso IP
+    // Sotto CGNAT i refresh sono frequenti e non devono consumare i tentativi di login dello stesso IP
     @Test
     void eachRouteGroupUsesItsConfiguredPolicy() throws Exception {
         RedisRateLimiter limiter = mock(RedisRateLimiter.class);

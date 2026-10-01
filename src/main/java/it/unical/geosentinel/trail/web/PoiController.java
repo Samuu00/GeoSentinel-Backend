@@ -70,7 +70,7 @@ public class PoiController {
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "createPoi", summary = "Create a new POI", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<PoiResponse> create(@Valid @RequestBody CreatePoiRequest request) {
         PoiView created = poiService.create(trailMapper.toCommand(request));

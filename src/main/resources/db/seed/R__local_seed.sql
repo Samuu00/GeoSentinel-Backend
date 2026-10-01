@@ -2,7 +2,7 @@
 -- Seed di sviluppo, SOLO profilo local (spring.flyway.locations in application-local.properties).
 -- Repeatable: Flyway lo riesegue quando il file cambia, ON CONFLICT DO NOTHING lo rende idempotente.
 -- Password di tutti gli utenti: Password123!  (hash del DelegatingPasswordEncoder: serve il prefisso {bcrypt})
--- UUID fissi: 0…1-5 utenti, 1… sentieri, 2… rifugi, 3… squadre, 4… segnalazioni, 5… ticket, 6… SOS, 8… POI
+-- UUID fissi: 0...1-5 utenti, 1... sentieri, 2... rifugi, 3... squadre, 4... segnalazioni, 5... ticket, 6... SOS, 8... POI
 -- =============================================================================
 
 -- Utenti, uno per ruolo (+ un secondo escursionista). Email già in minuscolo (CHECK email = lower(email))

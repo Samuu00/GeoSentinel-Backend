@@ -27,7 +27,7 @@ import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Push FCM (M7.4) con un PushNotifier finto: destinatari per ruolo, payload senza dati personali,
+// Push FCM con un PushNotifier finto: destinatari per ruolo, payload senza dati personali,
 // recupero dopo un invio fallito, pulizia dei token rifiutati e dei dispositivi di un account cancellato
 @Import(SosPushIT.FakePushConfig.class)
 class SosPushIT extends AbstractIntegrationTest {

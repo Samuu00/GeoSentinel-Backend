@@ -22,7 +22,7 @@ import java.util.zip.GZIPInputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// M7.3: compressione, GET condizionali sul catalogo pubblico, liste paginate
+// Compressione, GET condizionali sul catalogo pubblico, liste paginate
 class MobileNetworkIT extends AbstractIntegrationTest {
 
     // HttpClient del JDK: non decomprime da solo, quindi il test vede Content-Encoding e i byte trasmessi

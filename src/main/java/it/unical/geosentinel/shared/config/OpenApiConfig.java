@@ -34,7 +34,7 @@ import java.util.TreeSet;
         info = @Info(
                 title = "GeoSentinel API",
                 version = "1.0",
-                // contratto dei retry e del refresh per il client mobile (M7.3)
+                // contratto dei retry e del refresh per il client mobile
                 description = """
                         Enterprise Outdoor Emergency and Trail Management System API
 
@@ -82,7 +82,7 @@ public class OpenApiConfig {
     private static final String PROBLEM_SCHEMA = "ProblemDetail";
     private static final String PROBLEM_JSON = "application/problem+json";
 
-    // Un solo punto per le risposte di errore (M5.3), invece di @ApiResponse ripetute su ogni endpoint: ogni
+    // Un solo punto per le risposte di errore, invece di @ApiResponse ripetute su ogni endpoint: ogni
     // operazione riceve le risposte RFC 7807 che può davvero dare. Quelle già dichiarate (AuthController) restano
     @Bean
     public OpenApiCustomizer problemDetailResponses() {
@@ -124,7 +124,7 @@ public class OpenApiConfig {
                         && (!requiredOnly || Boolean.TRUE.equals(p.getRequired())));
     }
 
-    // D12: con Idempotency-Key un retry risponde 200 con la risorsa già creata (stesso body del 201)
+    // ADR-0012: con Idempotency-Key un retry risponde 200 con la risorsa già creata (stesso body del 201)
     private static void documentIdempotentReplay(Operation operation) {
         ApiResponse created = operation.getResponses().get("201");
         if (hasHeader(operation, "Idempotency-Key", false) && created != null && !operation.getResponses().containsKey("200")) {
@@ -149,7 +149,7 @@ public class OpenApiConfig {
 
     // Lo schema del JSON che esce davvero: ProblemDetail di Spring con le properties portate al primo livello
     // (ProblemDetailJacksonMixin) da GlobalExceptionHandler e ProblemDetailWriter
-    // M7.1: type/title/status ci sono sempre. Gli slug sono elencati nella descrizione e non come enum: un client
+    // type, title e status ci sono sempre. Gli slug sono elencati nella descrizione e non come enum: un client
     // generato con un enum rigido fallirebbe la deserializzazione al primo slug nuovo
     private static Schema<?> problemDetailSchema() {
         return new ObjectSchema()

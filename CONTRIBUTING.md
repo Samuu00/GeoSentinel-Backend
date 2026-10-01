@@ -19,17 +19,18 @@ Package per feature (`identity`, `trail`, `refuge`, `maintenance`, `emergency`, 
 
 ## Convenzioni
 
-- **Bean:** singleton senza stato, campi `private final`, iniezione da costruttore. Il tempo arriva dal bean
-  `Clock`, mai `Instant.now()` senza clock.
-- **DTO:** record Java; mapping con MapStruct (`unmappedTargetPolicy=ERROR`). Niente Lombok.
-- **JPA:** `open-in-view=false`, `@ManyToOne(fetch = LAZY)`, `@Enumerated(STRING)` + `CHECK` nel DDL,
-  `@Transactional` sui service e mai sui controller. Le cache contengono solo DTO e si registrano con
-  `CacheConfig.typed(...)`.
-- **Geometrie:** `x = longitudine`, `y = latitudine`; solo con il bean `GeometryFactory`; distanze con `::geography`.
-- **Jackson 3:** `tools.jackson.databind.json.JsonMapper`, mai `com.fasterxml...ObjectMapper`.
-- **Errori:** eccezioni di dominio (`shared/domain/exception`) tradotte in RFC 7807 da `GlobalExceptionHandler`;
-  uno slug nuovo va in `ProblemTypes`. Messaggi d'errore in inglese.
-- **Lingua:** commenti e documentazione in italiano.
+- I bean sono singleton senza stato, con campi `private final` e iniezione da costruttore. Il tempo si
+  prende dal bean `Clock`: niente `Instant.now()` diretto.
+- DTO come record Java, mapping con MapStruct (`unmappedTargetPolicy=ERROR`). Lombok non si usa.
+- JPA: `open-in-view=false`, `@ManyToOne(fetch = LAZY)`, `@Enumerated(STRING)` con il suo `CHECK` nel DDL.
+  `@Transactional` va sui service, mai sui controller. In cache finiscono solo DTO, e ogni cache va
+  registrata con `CacheConfig.typed(...)`.
+- Geometrie: `x` è la longitudine, `y` la latitudine. Si creano solo con il bean `GeometryFactory` e le
+  distanze si calcolano con `::geography`.
+- Jackson è il 3: `tools.jackson.databind.json.JsonMapper`, non `com.fasterxml...ObjectMapper`.
+- Gli errori partono da eccezioni di dominio (`shared/domain/exception`) che `GlobalExceptionHandler`
+  traduce in RFC 7807. Uno slug nuovo va aggiunto in `ProblemTypes`. I messaggi d'errore sono in inglese,
+  commenti e documentazione in italiano.
 
 ## API
 
@@ -48,7 +49,7 @@ finché non si rigenera:
 
 ## Database
 
-- Le migrazioni `V1`–`V9` sono applicate e **immutabili**: ogni modifica allo schema va in una nuova `V10__...`.
+- Le migrazioni da `V1` a `V9` sono applicate e non si toccano più: ogni modifica allo schema va in una nuova `V10__...`.
 - `ddl-auto=validate` non controlla `NOT NULL` né lunghezze: vanno replicati a mano nel DDL.
 - Il seed di sviluppo `db/seed/R__local_seed.sql` è repeatable e si può modificare.
 

@@ -56,7 +56,7 @@ public class HazardReportController {
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "createHazard", summary = "Submit a hazard report", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<HazardResponse> create(@Valid @RequestBody CreateHazardRequest request) {
         UUID reporterId = currentUser.getRequiredUserId();

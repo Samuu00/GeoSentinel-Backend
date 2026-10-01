@@ -7,7 +7,7 @@ import java.time.Instant;
 
 import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
-// requiredMode = REQUIRED sulle risposte (M7.1): nel client Kotlin generato la proprietà non è nullable
+// requiredMode = REQUIRED sulle risposte: nel client Kotlin generato la proprietà non è nullable
 public record TokenResponse(
         @Schema(requiredMode = REQUIRED) String accessToken,
         @Schema(requiredMode = REQUIRED) Instant accessExpiresAt,

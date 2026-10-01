@@ -10,7 +10,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// M7.2.1: età minima GDPR art. 8 (14 anni in Italia), la data di nascita non si salva
+// Età minima GDPR art. 8 (14 anni in Italia), la data di nascita non si salva
 class RegistrationAgeIT extends AbstractIntegrationTest {
 
     private final LocalDate today = LocalDate.now(ZoneOffset.UTC);

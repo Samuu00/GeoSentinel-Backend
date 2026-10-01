@@ -85,7 +85,7 @@ public class MaintenanceController {
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "createTicket", summary = "Open a new maintenance ticket", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TicketResponse> create(@Valid @RequestBody CreateTicketRequest request) {
         TicketView created = maintenanceService.createTicket(maintenanceMapper.toCommand(request));

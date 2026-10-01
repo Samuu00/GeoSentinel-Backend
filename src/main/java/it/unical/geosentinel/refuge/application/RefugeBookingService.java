@@ -71,7 +71,7 @@ public class RefugeBookingService {
         Refuge refuge = refugeRepository.findByIdForUpdate(cmd.refugeId())
                 .orElseThrow(() -> new ResourceNotFoundException("Refuge", cmd.refugeId()));
 
-        // D12, cercata DOPO il lock: due retry simultanei sullo stesso rifugio si mettono in fila e il secondo
+        // La chiave (ADR-0012) si cerca DOPO il lock: due retry simultanei sullo stesso rifugio si mettono in fila e il secondo
         // trova la riga del primo. Con chiavi uguali su rifugi diversi decide il vincolo UNIQUE (409).
         // Prima della validazione delle date: un retry arrivato a check-in passato restituisce comunque la prenotazione.
         Optional<Booking> existing = bookingRepository.findByUserIdAndIdempotencyKey(userId, idempotencyKey);

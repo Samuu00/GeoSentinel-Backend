@@ -1,8 +1,8 @@
 # Architettura di GeoSentinel Backend
 
-Documento strutturato secondo il modello [arc42](https://arc42.org) (sezioni condensate), con diagrammi
-[C4](https://c4model.com) in Mermaid. Le decisioni sono motivate negli [ADR](adr/README.md); il contratto
-dell'API è [`openapi.json`](openapi.json), spiegato nella [guida all'API](api-guide.md).
+Segue lo schema [arc42](https://arc42.org), in versione ridotta, con i diagrammi [C4](https://c4model.com)
+in Mermaid. Il perché delle scelte sta negli [ADR](adr/README.md). Il contratto dell'API è
+[`openapi.json`](openapi.json) e la [guida all'API](api-guide.md) lo spiega.
 
 ## 1. Introduzione e obiettivi
 
@@ -21,7 +21,7 @@ un'app mobile Kotlin Multiplatform (Android e iOS).
 
 ### Obiettivi di qualità
 
-| Priorità | Qualità | Scenario concreto |
+| Priorità | Qualità | Scenario |
 |---|---|---|
 | 1 | Affidabilità | Un SOS non va mai perso né duplicato, anche con rete instabile e retry del client |
 | 2 | Correttezza sotto concorrenza | 50 prenotazioni simultanee su 10 posti: esattamente 10 accettate |
@@ -113,14 +113,14 @@ mapper).
 
 | Feature | Responsabilità | Dipende da |
 |---|---|---|
-| `shared` | Entità auditabile, eccezioni, configurazioni, gestione errori, DTO geografici | — |
+| `shared` | Entità auditabile, eccezioni, configurazioni, gestione errori, DTO geografici | nessuna |
 | `identity` | Utenti, ruoli, JWT, refresh token, rate limit, profilo, cancellazione account | `refuge`, `emergency`, `media`, `notification` (pulizia alla cancellazione) |
-| `trail` | Sentieri, POI, segnalazioni di pericolo | — |
-| `refuge` | Rifugi, disponibilità, prenotazioni | — |
+| `trail` | Sentieri, POI, segnalazioni di pericolo | nessuna |
+| `refuge` | Rifugi, disponibilità, prenotazioni | nessuna |
 | `maintenance` | Ticket di manutenzione | `trail`, `refuge`, `identity` |
 | `emergency` | SOS, squadre, notifiche, conservazione dei dati | `identity`, `notification` |
 | `media` | Metadati delle foto, storage, verifica del contenuto | `trail` |
-| `notification` | Token dei dispositivi, invio push | — |
+| `notification` | Token dei dispositivi, invio push | nessuna |
 
 Regole di dipendenza: `domain` non conosce gli altri strati; `web` non usa i repository; una feature usa i
 service di un'altra, mai i suoi repository. Le porte esistono solo per i sistemi esterni sostituibili
@@ -129,7 +129,7 @@ service di un'altra, mai i suoi repository. Le porte esistono solo per i sistemi
 ### Modello dei dati
 
 Dodici tabelle, tutte con chiave UUID e colonne di audit (`created_at/by`, `updated_at/by`). Schema gestito
-da Flyway (`V1`–`V9`, immutabili); Hibernate lo valida soltanto (`ddl-auto=validate`).
+da Flyway (da `V1` a `V9`, ormai immutabili); Hibernate lo valida soltanto (`ddl-auto=validate`).
 
 | Tabella | Contenuto | Note |
 |---|---|---|
@@ -209,20 +209,27 @@ Dettagli operativi nel [runbook](operations.md).
 
 ## 8. Concetti trasversali
 
-- **Errori:** ogni errore è `application/problem+json` (RFC 7807) con `type` stabile, `traceId` e, per la
-  validazione, `errors[]`. Lo producono sia `GlobalExceptionHandler` sia i filtri di sicurezza.
-- **Sicurezza:** vedi [SECURITY.md](../SECURITY.md).
-- **Concorrenza:** lock pessimistico (rifugi, SOS) con `lock_timeout = 3s`; lock ottimistico con `If-Match`
-  (ticket); advisory lock (un SOS attivo per escursionista, quota dei media); ordine fisso dei lock
-  (allerta → squadra).
-- **Tempo:** `Clock` iniettato, `Instant`/`timestamptz` in UTC; `LocalDate` solo per le notti di prenotazione.
-- **Cache:** Redis, solo DTO, serializer JSON tipizzato per cache, `transactionAware`; una cache non
-  registrata fa fallire l'avvio invece di usare la serializzazione Java.
-- **Osservabilità:** Micrometer Tracing (OpenTelemetry), `traceId` nei log e nelle risposte d'errore;
-  `/actuator/health` pubblico senza dettagli.
-- **Dati personali:** niente posizioni, note mediche o nomi nei log e nelle push; posizioni degli SOS
-  arrotondate dopo 90 giorni; account cancellati anonimizzati.
-- **Lavori programmati:**
+Ogni errore è `application/problem+json` (RFC 7807) con un `type` stabile, il `traceId` e, se è un errore
+di validazione, `errors[]`. Lo stesso formato esce da `GlobalExceptionHandler` e dai filtri di sicurezza.
+La sicurezza ha un documento a parte: [SECURITY.md](../SECURITY.md).
+
+Per la concorrenza ci sono tre meccanismi. Rifugi e SOS usano il lock pessimistico con `lock_timeout = 3s`,
+i ticket il lock ottimistico con `If-Match`, mentre l'unicità dell'SOS attivo per escursionista e la quota
+dei media passano da un advisory lock. Quando servono due lock, l'ordine è sempre allerta → squadra.
+
+Il tempo arriva da un `Clock` iniettato, e istanti e `timestamptz` sono in UTC. `LocalDate` si usa solo per
+le notti di prenotazione.
+
+La cache è su Redis e contiene solo DTO, con un serializer JSON tipizzato per ogni cache e `transactionAware`.
+Se una cache non è registrata l'avvio fallisce, invece di ripiegare in silenzio sulla serializzazione Java.
+
+Per l'osservabilità c'è Micrometer Tracing (OpenTelemetry): il `traceId` finisce nei log e nelle risposte
+d'errore. `/actuator/health` è pubblico ma non dà dettagli.
+
+Nei log e nelle push non compaiono posizioni, note mediche o nomi. Dopo 90 giorni le posizioni degli SOS
+vengono arrotondate, e gli account cancellati restano solo in forma anonima.
+
+I lavori programmati sono quattro:
 
 | Job | Quando | Cosa |
 |---|---|---|

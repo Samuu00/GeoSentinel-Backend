@@ -1,10 +1,5 @@
 # Sicurezza
 
-## Segnalare una vulnerabilità
-
-Non aprire una issue pubblica. Usare la segnalazione privata di GitHub (**Security → Report a vulnerability**)
-o contattare direttamente il maintainer del repository, indicando versione, passi per riprodurre e impatto.
-
 ## Versioni supportate
 
 Solo il ramo `main`. Il progetto non ha ancora versioni rilasciate.
@@ -40,7 +35,7 @@ attaccante con un token rubato, client che ritenta su rete instabile.
 
 ## Verifiche fatte
 
-- Review di sicurezza manuali a ogni milestone, l'ultima sulle modifiche di M7.6–M7.7 (01/10): nessuna
+- Review di sicurezza manuali a ogni milestone, l'ultima sulle modifiche di M7.6 e M7.7 (01/10): nessuna
   vulnerabilità aperta.
 - Test di integrazione su accessi incrociati, revoca, rate limit, contratto degli errori e upload.
 - AgentShield sulla configurazione dell'assistente: nessun segreto, permesso o hook a rischio.

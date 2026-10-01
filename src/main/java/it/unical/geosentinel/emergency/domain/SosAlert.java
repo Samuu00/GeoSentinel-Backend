@@ -23,7 +23,7 @@ import java.util.UUID;
 public class SosAlert extends AuditableEntity {
     @Column(name = "hiker_id", nullable = false, updatable = false)
     private UUID hikerId;
-    // facoltativa (D12): un SOS senza chiave non si rifiuta mai
+    // facoltativa (ADR-0012): un SOS senza chiave non si rifiuta mai
     @Column(name = "idempotency_key", updatable = false)
     private UUID idempotencyKey;
     @Column(name = "location", nullable = false, columnDefinition = "geometry(Point,4326)")

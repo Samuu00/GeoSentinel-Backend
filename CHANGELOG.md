@@ -31,7 +31,7 @@ Backend per l'app mobile Kotlin Multiplatform (milestone M7).
 
 ## [0.1.0] - 2026-09-28
 
-Prima versione completa del backend (milestone M0–M6).
+Prima versione completa del backend (milestone da M0 a M6).
 
 ### Aggiunto
 - Identità: registrazione, login a tempo costante, JWT con blacklist, refresh token ruotati con reuse
@@ -42,7 +42,7 @@ Prima versione completa del backend (milestone M0–M6).
 - SOS con squadre di soccorso, notifiche asincrone con recupero, conservazione GDPR a 90 giorni.
 - Foto via MinIO con presigned POST policy, verifica del contenuto, quarantena e quota.
 - Errori RFC 7807 con slug stabili e `traceId`.
-- Migrazioni Flyway V1–V7 e seed di sviluppo.
+- Migrazioni Flyway da V1 a V7 e seed di sviluppo.
 - Docker Compose, Dockerfile multi-stage, CI GitHub Actions con gitleaks, Dependabot.
 - Suite di integrazione con Testcontainers, test di concorrenza ripetuti.
 

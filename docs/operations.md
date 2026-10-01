@@ -1,7 +1,7 @@
 # Runbook
 
-Come configurare, avviare, controllare e ripristinare il backend. Per l'architettura vedi
-[architecture.md](architecture.md), per il deploy in produzione anche il [README](../README.md#staging--produzione).
+Configurazione, avvio, controlli e ripristino del backend. L'architettura è in
+[architecture.md](architecture.md), il deploy in produzione anche nel [README](../README.md#staging--produzione).
 
 ## Requisiti
 
@@ -20,17 +20,17 @@ dall'ambiente del container (produzione). Modello completo in [`.env.example`](.
 
 | Variabile | Obbligatoria | Default | Uso |
 |---|---|---|---|
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | sì | — | Database (le legge anche l'immagine Postgres) |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | sì |  | Database (le legge anche l'immagine Postgres) |
 | `DB_HOST`, `DB_PORT` | no | `localhost`, `5432` | Indirizzo del database |
 | `REDIS_PASSWORD` | sì con il compose | vuota | Redis con `--requirepass` |
 | `REDIS_HOST`, `REDIS_PORT` | no | `localhost`, `6379` | Indirizzo di Redis |
-| `JWT_SECRET` | sì | — | Firma HS256, almeno 32 byte (l'avvio fallisce se più corto) |
-| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | sì | — | Credenziali MinIO (le legge anche l'immagine) |
+| `JWT_SECRET` | sì |  | Firma HS256, almeno 32 byte (l'avvio fallisce se più corto) |
+| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | sì |  | Credenziali MinIO (le legge anche l'immagine) |
 | `MINIO_BUCKET` | no | `geosentinel-media` | Bucket privato delle foto |
 | `MINIO_ENDPOINT` | no | `http://localhost:9000` | Indirizzo di MinIO visto dal backend |
-| `MINIO_PUBLIC_ENDPOINT` | no | `http://localhost:9000` | Indirizzo di MinIO visto dal **dispositivo**: entra nella firma degli URL |
+| `MINIO_PUBLIC_ENDPOINT` | no | `http://localhost:9000` | Indirizzo di MinIO visto dal telefono o dall'emulatore, entra nella firma degli URL |
 | `PUSH_ENABLED` | no | `false` | Accende FCM; altrimenti le push vanno solo nel log |
-| `GOOGLE_APPLICATION_CREDENTIALS` | se `PUSH_ENABLED` | — | Percorso del JSON dell'account di servizio Firebase |
+| `GOOGLE_APPLICATION_CREDENTIALS` | se `PUSH_ENABLED` |  | Percorso del JSON dell'account di servizio Firebase |
 
 Solo per `docker-compose.prod.yml`: `API_DOMAIN`, `MEDIA_DOMAIN`, `HTTP_PORT`, `HTTPS_PORT`, `BACKUP_DIR`,
 `BACKUP_KEEP_DAYS`.
@@ -72,10 +72,13 @@ l'applicazione non parte. L'arresto è graceful (20 s per finire le richieste in
 
 ## Salute e osservabilità
 
-- `GET /actuator/health` → `{"status":"UP"}`: pubblico, senza dettagli; gli healthcheck di Docker lo usano.
-- Ogni log ha il `traceId` (Micrometer Tracing); lo stesso `traceId` è in ogni risposta d'errore, quindi
-  dal messaggio dell'utente si arriva alla riga di log.
-- Chiavi Redis utili per capire un comportamento:
+`GET /actuator/health` risponde `{"status":"UP"}`. È pubblico, non mostra dettagli e lo usano gli
+healthcheck di Docker.
+
+Ogni riga di log ha il `traceId` di Micrometer Tracing, e lo stesso `traceId` compare nelle risposte
+d'errore: partendo dall'errore che vede l'utente si risale alla riga di log.
+
+Quando qualcosa non torna conviene guardare queste chiavi su Redis:
 
 | Prefisso | Contenuto | TTL |
 |---|---|---|
@@ -120,7 +123,7 @@ sopravvivere a un guasto vanno copiati altrove.
 | `Port 8080 was already in use` | Un'altra applicazione sulla 8080 | `--server.port=18080` |
 | `package`/`verify` falliscono su Windows | Il jar è in uso da un'istanza accesa | Fermare l'istanza |
 | Login e rate limit falliscono, `WRONGPASS` nei log | `REDIS_PASSWORD` diversa da quella del container | Allineare il `.env` e ricreare Redis |
-| L'app non parte: `Validate failed: Migrations have failed validation` | Una migrazione già applicata è stata modificata | Mai modificare `V1`–`V9`: ripristinare il file e scrivere una `V10` |
+| L'app non parte: `Validate failed: Migrations have failed validation` | Una migrazione già applicata è stata modificata | Le migrazioni da `V1` a `V9` non si toccano: ripristinare il file e scrivere una `V10` |
 | Upload dal telefono → 403 `SignatureDoesNotMatch` | `MINIO_PUBLIC_ENDPOINT` diverso dall'indirizzo usato dal dispositivo | Impostarlo come nel [README](../README.md#collegare-lapp-in-sviluppo) e riavviare |
 | Upload → 400 `EmptyRequestBody` | Il client manda il multipart chunked | Inviare con `Content-Length` |
 | Con `PUSH_ENABLED=true` l'avvio fallisce | File delle credenziali assente o illeggibile | Controllare `GOOGLE_APPLICATION_CREDENTIALS` |

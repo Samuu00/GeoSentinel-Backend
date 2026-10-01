@@ -12,7 +12,7 @@ public final class MediaPolicy {
     // Byte da leggere dall'oggetto per riconoscerne il formato (WebP ha la firma all'offset 8)
     public static final int SIGNATURE_BYTES = 12;
 
-    // MIME ammesso → estensione della object key
+    // MIME ammesso -> estensione della object key
     private static final Map<String, String> EXTENSIONS = Map.of(
             "image/jpeg", ".jpg",
             "image/png", ".png",

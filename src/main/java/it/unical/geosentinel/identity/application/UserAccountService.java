@@ -21,7 +21,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
-// Profilo e cancellazione dell'account (M7.2). Il cambio password sta in AuthService: apre una nuova sessione
+// Profilo e cancellazione dell'account. Il cambio password sta in AuthService: apre una nuova sessione
 @Service
 public class UserAccountService {
     private final UserRepository userRepository;
@@ -68,9 +68,9 @@ public class UserAccountService {
         return UserProfile.from(user);
     }
 
-    // Solo HIKER: gli account del personale li chiude l'organizzazione (rifugi, ticket e missioni in carico) → 409.
-    // Le altre feature puliscono i propri dati dal loro service (§1), in questa stessa transazione.
-    // Ordine: prima tutto ciò che torna indietro con un rollback, poi la blacklist (Redis giù → rollback, nulla perso),
+    // Solo HIKER: gli account del personale li chiude l'organizzazione (rifugi, ticket e missioni in carico) -> 409.
+    // Le altre feature puliscono i propri dati dal loro service, in questa stessa transazione.
+    // Ordine: prima tutto ciò che torna indietro con un rollback, poi la blacklist (Redis giù -> rollback, nulla perso),
     // per ultimi gli oggetti dello storage, l'unico passo irreversibile
     @Transactional
     public void deleteAccount(UUID userId, Jwt accessToken) {

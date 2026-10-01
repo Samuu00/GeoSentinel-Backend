@@ -31,7 +31,7 @@ public class Booking extends AuditableEntity{
     private LocalDate checkOut;
     @Column(name = "guests", nullable = false, updatable = false)
     private Integer guests;
-    // D12: chiave generata dal client, UNIQUE (user_id, idempotency_key) nel DDL. Un retry restituisce questa riga
+    // ADR-0012: chiave generata dal client, UNIQUE (user_id, idempotency_key) nel DDL. Un retry restituisce questa riga
     @Column(name = "idempotency_key", nullable = false, updatable = false)
     private UUID idempotencyKey;
     @Column(name = "status", nullable = false)

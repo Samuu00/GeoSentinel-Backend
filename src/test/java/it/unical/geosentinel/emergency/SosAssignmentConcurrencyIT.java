@@ -11,7 +11,7 @@ import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Invio esclusivo della squadra: lock pessimistici con ordine fisso allerta → squadra (M4.3)
+// Invio esclusivo della squadra: lock pessimistici con ordine fisso allerta -> squadra
 class SosAssignmentConcurrencyIT extends AbstractIntegrationTest {
 
     private static final String SOS_BODY = """

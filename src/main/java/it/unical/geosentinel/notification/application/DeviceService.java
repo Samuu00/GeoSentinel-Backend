@@ -39,7 +39,7 @@ public class DeviceService {
         deviceTokenRepository.deleteByUserIdAndToken(userId, token);
     }
 
-    // cancellazione dell'account (M7.2): i token sono dati personali, e un account cancellato non riceve più push
+    // cancellazione dell'account: i token sono dati personali, e un account cancellato non riceve più push
     @Transactional
     public void deleteAllOf(UUID userId) {
         deviceTokenRepository.deleteAllByUserId(userId);

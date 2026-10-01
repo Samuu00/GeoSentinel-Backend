@@ -27,7 +27,7 @@ public interface SosAlertRepository extends JpaRepository<SosAlert, UUID>{
             """)
     Optional<SosAlert> findByIdWithDetails(@Param("id") UUID id);
 
-    // senza fetch della squadra: il service la blocca dopo, rispettando l'ordine alert → team
+    // senza fetch della squadra: il service la blocca dopo, rispettando l'ordine alert -> team
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM SosAlert a WHERE a.id = :id")
     Optional<SosAlert> findByIdForUpdate(@Param("id") UUID id);

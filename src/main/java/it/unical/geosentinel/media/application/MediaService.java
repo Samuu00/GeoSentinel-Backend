@@ -143,9 +143,9 @@ public class MediaService {
         return MediaFileView.from(mediaFile);
     }
 
-    // Cancellazione dell'account (M7.2): tutti i media, anche PENDING (la delete di un oggetto mai caricato non fallisce).
+    // Cancellazione dell'account: tutti i media, anche PENDING (la delete di un oggetto mai caricato non fallisce).
     // Come deleteMedia: prima le righe (flush, così un errore del DB arriva prima di toccare lo storage), poi gli oggetti.
-    // ponytail: se lo storage fallisce a metà la transazione torna indietro ma gli oggetti già cancellati no; restano
+    // Limite noto: se lo storage fallisce a metà la transazione torna indietro ma gli oggetti già cancellati no; restano
     // righe senza oggetto finché l'utente non riprova la cancellazione (idempotente). Serve un outbox se diventa un problema
     @Transactional
     public void deleteAllOf(UUID ownerId) {

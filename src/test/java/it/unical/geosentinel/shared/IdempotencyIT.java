@@ -14,7 +14,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// D12: i retry del client (stessa Idempotency-Key) non creano duplicati, nemmeno se arrivano insieme
+// ADR-0012: i retry del client (stessa Idempotency-Key) non creano duplicati, nemmeno se arrivano insieme
 class IdempotencyIT extends AbstractIntegrationTest {
 
     private static final String SOS_BODY = """
@@ -68,7 +68,7 @@ class IdempotencyIT extends AbstractIntegrationTest {
         assertThat(json(reused.body()).get("type").asString()).endsWith("/idempotency-key-reused");
     }
 
-    // Un SOS non si rifiuta mai: stessa chiave con un body diverso → l'allerta già creata
+    // Un SOS non si rifiuta mai: stessa chiave con un body diverso -> l'allerta già creata
     @Test
     void sameKeyWithADifferentSosReturnsTheExistingAlert() {
         String hiker = obtainToken(Role.HIKER);

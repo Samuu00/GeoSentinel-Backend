@@ -236,7 +236,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 "An unexpected internal error occurred", new HttpHeaders(), request);
     }
 
-    // ---- account (M7.2) --------------------------------------------------------------------------------------
+    // ---- account --------------------------------------------------------------------------------------
 
     @ExceptionHandler(AccountManagedException.class)
     public ResponseEntity<Object> handleAccountManaged(AccountManagedException ex, WebRequest request) {

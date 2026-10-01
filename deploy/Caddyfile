@@ -1,5 +1,5 @@
-# Reverse proxy con TLS automatico (M7.6). Certificati Let's Encrypt per i domini pubblici; per *.localhost
-# Caddy usa la sua CA locale (prove sul PC). Il redirect HTTP → HTTPS lo fa Caddy da solo.
+# Reverse proxy con TLS automatico. Certificati Let's Encrypt per i domini pubblici; per *.localhost
+# Caddy usa la sua CA locale (prove sul PC). Il redirect HTTP -> HTTPS lo fa Caddy da solo.
 # Caddy non si fida degli X-Forwarded-For in arrivo (nessun trusted_proxies): li riscrive con l'IP vero del client,
 # che il backend legge con server.forward-headers-strategy=native. La compressione la fa già il backend
 

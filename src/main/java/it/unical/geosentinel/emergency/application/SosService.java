@@ -50,7 +50,7 @@ public class SosService {
         this.clock = clock;
     }
 
-    // Un SOS non si rifiuta mai (D12): un retry con la stessa chiave (facoltativa, può essere null), o un secondo SOS
+    // Un SOS non si rifiuta mai (ADR-0012): un retry con la stessa chiave (facoltativa, può essere null), o un secondo SOS
     // mentre il primo è attivo, restituisce l'allerta esistente (created = false) invece di un errore o di un duplicato
     @Transactional
     @PreAuthorize("hasRole('HIKER')")
@@ -76,8 +76,8 @@ public class SosService {
         return new SosRaiseResult(SosAlertView.from(saved, geometryMapper), true);
     }
 
-    // Cancellazione dell'account (M7.2). Stesso advisory lock di raiseSos: un SOS lanciato in parallelo non sfugge.
-    // Poi l'ordine fisso alert → team, come in cancelSos
+    // Cancellazione dell'account. Stesso advisory lock di raiseSos: un SOS lanciato in parallelo non sfugge.
+    // Poi l'ordine fisso alert -> team, come in cancelSos
     @Transactional
     public void cancelActiveOf(UUID hikerId) {
         sosAlertRepository.lockHiker(hikerId.getMostSignificantBits() ^ hikerId.getLeastSignificantBits());

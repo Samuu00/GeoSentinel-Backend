@@ -12,7 +12,7 @@ import java.lang.annotation.Target;
 import java.nio.charset.StandardCharsets;
 
 // Limite in byte UTF-8, non in caratteri: @Size conta i caratteri e una lettera accentata vale 2 byte.
-// Serve per BCrypt, che oltre 72 byte lancia un'eccezione (D11): senza questo vincolo diventerebbe un 500.
+// Serve per BCrypt, che oltre 72 byte lancia un'eccezione (ADR-0011): senza questo vincolo diventerebbe un 500.
 @Target({ElementType.FIELD, ElementType.PARAMETER, ElementType.RECORD_COMPONENT})
 @Retention(RetentionPolicy.RUNTIME)
 @Constraint(validatedBy = MaxUtf8Bytes.Validator.class)

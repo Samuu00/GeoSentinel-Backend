@@ -14,7 +14,7 @@ import java.util.UUID;
 public interface RescueTeamRepository extends JpaRepository<RescueTeam, UUID>{
     boolean existsByNameIgnoreCase(String name);
 
-    // sempre dopo il lock dell'allerta (ordine fisso alert → team, niente deadlock)
+    // sempre dopo il lock dell'allerta (ordine fisso alert -> team, niente deadlock)
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT t FROM RescueTeam t WHERE t.id = :id")
     Optional<RescueTeam> findByIdForUpdate(@Param("id") UUID id);

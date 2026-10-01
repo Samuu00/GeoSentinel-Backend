@@ -16,7 +16,7 @@ import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Nessun overbooking: il lock pessimistico sulla riga del rifugio serializza le prenotazioni (M4.2).
+// Nessun overbooking: il lock pessimistico sulla riga del rifugio serializza le prenotazioni.
 // Ripetuto 5 volte: se passasse solo a volte, ci sarebbe una race
 class RefugeBookingConcurrencyIT extends AbstractIntegrationTest {
 

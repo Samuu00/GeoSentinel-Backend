@@ -42,7 +42,7 @@ public class RescueTeamController {
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "createRescueTeam", summary = "Register a new rescue team unit", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RescueTeamResponse> createTeam(@Valid @RequestBody CreateRescueTeamRequest request){
         RescueTeamView created = sosService.createTeam(sosMapper.toCommand(request));

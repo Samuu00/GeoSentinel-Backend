@@ -13,7 +13,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// M7.7: la capacità di un rifugio non scende sotto gli ospiti già confermati per una notte futura
+// La capacità di un rifugio non scende sotto gli ospiti già confermati per una notte futura
 class RefugeCapacityIT extends AbstractIntegrationTest {
 
     @Test

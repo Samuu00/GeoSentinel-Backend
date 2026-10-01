@@ -56,7 +56,7 @@ public class MediaController {
     }
 
     @PostMapping("/upload-requests")
-    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "createUploadRequest", summary = "Request an upload: returns a presigned POST policy (URL + form fields) for direct upload to storage", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<UploadSessionResponse> initiateUpload(@Valid @RequestBody InitUploadRequest request) {
         UUID ownerId = currentUser.getRequiredUserId();
@@ -111,7 +111,7 @@ public class MediaController {
     }
 
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "deleteMedia", summary = "Delete an uploaded media file and purge it from object storage (owner or admin)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<Void> deleteMedia(@PathVariable UUID id) {
         mediaService.deleteMedia(currentUser.getRequiredUserId(), currentUser.isAdmin(), id);

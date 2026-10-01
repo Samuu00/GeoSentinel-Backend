@@ -13,7 +13,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 // ST_DWithin in METRI (cast ::geography) e ST_Contains sulla bbox, passando dalle rotte pubbliche.
-// Regressione lon/lat (D10): se da qualche parte lat e lon si invertissero, i test "trovato" fallirebbero
+// Regressione lon/lat (ADR-0010): se da qualche parte lat e lon si invertissero, i test "trovato" fallirebbero
 class TrailSpatialQueryIT extends AbstractIntegrationTest {
 
     // Sentiero est-ovest di ~1.7 km a lat 39.30 (Sila): x = lon, y = lat
@@ -26,7 +26,7 @@ class TrailSpatialQueryIT extends AbstractIntegrationTest {
 
     @Test
     void pointAbout100MetersAwayIsFoundWith200MetersButNotWith50() {
-        // 0.0009° di latitudine ≈ 100 m a nord del sentiero
+        // 0.0009° di latitudine ~ 100 m a nord del sentiero
         assertThat(nearby(16.49, 39.3009, 200)).containsExactly(trailId);
         assertThat(nearby(16.49, 39.3009, 50)).isEmpty();
     }

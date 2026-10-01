@@ -14,7 +14,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// M7.2: profilo, cambio password, cancellazione dell'account (anonimizzazione + pulizia nelle altre feature)
+// Profilo, cambio password, cancellazione dell'account (anonimizzazione + pulizia nelle altre feature)
 class UserAccountIT extends AbstractIntegrationTest {
 
     @Test
@@ -36,7 +36,7 @@ class UserAccountIT extends AbstractIntegrationTest {
 
         // access token in blacklist, login e refresh chiusi
         assertThat(call(HttpMethod.GET, "/api/v1/users/me", access, null).status()).isEqualTo(401);
-        // anche l'access token di un altro dispositivo (M7.7): niente prenotazioni, SOS o foto dopo la cancellazione
+        // anche l'access token di un altro dispositivo: niente prenotazioni, SOS o foto dopo la cancellazione
         assertThat(call(HttpMethod.GET, "/api/v1/bookings/my", otherDevice, null).status()).isEqualTo(401);
         assertThat(call(HttpMethod.POST, "/api/v1/auth/login", null, credentials(hiker.getEmail(), TEST_PASSWORD)).status()).isEqualTo(401);
         assertThat(call(HttpMethod.POST, "/api/v1/auth/refresh", null,

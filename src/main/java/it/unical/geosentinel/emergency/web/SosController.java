@@ -61,9 +61,9 @@ public class SosController {
         this.currentUser = currentUser;
     }
 
-    // Idempotency-Key facoltativo (D12): un SOS senza chiave non si rifiuta mai. Retry → 200 con l'allerta esistente
+    // Idempotency-Key facoltativo (ADR-0012): un SOS senza chiave non si rifiuta mai. Retry -> 200 con l'allerta esistente
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "raiseSos", summary = "Raise an SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<SosAlertResponse> raiseSos(
             @RequestHeader(name = "Idempotency-Key", required = false) UUID idempotencyKey,
@@ -103,7 +103,7 @@ public class SosController {
     }
 
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "cancelSos", summary = "Cancel an active SOS alert", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<Void> cancelSos(@PathVariable UUID id){
         UUID hikerId = currentUser.getRequiredUserId();

@@ -81,7 +81,7 @@ public class RefugeController {
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "createRefuge", summary = "Register a new refuge", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RefugeResponse> create(@Valid @RequestBody CreateRefugeRequest request){
         RefugeView created = refugeBookingService.createRefuge(

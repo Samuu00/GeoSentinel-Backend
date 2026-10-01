@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.filter.ShallowEtagHeaderFilter;
 
-// GET condizionali sulle rotte pubbliche dei sentieri e dei POI (M7.3): liste e GeoJSON possono pesare,
+// GET condizionali sulle rotte pubbliche dei sentieri e dei POI: liste e GeoJSON possono pesare,
 // l'app rimanda l'ETag in If-None-Match e riceve 304 senza body se nulla è cambiato.
 // L'ETag è l'hash del body: la query gira comunque, si risparmia solo la rete (quella che conta su mobile).
 // Il Cache-Control "no-cache" di queste rotte lo scrive SecurityConfig (PUBLIC_CATALOG)

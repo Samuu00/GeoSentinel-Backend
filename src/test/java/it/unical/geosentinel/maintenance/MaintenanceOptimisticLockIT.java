@@ -13,7 +13,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Lost update impedito: If-Match confrontato con la versione (expectedVersion) + @Version al commit (M4.4)
+// Lost update impedito: If-Match confrontato con la versione (expectedVersion) + @Version al commit
 class MaintenanceOptimisticLockIT extends AbstractIntegrationTest {
 
     private String manager;

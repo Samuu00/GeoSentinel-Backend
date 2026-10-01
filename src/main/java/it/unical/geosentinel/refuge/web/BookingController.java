@@ -54,7 +54,7 @@ public class BookingController {
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(
             operationId = "createBooking",
             summary = "Book beds in a refuge",
@@ -71,14 +71,14 @@ public class BookingController {
     )
     public ResponseEntity<BookingResponse> createBooking(
             @Valid @RequestBody CreateBookingRequest request,
-            // D12: obbligatorio. Se manca → 428 (GlobalExceptionHandler); se non è un UUID → 400
+            // ADR-0012: obbligatorio. Se manca -> 428 (GlobalExceptionHandler); se non è un UUID -> 400
             @RequestHeader("Idempotency-Key") UUID idempotencyKey
     ) {
         UUID userId = currentUser.getRequiredUserId();
         BookingResult result = refugeBookingService.book(userId, idempotencyKey, refugeMapper.toCommand(request));
         BookingResponse body = refugeMapper.toResponse(result.booking());
 
-        // retry con la stessa chiave: 200 con la prenotazione esistente, niente seconda creazione (D12)
+        // retry con la stessa chiave: 200 con la prenotazione esistente, niente seconda creazione (ADR-0012)
         if (!result.created()) {
             return ResponseEntity.ok(body);
         }
@@ -108,7 +108,7 @@ public class BookingController {
     }
 
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "cancelBooking", summary = "Cancel a confirmed booking", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<Void> cancelBooking(@PathVariable UUID id){
         UUID userId = currentUser.getRequiredUserId();

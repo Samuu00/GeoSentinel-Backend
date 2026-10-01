@@ -12,7 +12,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Token bucket su Redis (script Lua), M7.3: tre policy con bucket separati. Tutte le richieste del test
+// Token bucket su Redis (script Lua): tre policy con bucket separati. Tutte le richieste del test
 // arrivano dallo stesso IP, come più telefoni dietro il CGNAT di un operatore
 class RateLimitIT extends AbstractIntegrationTest {
 

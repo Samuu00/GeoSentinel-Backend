@@ -19,7 +19,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Ciclo completo dei token (checkpoint M2). Ogni test resta sotto le 5 chiamate a /auth/** (rate limit per IP),
+// Ciclo completo dei token. Ogni test resta sotto le 5 chiamate a /auth/** (rate limit per IP),
 // che FLUSHALL azzera prima di ogni test
 class AuthFlowIT extends AbstractIntegrationTest {
 

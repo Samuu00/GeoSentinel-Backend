@@ -11,7 +11,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Profilo prod (M7.6) sopra quello di test: le richieste arrivano da 127.0.0.1, un proxy interno per Tomcat,
+// Profilo prod sopra quello di test: le richieste arrivano da 127.0.0.1, un proxy interno per Tomcat,
 // quindi qui il test fa la parte di Caddy e manda gli header X-Forwarded-*
 @ActiveProfiles("prod")
 class ProdProfileIT extends AbstractIntegrationTest {

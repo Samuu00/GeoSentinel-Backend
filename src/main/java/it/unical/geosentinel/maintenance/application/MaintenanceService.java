@@ -139,7 +139,7 @@ public class MaintenanceService {
         return flushAndView(ticket);
     }
 
-    // @Version protegge solo la finestra load→commit: la versione letta dal client (If-Match) va confrontata a mano,
+    // @Version protegge solo la finestra load->commit: la versione letta dal client (If-Match) va confrontata a mano,
     // altrimenti il lost update tra la sua GET e la sua PATCH non viene rilevato
     private MaintenanceTicket loadForUpdate(UUID id, long expectedVersion) {
         MaintenanceTicket ticket = maintenanceTicketRepository.findById(id)

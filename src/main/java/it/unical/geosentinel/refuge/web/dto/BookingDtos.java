@@ -16,7 +16,7 @@ public class BookingDtos {
             @NotNull(message = "Refuge ID is required")
             UUID refugeId,
             // niente @FutureOrPresent: userebbe il fuso della JVM invece del Clock UTC, e un retry arrivato
-            // dopo il check-in riceverebbe 400 invece della prenotazione già creata (D12). Le date le valida il service
+            // dopo il check-in riceverebbe 400 invece della prenotazione già creata (ADR-0012). Le date le valida il service
             @NotNull(message = "Check-in date is required")
             LocalDate checkIn,
             @NotNull(message = "Check-out date is required")

@@ -1,4 +1,4 @@
-# GeoSentinel — Backend
+# GeoSentinel Backend
 
 Backend per la sicurezza dei sentieri montani: sentieri e POI, segnalazioni di pericolo, rifugi e prenotazioni,
 ticket di manutenzione, SOS con squadre di soccorso, foto, notifiche push. L'unico client è un'app
@@ -8,14 +8,11 @@ Java 21, Spring Boot 4, PostgreSQL 16 + PostGIS, Redis, MinIO.
 
 ## Documentazione
 
-| | |
-|---|---|
-| [Architettura](docs/architecture.md) | arc42 + diagrammi C4 |
-| [Decisioni (ADR)](docs/adr/README.md) | Perché il sistema è fatto così |
-| [Guida all'API](docs/api-guide.md) · [OpenAPI](docs/openapi.json) | Per chi sviluppa l'app |
-| [Runbook](docs/operations.md) | Configurazione, avvio, backup, problemi noti |
-| [Contribuire](CONTRIBUTING.md) · [Sicurezza](SECURITY.md) · [Changelog](CHANGELOG.md) | |
-| [Piano di lavoro](docs/MASTER_PLAN.md) | Milestone e checkpoint |
+- [Architettura](docs/architecture.md) (arc42 con diagrammi C4) e [ADR](docs/adr/README.md) con il perché delle scelte.
+- [Guida all'API](docs/api-guide.md) e [contratto OpenAPI](docs/openapi.json), per chi sviluppa l'app.
+- [Runbook](docs/operations.md): configurazione, avvio, backup, problemi già incontrati.
+- [CONTRIBUTING](CONTRIBUTING.md), [SECURITY](SECURITY.md), [CHANGELOG](CHANGELOG.md).
+- [Piano di lavoro](docs/MASTER_PLAN.md), con milestone e checkpoint.
 
 ## Sviluppo
 
@@ -32,7 +29,7 @@ Il profilo `local` carica i dati di prova e accende Swagger su `/swagger-ui.html
 ### Collegare l'app in sviluppo
 
 L'app deve raggiungere sia l'API sia MinIO. Gli URL dei media sono firmati con `MINIO_PUBLIC_ENDPOINT`
-(la firma include l'host), quindi nel `.env` va l'indirizzo con cui il **dispositivo** vede il PC:
+e la firma include l'host, quindi nel `.env` va l'indirizzo del PC così come lo vede il dispositivo:
 
 | Dispositivo | URL dell'API | `MINIO_PUBLIC_ENDPOINT` |
 |---|---|---|
@@ -51,7 +48,7 @@ iOS rifiuta HTTP fuori dalla rete locale (App Transport Security): per i tester 
 da solo; dall'esterno sono raggiungibili solo le porte 80 e 443.
 
 1. Due record DNS verso il server, ad esempio `api.example.org` e `media.example.org`.
-2. Sul server, un file `.env.prod` (mai nel repository) con chiavi **diverse** da quelle di sviluppo:
+2. Sul server, un file `.env.prod` (mai nel repository) con chiavi diverse da quelle di sviluppo:
    ```properties
    POSTGRES_DB=geosentinel
    POSTGRES_USER=geosentinel

@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-// Push FCM (M7.4). Nel payload solo tipo evento e id dell'allerta: posizione e note mediche l'app le legge dall'API
+// Push FCM. Nel payload solo tipo evento e id dell'allerta: posizione e note mediche l'app le legge dall'API
 // con il proprio token, così non passano da Google/Apple né compaiono sulla schermata di blocco
 @Component
 public class SosNotificationListener {

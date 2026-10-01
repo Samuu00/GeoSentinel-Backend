@@ -4,7 +4,7 @@ import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
-// Limiti per minuto del RateLimitFilter (M7.3). Sotto il CGNAT degli operatori mobili molti utenti escono
+// Limiti per minuto del RateLimitFilter. Sotto il CGNAT degli operatori mobili molti utenti escono
 // con lo stesso IP: i limiti per IP sono solo un tetto contro gli abusi, il brute force lo ferma il limite
 // per account (RedisLoginAttemptLimiter)
 @Validated

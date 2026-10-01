@@ -15,7 +15,7 @@ public interface UserRepository extends JpaRepository<User, UUID>{
     Optional<User> findByEmail(String email);
     boolean existsByEmail(String email);
 
-    // destinatari delle push per ruolo (M7.4): solo account attivi, un operatore disabilitato non riceve allarmi
+    // destinatari delle push per ruolo: solo account attivi, un operatore disabilitato non riceve allarmi
     @Query("SELECT u.id FROM User u WHERE u.role = :role AND u.enabled = true")
     List<UUID> findEnabledIdsByRole(@Param("role") Role role);
 }

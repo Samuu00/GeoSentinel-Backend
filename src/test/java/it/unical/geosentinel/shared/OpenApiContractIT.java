@@ -14,7 +14,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// M7.1: il client Kotlin si genera da docs/openapi.json. Il test fallisce se il contratto cambia senza aggiornare il
+// Il client Kotlin si genera da docs/openapi.json. Il test fallisce se il contratto cambia senza aggiornare il
 // file: dopo una modifica voluta alle API, `./mvnw verify -Dit.test=OpenApiContractIT -Dopenapi.update=true` e commit
 class OpenApiContractIT extends AbstractIntegrationTest {
 

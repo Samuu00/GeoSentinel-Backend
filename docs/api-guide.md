@@ -1,14 +1,14 @@
 # Guida all'API
 
-Guida per chi sviluppa un client (oggi l'app Kotlin Multiplatform). La fonte di verità è il contratto
-OpenAPI 3.1 in [`openapi.json`](openapi.json): schemi, parametri e codici di risposta di ogni operazione.
-Questa guida spiega i comportamenti che lo schema da solo non racconta.
+Per chi sviluppa un client, cioè per ora l'app Kotlin Multiplatform. Schemi, parametri e codici di risposta
+stanno nel contratto OpenAPI 3.1, [`openapi.json`](openapi.json), che fa fede. Qui sono spiegati i
+comportamenti che dallo schema non si capiscono.
 
-- **Base URL:** `http://localhost:8080` in sviluppo (indirizzi per emulatore e telefono nel [README](../README.md)),
-  `https://<API_DOMAIN>` in produzione. Tutte le rotte iniziano con `/api/v1`.
-- **Formato:** JSON UTF-8. Date `YYYY-MM-DD` (`LocalDate`), istanti ISO-8601 in UTC (`Instant`),
-  coordinate WGS 84 con campi `lat` e `lon`, percorsi GeoJSON `[lon, lat]`.
-- **Swagger UI:** `/swagger-ui.html`, solo con il profilo `local`.
+In sviluppo l'API risponde su `http://localhost:8080` (gli indirizzi per emulatore e telefono sono nel
+[README](../README.md)), in produzione su `https://<API_DOMAIN>`. Tutte le rotte iniziano con `/api/v1`.
+Si parla JSON UTF-8: date `YYYY-MM-DD` (`LocalDate`), istanti ISO-8601 in UTC (`Instant`), coordinate WGS 84
+nei campi `lat` e `lon`, percorsi GeoJSON in ordine `[lon, lat]`. Swagger UI è su `/swagger-ui.html`, ma solo
+con il profilo `local`.
 
 ## Generare il client
 
@@ -34,16 +34,14 @@ richiede un aggiornamento dell'app.
 | Rinnovo | `POST /auth/refresh` | Restituisce una coppia nuova; il refresh token vecchio non vale più |
 | Logout | `DELETE /devices/{token}` e poi `POST /auth/logout` | Il primo toglie il dispositivo dalle push, il secondo revoca la sessione |
 
-**Regole del refresh:**
-- una sola richiesta di refresh alla volta (con Ktor: plugin `Auth`, `bearer { refreshTokens { } }`);
-- ogni refresh token si usa una volta sola. Riusarne uno vecchio, anche per due refresh in parallelo,
-  viene trattato come furto: l'intera sessione è revocata e serve un nuovo login;
-- la sessione dura al massimo 30 giorni dal login; poi il refresh risponde 401;
-- salvare i token cifrati (Android Keystore, iOS Keychain).
+Sul refresh bisogna stare attenti. Ogni refresh token vale una volta sola, e se ne arriva uno già usato il
+server lo tratta come un furto: revoca l'intera sessione e serve un nuovo login. Succede anche con due
+refresh partiti in parallelo, quindi il client deve farne uno alla volta (con Ktor basta il plugin `Auth`,
+`bearer { refreshTokens { } }`). La sessione dura al massimo 30 giorni dal login, poi il refresh risponde 401.
+I token vanno salvati cifrati (Android Keystore, iOS Keychain).
 
-**Revoca su tutti i dispositivi:** il cambio password (`POST /users/me/password`, che restituisce token
-nuovi) e la cancellazione dell'account (`DELETE /users/me`) invalidano anche gli access token degli altri
-dispositivi.
+Il cambio password (`POST /users/me/password`, che restituisce token nuovi) e la cancellazione dell'account
+(`DELETE /users/me`) invalidano anche gli access token degli altri dispositivi.
 
 ### Ruoli
 
@@ -67,8 +65,8 @@ dispositivi.
 | Profilo | `GET`, `PATCH`, `DELETE /users/me`; `POST /users/me/password` | autenticato; la cancellazione solo per `HIKER` |
 | Dispositivi | `POST /devices`; `DELETE /devices/{token}` | autenticato |
 
-Una risorsa che non si può vedere risponde **404**, non 403: l'API non rivela che esiste (prenotazioni,
-SOS e media altrui, segnalazioni rifiutate).
+Una risorsa che non si può vedere risponde 404, non 403, così l'API non rivela che esiste. Vale per
+prenotazioni, SOS e media di altri utenti e per le segnalazioni rifiutate.
 
 ## Errori
 
@@ -85,8 +83,8 @@ Ogni errore è `application/problem+json` ([RFC 7807](https://www.rfc-editor.org
 }
 ```
 
-Il client decide in base allo **slug** (ultima parte di `type`), mai in base a `title` o `detail`, che
-sono in inglese e possono cambiare. Gli errori di validazione aggiungono `errors[]`, con `field` e
+Il client deve decidere in base allo slug, l'ultima parte di `type`. `title` e `detail` sono testo in
+inglese e possono cambiare. Gli errori di validazione aggiungono `errors[]`, con `field` e
 `message` per ogni campo. Il `traceId` serve a ritrovare la richiesta nei log.
 
 | Slug | Status | Quando |
@@ -114,13 +112,16 @@ sono in inglese e possono cambiare. Gli errori di validazione aggiungono `errors
 
 ## Retry e idempotenza
 
-- Si ripetono automaticamente solo `429`, `409 resource-busy` e `503 storage-unavailable`, aspettando almeno
-  i secondi di `Retry-After`. Gli altri 4xx non si ripetono uguali.
-- **`Idempotency-Key`** (UUID): obbligatoria su `createBooking`, facoltativa su `raiseSos`. Generarne una per
-  azione dell'utente e conservarla finché l'azione non ha una risposta definitiva, anche dopo la chiusura
-  dell'app. Un retry con la stessa chiave risponde **200** con la risorsa già creata (la prima volta 201).
-- Un SOS non viene mai rifiutato: se l'escursionista ha già un'allerta attiva, `POST /sos` risponde 200 con
-  quella. `POST /sos` non ha rate limit.
+Il client ritenta da solo soltanto `429`, `409 resource-busy` e `503 storage-unavailable`, aspettando almeno
+i secondi indicati in `Retry-After`. Gli altri 4xx non ha senso ripeterli identici.
+
+L'header `Idempotency-Key` (un UUID) è obbligatorio su `createBooking` e facoltativo su `raiseSos`. La chiave
+si genera una volta per ogni azione dell'utente e si conserva finché l'azione non ha una risposta
+definitiva, anche se nel frattempo l'app viene chiusa. La prima richiesta riceve 201, un retry con la stessa
+chiave riceve 200 con la risorsa già creata.
+
+Un SOS non viene mai rifiutato. Se l'escursionista ha già un'allerta attiva, `POST /sos` risponde 200 con
+quella, e su questa rotta non c'è rate limit.
 
 ## Concorrenza ottimistica (ticket)
 
@@ -141,12 +142,13 @@ diverso risponde 400.
 
 ## Rete mobile
 
-- **Compressione:** le risposte JSON oltre 1 KB sono gzip se la richiesta ha `Accept-Encoding: gzip`.
-- **GET condizionali:** le GET pubbliche di `/trails` e `/pois` hanno un `ETag` debole e
-  `Cache-Control: no-cache`. Rimandarlo in `If-None-Match` per ricevere `304 Not Modified` senza body.
-  Tutte le altre risposte sono `no-store`.
-- **Limiti:** 30 richieste al minuto per IP su login, registrazione e logout; 120 sul refresh; 60 per utente
-  sul resto; 10 tentativi di login (o di password attuale) ogni 15 minuti per account.
+Le risposte JSON sopra 1 KB arrivano compresse in gzip se la richiesta manda `Accept-Encoding: gzip`.
+
+Le GET pubbliche di `/trails` e `/pois` hanno un `ETag` debole e `Cache-Control: no-cache`: rimandando l'ETag
+in `If-None-Match` si riceve `304 Not Modified` senza body. Tutte le altre risposte sono `no-store`.
+
+I limiti sono 30 richieste al minuto per IP su login, registrazione e logout, 120 sul refresh e 60 per utente
+su tutto il resto. In più ogni account ha 10 tentativi di login (o di password attuale) ogni 15 minuti.
 
 ## Upload delle foto
 
@@ -156,8 +158,8 @@ Le foto non passano dall'API: vanno direttamente allo storage. Tipi ammessi `ima
 1. `POST /media/upload-requests` con `originalFilename`, `contentType` e `sizeBytes` esatti e, facoltativi
    ma insieme, `entityType` (`TRAIL` solo `PARK_MANAGER`, `HAZARD_REPORT` solo chi ha fatto la segnalazione)
    ed `entityId`. Risposta 201: `mediaId`, `uploadUrl`, `formFields`, `expiresAt`.
-2. `POST` `multipart/form-data` verso `uploadUrl`, **senza** bearer token: tutti i `formFields` invariati
-   (ordine libero), poi la parte `file` **per ultima**, con lo stesso `Content-Type`. La richiesta deve
+2. `POST` `multipart/form-data` verso `uploadUrl`, senza bearer token. Prima tutti i `formFields` così come
+   sono (l'ordine non conta), poi la parte `file`, che deve essere l'ultima e avere lo stesso `Content-Type`. La richiesta deve
    avere `Content-Length` (niente chunked). Lo storage risponde 204; un file più grande (`400 EntityTooLarge`)
    o un campo modificato (`403`) li rifiuta lo storage stesso.
 3. `POST /media/{mediaId}/confirm`: `READY`, oppure `QUARANTINED` se il contenuto non è l'immagine dichiarata.

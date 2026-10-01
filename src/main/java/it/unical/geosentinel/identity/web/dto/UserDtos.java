@@ -31,7 +31,7 @@ public class UserDtos {
             String displayName
     ) {}
 
-    // max in byte su entrambe: oltre 72 byte BCrypt lancia e la risposta sarebbe 500 (D11), come in RegisterRequest
+    // max in byte su entrambe: oltre 72 byte BCrypt lancia e la risposta sarebbe 500 (ADR-0011), come in RegisterRequest
     public record ChangePasswordRequest(
             @NotBlank(message = "Current password is required")
             @MaxUtf8Bytes(value = 72, message = "Password must not exceed 72 bytes in UTF-8")

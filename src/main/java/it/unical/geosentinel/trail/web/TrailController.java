@@ -97,7 +97,7 @@ public class TrailController {
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime vince lo status della ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
     @Operation(operationId = "createTrail", summary = "Create a new trail", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TrailDetailResponse> create(@Valid @RequestBody CreateTrailRequest request) {
         TrailDetail created = trailService.create(trailMapper.toCommand(request));

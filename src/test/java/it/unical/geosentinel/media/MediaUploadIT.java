@@ -33,7 +33,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-// Contratto dell'upload per l'app (M7.5): presigned POST verso un MinIO vero, poi confirm e download firmato.
+// Contratto dell'upload per l'app: presigned POST verso un MinIO vero, poi confirm e download firmato.
 // Il multipart lo costruisce MultipartBodyBuilder come farebbe Ktor (submitFormWithBinaryData): formFields, poi "file"
 class MediaUploadIT extends AbstractIntegrationTest {
 

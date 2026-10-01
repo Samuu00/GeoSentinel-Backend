@@ -18,7 +18,7 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     @Modifying
     @Query("UPDATE RefreshToken r SET r.revokedAt = :now WHERE r.familyId = :familyId AND r.revokedAt IS NULL")
     int revokeFamily(@Param("familyId") UUID familyId, @Param("now") Instant now);
-    // Tutte le sessioni dell'utente: cambio password e cancellazione dell'account (M7.2)
+    // Tutte le sessioni dell'utente: cambio password e cancellazione dell'account
     @Modifying
     @Query("UPDATE RefreshToken r SET r.revokedAt = :now WHERE r.user.id = :userId AND r.revokedAt IS NULL")
     int revokeAllOfUser(@Param("userId") UUID userId, @Param("now") Instant now);
