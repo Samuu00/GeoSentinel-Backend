@@ -106,12 +106,20 @@ public class AuthService {
         User user = userRepository.findById(userId)
                 .filter(User::isEnabled)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+        // Stesso limite per account del login: con un access token rubato (15 min) non si indovina la password
+        loginAttemptLimiter.tryAcquire(sha256Hex(user.getEmail())).ifPresent(retryAfter -> {
+            throw new RateLimitExceededException(retryAfter);
+        });
         if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
             throw new BusinessRuleViolationException("Current password is incorrect");
         }
 
+        Instant now = clock.instant();
         user.updatePassword(passwordEncoder.encode(newPassword));
-        refreshTokenRepository.revokeAllOfUser(userId, clock.instant());
+        refreshTokenRepository.revokeAllOfUser(userId, now);
+        // Anche gli access token ancora validi degli altri dispositivi. Fino al secondo prima: la sessione nuova nasce
+        // in questo secondo (iat ha la precisione del secondo) e deve restare valida
+        tokenBlacklist.revokeAllIssuedUntil(userId, now.minusSeconds(1));
         return createAuthSession(user, null);
     }
 

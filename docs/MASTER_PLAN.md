@@ -3,7 +3,7 @@
 > Ruolo di Claude: mentore/architetto/reviewer. **Il codice lo scrivi tu.** Qui trovi solo struttura, contratti (firme), vincoli e checkpoint.
 > Regola di avanzamento: un task si chiude solo quando **tutti** i suoi checkpoint passano. Poi chiedi la review (vedi §5).
 >
-> **Stato (30/09): M0–M6 completate, M7.1–M7.4 fatte.** **Prossimo: M7.5** (media dal telefono), poi M7.6 e M7.7: li scrive Claude su richiesta. M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (42 unit + 93 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
+> **Stato (01/10): M0–M7 completate lato backend.** Restano i checkpoint di M7 che richiedono l'app KMP (push vere, foto da emulatore/simulatore, flusso completo). M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (42 unit + 104 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
 ---
 
@@ -555,7 +555,7 @@ Query native (servono il cast `::geography` e le funzioni PostGIS):
   - `AvailabilityView availability(UUID refugeId, LocalDate from, LocalDate to)` (read-only, senza lock; stesse regole di date della prenotazione: `from` non nel passato, `to > from`, max 14 notti → 422)
   - Letture e gestione: `getRefuge`, `findNearby(lon, lat, radius, limit)` (raggio ≤ 50 km e `limit` ≤ 50, come sentieri e POI), `getUserBookings`, `getBooking(userId, bookingId)` (404 se non tua, come `cancel`); `createRefuge` (PARK_MANAGER; il `managerId` è l'utente corrente, **non** arriva dal body) e `updateCapacity(actorId, actorIsAdmin, refugeId, capacity)` (PARK_MANAGER; dopo il lock, solo il gestore del rifugio o un ADMIN, altrimenti `AccessDeniedException` → 403; `findByIdForUpdate`: non si sovrappone a una prenotazione in corso)
   - Le view (`RefugeView`, `BookingView`, `AvailabilityView`) non contengono geometrie JTS: `RefugeView.from(refuge, GeometryMapper)` con `GeoPointDto`
-  - Limite noto: `updateCapacity` può scendere sotto le prenotazioni già confermate (serve per un rifugio danneggiato); le prenotazioni in eccesso vanno gestite a mano
+  - ~~Limite noto~~ chiuso in M7.7: `updateCapacity` sotto gli ospiti già confermati → 409 `capacity-exceeded`
   - ~~Limite noto: `GET /bookings/my` senza paginazione~~ → paginato in M7.3 (`PagedModel`, sort in whitelist)
 - **Perché per notte:** sommare tutte le prenotazioni che si sovrappongono al range sovrastima (due prenotazioni in notti diverse non si sommano).
 - **Timeout:** `lock_timeout = 3s` (M0.3) → `PessimisticLockingFailureException` → 409 `resource-busy` + `Retry-After` (fatto in `GlobalExceptionHandler`).
@@ -918,21 +918,45 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 - Resta il checkpoint manuale con l'app (emulatore e simulatore).
 
 #### M7.6 — Ambiente raggiungibile dai dispositivi
-- [ ] **Sviluppo:** documentare in `.env.example` e nel README gli indirizzi per emulatore/simulatore/telefono (vedi M7.5). HTTP in chiaro solo in sviluppo: Android richiede un `network_security_config` che lo permetta verso `10.0.2.2` / IP del PC; iOS `NSAllowsLocalNetworking` in `Info.plist` (configurazione dell'app, non del backend)
-- [ ] **Staging per i tester** (iOS rifiuta HTTP fuori dalla rete locale, App Transport Security):
+- [x] **Sviluppo:** documentare in `.env.example` e nel README gli indirizzi per emulatore/simulatore/telefono (vedi M7.5). HTTP in chiaro solo in sviluppo: Android richiede un `network_security_config` che lo permetta verso `10.0.2.2` / IP del PC; iOS `NSAllowsLocalNetworking` in `Info.plist` (configurazione dell'app, non del backend)
+- [x] **Staging per i tester** (iOS rifiuta HTTP fuori dalla rete locale, App Transport Security):
   - profilo `application-prod.properties`: logging `INFO`, springdoc spento, `server.forward-headers-strategy=native` (senza, dietro il proxy tutti i client hanno lo stesso IP e il rate limit per IP li blocca insieme)
   - reverse proxy con TLS automatico (es. Caddy) davanti all'app e a MinIO, due sottodomini (`api.` e `media.`); nel compose un profilo `prod` con il proxy e il servizio `backend`
   - segreti solo da variabili d'ambiente del server, mai file nel repo; `JWT_SECRET` diverso da quello di sviluppo
   - backup giornaliero di Postgres (`pg_dump` programmato) e del bucket
-- [ ] `GET /actuator/health` per il monitoraggio esterno (già pubblico, senza dettagli)
+- [x] `GET /actuator/health` per il monitoraggio esterno (già pubblico, senza dettagli)
 
 **Checkpoint:** l'app di test su un iPhone fisico, fuori dalla rete di casa, fa login, apre un sentiero e carica una foto via HTTPS.
 
+**Fatto (01/10, scritto da Claude su richiesta):**
+- `application-prod.properties`: `server.forward-headers-strategy=native`, springdoc spento in modo esplicito, logging `INFO`. Tomcat legge `X-Forwarded-*` solo da un proxy interno (reti private e loopback); Caddy non si fida degli `X-Forwarded-For` in arrivo e li riscrive con l'IP vero.
+- `docker-compose.prod.yml` (file separato invece di un profilo: nel compose di sviluppo Postgres, Redis e MinIO pubblicano le porte, qui solo Caddy) + `deploy/Caddyfile`: `API_DOMAIN` → backend, `MEDIA_DOMAIN` → MinIO (Host inoltrato invariato, le firme tornano), TLS automatico, redirect HTTP → HTTPS, console MinIO spenta, backend senza porte e con healthcheck, niente `env_file` (solo le chiavi necessarie), segreti obbligatori `${VAR:?}` da `--env-file .env.prod` sul server.
+- Backup: `db-backup` (`pg_dump -Fc` giornaliero in `BACKUP_DIR/db`, file `.tmp` rinominato solo se completo, conservazione `BACKUP_KEEP_DAYS`) e `media-backup` (`mc mirror --remove` in `BACKUP_DIR/media`). Restano sul server: copiarli altrove è compito di chi gestisce il server.
+- README scritto (prima c'era solo il titolo): sviluppo, indirizzi per emulatore/simulatore/telefono, `network_security_config` / `NSAllowsLocalNetworking`, deploy, backup e ripristino. `.gitignore`/`.dockerignore`: `.env.*` (tranne `.env.example`) e `backups/`.
+- Test: `shared/ProdProfileIT` (profilo `prod` sopra `test`): due IP in `X-Forwarded-For` hanno bucket del rate limit separati (senza `native` sarebbero lo stesso bucket di 127.0.0.1), `Location` in https con `X-Forwarded-Proto`, `/v3/api-docs` 404, health senza `components`/`details`. `./mvnw clean verify` verde: 42 unit + 101 IT.
+- Prova dal vivo dello stack prod sul PC (`api.localhost` / `media.localhost`, porte 8088/8443, CA locale di Caddy verificata, non `verify=False`): health via TLS, redirect 308, Swagger 404, register → login → sentieri → segnalazione (`Location` https) → upload presigned via Caddy → `READY` → download con byte identici; `X-Forwarded-For` falsificato non aggira il limite (429 alla 29ª richiesta); dump valido e **ripristinato** in un DB temporaneo (utenti, segnalazione, media, Flyway V9), foto presente nella copia del bucket. Stack e volumi di prova rimossi.
+- Limite noto: su una porta HTTPS diversa da 443 la `Location` perde la porta (Caddy non manda `X-Forwarded-Port`); in produzione si usa la 443.
+- **Deciso (01/10): il progetto (universitario) resta in locale sul PC.** Lo stack prod è pronto e provato ma non si usa; il checkpoint con l'iPhone fisico fuori dalla rete di casa non si applica. L'app si prova su emulatore Android e simulatore iOS con il compose di sviluppo (indirizzi nel README).
+
 #### M7.7 — Test e review
 - [x] `MediaUploadIT` (M7.5). Già fatti: `UserAccountIT` (M7.2), `RegistrationAgeIT` (M7.2.1), `SosPushIT` (M7.4), test del contratto OpenAPI (M7.1), `RateLimitIT` aggiornato (M7.3)
-- [ ] Review con la catena del §5 (riga 7)
+- [x] Review con la catena del §5 (riga 7)
 
-**Checkpoint M7:** `./mvnw verify` verde; client Kotlin generato dal `docs/openapi.json` committato; flusso completo dall'app su Android e iOS: registrazione → login → sentieri vicini → segnalazione con foto → SOS → notifica push all'operatore → cancellazione dell'account.
+**Fatto (01/10, scritto da Claude su richiesta):**
+- Stabilità: `SchedulingConfig` con `@ConditionalOnProperty(geosentinel.scheduling.enabled, matchIfMissing = true)`, spento in `application-test.properties`. I job (`SosNotificationRecovery` ogni 30 s, `MediaCleanupJob`, pulizie notturne) non girano più da soli durante gli IT; i test che li riguardano chiamano il metodo direttamente.
+- `updateCapacity` → 409 `capacity-exceeded` se la nuova capacità è sotto gli ospiti confermati di una notte da stanotte in poi (`BookingRepository.lastConfirmedCheckOut` + `maxNightlyOccupancy`, sotto il lock del rifugio). Le prenotazioni passate e cancellate non contano. Chiude il limite noto di M4.2: per un rifugio danneggiato le prenotazioni in eccesso vanno comunque gestite a mano (non esiste un'API per cancellare quelle altrui).
+- Review di sicurezza e Java del codice di M7 (inline, sul diff da M7.1). Due problemi reali, corretti:
+  - **access token degli altri dispositivi validi dopo la cancellazione dell'account e il cambio password** (fino a 15 min): un account cancellato poteva ancora prenotare, lanciare SOS e caricare foto, che `MediaService.deleteAllOf` non avrebbe più visto. Ora `TokenBlacklist.revokeAllIssuedUntil(userId, until)`: chiave Redis `bl:user:<id>` = secondo epoch, TTL = `access-ttl`; `JtiBlacklistValidator` controlla `jti` e revoca per utente con un solo `MGET` (fail-closed). Inclusiva al secondo (`iat` ha la precisione del secondo): la cancellazione revoca fino a `now`, il cambio password fino a `now - 1 s`, così la sessione nuova resta valida;
+  - **`changePassword` senza limite sui tentativi**: con un access token rubato si poteva indovinare la password attuale a 60 tentativi al minuto e prendere l'account. Ora lo stesso limite per account del login (`LoginAttemptLimiter`, 10 ogni 15 min, bucket condiviso) → 429 + `Retry-After`.
+- Rivisti senza problemi: payload e log delle push (solo `type` + `alertId`), cancellazione dei token invalidi, `unregister` limitato all'utente, rate limit e cache HTTP (M7.3), contratto media (M7.5), profilo prod (M7.6).
+- Limite accettato: nessun tetto al numero di token push per utente (il rate limit generale ne limita la crescita a 60/min).
+- Test: `RefugeCapacityIT` (2), `UserAccountIT` esteso (token di un altro dispositivo → 401 dopo cancellazione e cambio password, 429 sui tentativi della password attuale). `./mvnw clean verify` verde due volte di fila: 42 unit + 104 IT.
+- Verifiche finali: `/security-review` sulle modifiche di M7.6–M7.7 (revoca per utente fail-closed, header inoltrati solo da Caddy, query con parametri bound): nessuna vulnerabilità. AgentShield: B (80/100), tutti avvisi testuali su `CLAUDE.md`; segreti, permessi, hook e MCP a 100.
+
+**Checkpoint M7:**
+- [x] `./mvnw verify` verde (42 unit + 104 IT, 01/10)
+- [x] client Kotlin generato dal `docs/openapi.json` committato (M7.1, generato e controllato fuori dal progetto dell'app)
+- [ ] flusso completo dall'app su Android e iOS: registrazione → login → sentieri vicini → segnalazione con foto → SOS → notifica push all'operatore → cancellazione dell'account. **Richiede l'app KMP**: ogni passo è già coperto lato backend dagli IT (`AuthFlowIT`, `TrailSpatialQueryIT`, `MediaUploadIT`, `SosPushIT`, `UserAccountIT`)
 
 ---
 
@@ -982,7 +1006,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M6 sono completate, M7.1–M7.5 fatte; il prossimo lavoro è **M7.6** (ambiente raggiungibile dai dispositivi). Per altre funzionalità:
+M0–M7 sono completate (il checkpoint finale di M7 richiede l'app KMP); il prossimo lavoro è l'app. Per altre funzionalità:
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.

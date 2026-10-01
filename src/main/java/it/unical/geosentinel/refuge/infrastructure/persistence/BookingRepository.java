@@ -36,6 +36,10 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>{
             @Param("checkOut") LocalDate checkOut
     );
 
+    // Ultimo check-out confermato: fin dove controllare l'occupazione quando la capacità scende
+    @Query(value = "SELECT MAX(check_out) FROM bookings WHERE refuge_id = :refugeId AND status = 'CONFIRMED'", nativeQuery = true)
+    Optional<LocalDate> lastConfirmedCheckOut(@Param("refugeId") UUID refugeId);
+
     Optional<Booking> findByIdAndUserId(UUID id, UUID userId);
     Optional<Booking> findByUserIdAndIdempotencyKey(UUID userId, UUID idempotencyKey);
     Page<Booking> findByUserId(UUID userId, Pageable pageable);

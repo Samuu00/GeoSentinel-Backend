@@ -1,0 +1,194 @@
+# Staging / produzione (M7.6): backend dietro Caddy con TLS, nessun servizio interno esposto, backup giornalieri.
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# Segreti solo dal file passato con --env-file (sul server, mai nel repository) o dalle variabili d'ambiente.
+# JWT_SECRET e password diverse da quelle di sviluppo. File separato dal compose di sviluppo: lì Postgres, Redis
+# e MinIO pubblicano le porte, qui solo Caddy (80/443).
+
+name: geosentinel-prod
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB mancante}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER mancante}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD mancante}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD mancante}",
+              "--save", "60", "1", "--loglevel", "warning"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Raggiungibile da fuori solo tramite Caddy (https://MEDIA_DOMAIN); console spenta
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER mancante}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD mancante}
+      MINIO_BROWSER: "off"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-geosentinel-media}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$MINIO_BUCKET"
+        mc anonymous set none "local/$$MINIO_BUCKET"
+
+  # Nessuna porta pubblicata: le richieste arrivano solo da Caddy (rete interna, proxy fidato per Tomcat).
+  # Solo le chiavi necessarie, niente env_file: il backend non vede variabili che non usa
+  backend:
+    build: .
+    image: geosentinel-backend:prod
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: postgres
+      DB_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET mancante}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-geosentinel-media}
+      MINIO_ENDPOINT: http://minio:9000
+      # La firma include l'host: deve essere l'indirizzo pubblico dello storage (con la porta, se non è la 443)
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-https://${MEDIA_DOMAIN:?MEDIA_DOMAIN mancante}}
+      # Push FCM: con PUSH_ENABLED=true montare il JSON dell'account di servizio (volume sotto) e indicarne il percorso
+      PUSH_ENABLED: ${PUSH_ENABLED:-false}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    # volumes:
+    #   - /etc/geosentinel/firebase.json:/run/secrets/firebase.json:ro   # GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase.json
+    healthcheck:
+      # wget di busybox (immagine alpine); start_period: Flyway e il contesto Spring
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  # TLS automatico (Let's Encrypt): API_DOMAIN e MEDIA_DOMAIN devono puntare al server, porte 80 e 443 aperte.
+  # caddy_data conserva certificati e chiavi: perderlo fa richiedere certificati nuovi (limiti di Let's Encrypt)
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN mancante}
+      MEDIA_DOMAIN: ${MEDIA_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Backup giornalieri in BACKUP_DIR sul server, conservati BACKUP_KEEP_DAYS giorni.
+  # ponytail: sleep di 24 h dall'avvio (non a un'ora fissa) e copia sullo stesso server; per un guasto del
+  # server va copiata altrove (rclone, snapshot del provider) quando i dati diventano importanti
+  db-backup:
+    image: postgis/postgis:16-3.4-alpine
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    # Dump in un file .tmp rinominato solo se completo: un dump a metà non sostituisce mai quello buono
+    command:
+      - |
+        mkdir -p /backups/db
+        while true; do
+          f="/backups/db/geosentinel-$$(date -u +%F).dump"
+          if pg_dump -Fc -f "$$f.tmp"; then mv "$$f.tmp" "$$f"; echo "db backup ok: $$f"; else rm -f "$$f.tmp"; echo "db backup FAILED"; fi
+          find /backups/db -name '*.dump' -mtime +"$$BACKUP_KEEP_DAYS" -delete
+          sleep 86400
+        done
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Copia speculare del bucket. --remove: un media cancellato (anche con l'account) sparisce dal backup al giro dopo
+  media-backup:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-geosentinel-media}
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mkdir -p /backups/media
+        while true; do
+          if mc mirror --overwrite --remove "local/$$MINIO_BUCKET" /backups/media; then echo "media backup ok"; else echo "media backup FAILED"; fi
+          sleep 86400
+        done
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  caddy_data:
+  caddy_config:

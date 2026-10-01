@@ -22,6 +22,7 @@ class UserAccountIT extends AbstractIntegrationTest {
         User hiker = createUser(Role.HIKER);
         JsonNode tokens = login(hiker.getEmail(), TEST_PASSWORD);
         String access = tokens.get("accessToken").asString();
+        String otherDevice = login(hiker.getEmail(), TEST_PASSWORD).get("accessToken").asString();
 
         UUID refugeId = insertRefuge(10, createUser(Role.PARK_MANAGER).getId());
         LocalDate checkIn = LocalDate.now(ZoneOffset.UTC).plusDays(10);
@@ -35,6 +36,8 @@ class UserAccountIT extends AbstractIntegrationTest {
 
         // access token in blacklist, login e refresh chiusi
         assertThat(call(HttpMethod.GET, "/api/v1/users/me", access, null).status()).isEqualTo(401);
+        // anche l'access token di un altro dispositivo (M7.7): niente prenotazioni, SOS o foto dopo la cancellazione
+        assertThat(call(HttpMethod.GET, "/api/v1/bookings/my", otherDevice, null).status()).isEqualTo(401);
         assertThat(call(HttpMethod.POST, "/api/v1/auth/login", null, credentials(hiker.getEmail(), TEST_PASSWORD)).status()).isEqualTo(401);
         assertThat(call(HttpMethod.POST, "/api/v1/auth/refresh", null,
                 "{\"refreshToken\":\"%s\"}".formatted(tokens.get("refreshToken").asString())).status()).isEqualTo(401);
@@ -68,11 +71,14 @@ class UserAccountIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void passwordChangeRevokesOtherSessionsAndReturnsNewTokens() {
+    void passwordChangeRevokesOtherSessionsAndReturnsNewTokens() throws InterruptedException {
         User hiker = createUser(Role.HIKER);
         JsonNode oldSession = login(hiker.getEmail(), TEST_PASSWORD);
         String access = oldSession.get("accessToken").asString();
+        String otherDevice = login(hiker.getEmail(), TEST_PASSWORD).get("accessToken").asString();
         String newPassword = "Un'altra-Password-456";
+        // il cambio password revoca i token emessi fino al secondo precedente (iat ha la precisione del secondo)
+        Thread.sleep(1_100);
 
         // password nel %s, non letterale nel JSON: gitleaks (generic-api-key) scambia "currentPassword":"<valore>" per un segreto
         HttpResult wrong = call(HttpMethod.POST, "/api/v1/users/me/password", access, """
@@ -84,10 +90,32 @@ class UserAccountIT extends AbstractIntegrationTest {
                 {"currentPassword":"%s","newPassword":"%s"}""".formatted(TEST_PASSWORD, newPassword));
         assertThat(changed.status()).isEqualTo(200);
         assertThat(json(changed.body()).get("refreshToken").asString()).isNotBlank();
+        // gli access token delle altre sessioni non valgono più, quello nuovo sì
+        assertThat(call(HttpMethod.GET, "/api/v1/users/me", otherDevice, null).status()).isEqualTo(401);
+        assertThat(call(HttpMethod.GET, "/api/v1/users/me", json(changed.body()).get("accessToken").asString(), null)
+                .status()).isEqualTo(200);
 
         assertThat(call(HttpMethod.POST, "/api/v1/auth/refresh", null,
                 "{\"refreshToken\":\"%s\"}".formatted(oldSession.get("refreshToken").asString())).status()).isEqualTo(401);
         assertThat(login(hiker.getEmail(), newPassword).get("accessToken").asString()).isNotBlank();
+    }
+
+    @Test
+    void currentPasswordGuessesHitThePerAccountLimit() {
+        String token = obtainToken(Role.HIKER);
+        String body = """
+                {"currentPassword":"%s","newPassword":"%s"}""".formatted("wrong-" + TEST_PASSWORD, "Nuova-" + TEST_PASSWORD);
+
+        // stesso limite per account del login (10 tentativi ogni 15 minuti): con un token rubato non si indovina la password
+        HttpResult last = null;
+        for (int i = 0; i < 15; i++) {
+            last = call(HttpMethod.POST, "/api/v1/users/me/password", token, body);
+            if (last.status() != 422) {
+                break;
+            }
+        }
+        assertThat(last.status()).isEqualTo(429);
+        assertThat(last.headers().getFirst("Retry-After")).isNotBlank();
     }
 
     @Test

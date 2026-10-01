@@ -23,7 +23,7 @@ public class JtiBlacklistValidator implements OAuth2TokenValidator<Jwt> {
             return OAuth2TokenValidatorResult.failure(error);
         }
 
-        if (tokenBlacklist.isRevoked(jti)) {
+        if (tokenBlacklist.isRevoked(jti, jwt.getSubject(), jwt.getIssuedAt())) {
             OAuth2Error error = new OAuth2Error("invalid_token", "JTI is revoked", null);
             return OAuth2TokenValidatorResult.failure(error);
         }

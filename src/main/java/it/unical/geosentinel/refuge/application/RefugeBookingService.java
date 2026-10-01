@@ -187,6 +187,17 @@ public class RefugeBookingService {
         if (!actorIsAdmin && !refuge.isManagedBy(actorId)) {
             throw new AccessDeniedException("Only the refuge manager can change its capacity");
         }
+        // Mai sotto gli ospiti già confermati per una notte da stanotte in poi (409): sotto il lock del rifugio,
+        // quindi nessuna prenotazione può arrivare tra il controllo e la modifica
+        LocalDate today = LocalDate.now(clock);
+        bookingRepository.lastConfirmedCheckOut(refugeId)
+                .filter(lastCheckOut -> lastCheckOut.isAfter(today))
+                .ifPresent(lastCheckOut -> {
+                    int occupancy = bookingRepository.maxNightlyOccupancy(refugeId, today, lastCheckOut);
+                    if (capacity < occupancy) {
+                        throw CapacityExceededException.belowConfirmedBookings(refugeId, capacity, occupancy);
+                    }
+                });
         refuge.changeCapacity(capacity);
         return RefugeView.from(refuge, geometryMapper);
     }

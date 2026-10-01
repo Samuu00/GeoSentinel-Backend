@@ -92,6 +92,9 @@ public class UserAccountService {
         if (accessToken.getId() != null && accessToken.getExpiresAt() != null && accessToken.getExpiresAt().isAfter(now)) {
             tokenBlacklist.revoke(accessToken.getId(), Duration.between(now, accessToken.getExpiresAt()));
         }
+        // Anche gli access token degli altri dispositivi: altrimenti per 15 minuti potrebbero ancora prenotare,
+        // lanciare SOS o caricare foto (che deleteAllOf non vedrebbe più) a nome di un account cancellato
+        tokenBlacklist.revokeAllIssuedUntil(userId, now);
         mediaService.deleteAllOf(userId);
     }
 

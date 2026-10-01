@@ -1,0 +1,14 @@
+# Reverse proxy con TLS automatico (M7.6). Certificati Let's Encrypt per i domini pubblici; per *.localhost
+# Caddy usa la sua CA locale (prove sul PC). Il redirect HTTP → HTTPS lo fa Caddy da solo.
+# Caddy non si fida degli X-Forwarded-For in arrivo (nessun trusted_proxies): li riscrive con l'IP vero del client,
+# che il backend legge con server.forward-headers-strategy=native. La compressione la fa già il backend
+
+{$API_DOMAIN} {
+	reverse_proxy backend:8080
+}
+
+# Storage dei media: Caddy inoltra l'host pubblico invariato, quindi tornano le firme generate con
+# MINIO_PUBLIC_ENDPOINT=https://<MEDIA_DOMAIN>. Nessun limite al body: la dimensione la vincola la policy
+{$MEDIA_DOMAIN} {
+	reverse_proxy minio:9000
+}
