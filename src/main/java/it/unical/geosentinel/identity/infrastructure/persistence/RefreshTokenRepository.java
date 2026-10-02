@@ -15,6 +15,11 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     @Modifying
     @Query("UPDATE RefreshToken r SET r.revokedAt = :now WHERE r.tokenHash = :hash AND r.revokedAt IS NULL")
     int revokeIfActive(@Param("hash") String tokenHash, @Param("now") Instant now);
+    // Periodo di grazia (ADR-0019): revoca il successore solo se nessuno l'ha ancora usato. UPDATE atomico:
+    // tra due richieste insieme con lo stesso token vecchio ne vince una sola
+    @Modifying
+    @Query("UPDATE RefreshToken r SET r.revokedAt = :now WHERE r.id = :id AND r.revokedAt IS NULL")
+    int revokeIfActiveById(@Param("id") UUID id, @Param("now") Instant now);
     @Modifying
     @Query("UPDATE RefreshToken r SET r.revokedAt = :now WHERE r.familyId = :familyId AND r.revokedAt IS NULL")
     int revokeFamily(@Param("familyId") UUID familyId, @Param("now") Instant now);

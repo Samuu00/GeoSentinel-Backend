@@ -46,6 +46,8 @@ public class AuthService {
     private final Duration refreshTtl;
     // scadenza assoluta della sessione: le rotazioni non la estendono
     private final Duration sessionMaxTtl;
+    // ADR-0019: per quanto un token appena ruotato resta accettato, se il suo successore non è mai stato usato
+    private final Duration refreshReuseGrace;
     private final int minAge;
     // Hash fittizio: il login esegue sempre un confronto BCrypt, così il tempo di risposta non rivela se l'email esiste
     private final String dummyPasswordHash;
@@ -63,6 +65,7 @@ public class AuthService {
             // @Value e non JwtProperties: application non dipende da infrastructure
             @Value("${geosentinel.jwt.refresh-ttl}") Duration refreshTtl,
             @Value("${geosentinel.jwt.session-max-ttl}") Duration sessionMaxTtl,
+            @Value("${geosentinel.jwt.refresh-reuse-grace}") Duration refreshReuseGrace,
             // GDPR art. 8: 14 in Italia, da 13 a 16 negli altri Stati UE
             @Value("${geosentinel.registration.min-age}") int minAge
     ) {
@@ -75,6 +78,7 @@ public class AuthService {
         this.clock = clock;
         this.refreshTtl = refreshTtl;
         this.sessionMaxTtl = sessionMaxTtl;
+        this.refreshReuseGrace = refreshReuseGrace;
         this.minAge = minAge;
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
@@ -153,15 +157,14 @@ public class AuthService {
 
         // UPDATE atomico: solo una richiesta concorrente vince la rotazione
         int updatedRows = refreshTokenRepository.revokeIfActive(hash, now);
-        if (updatedRows == 0) {
-            // token già usato -> possibile furto: si revoca l'intera famiglia
-            refreshTokenRepository.findByTokenHash(hash)
-                    .ifPresent(token -> refreshTokenRepository.revokeFamily(token.getFamilyId(), now));
-            throw new BadCredentialsException("Invalid refresh token");
-        }
-
         RefreshToken oldToken = refreshTokenRepository.findByTokenHash(hash)
                 .orElseThrow(() -> new BadCredentialsException("Invalid refresh token"));
+
+        if (updatedRows == 0 && !acceptedInRotationGrace(oldToken, now)) {
+            // token già usato -> possibile furto: si revoca l'intera famiglia
+            refreshTokenRepository.revokeFamily(oldToken.getFamilyId(), now);
+            throw new BadCredentialsException("Invalid refresh token");
+        }
 
         // copre sia la scadenza del token sia quella assoluta della sessione
         if (oldToken.isExpired(now)) {
@@ -200,6 +203,16 @@ public class AuthService {
         }
     }
 
+    // ADR-0019. Il client ha mandato il token vecchio perché non ha ricevuto la risposta della rotazione (rete caduta).
+    // Si accetta solo se il token è stato revocato da una rotazione da non più di refreshReuseGrace e il successore
+    // non è mai stato usato: lo si revoca (UPDATE atomico) e si ruota di nuovo. Un ladro che usa il token vecchio
+    // nella finestra prende il posto del successore, ma al primo uso del successore da parte del client legittimo
+    // la famiglia si revoca come oggi.
+    private boolean acceptedInRotationGrace(RefreshToken token, Instant now) {
+        return token.isInRotationGrace(now, refreshReuseGrace)
+                && refreshTokenRepository.revokeIfActiveById(token.getReplacedById(), now) == 1;
+    }
+
     // previous == null -> nuova sessione (nuova famiglia); altrimenti rotazione: stessa famiglia, stessa scadenza assoluta
     private AuthTokens createAuthSession(User user, RefreshToken previous) {
         Instant now = clock.instant();
@@ -211,8 +224,11 @@ public class AuthService {
         Instant refreshExpiresAt = min(now.plus(refreshTtl), familyExpiresAt);
 
         String rawRefreshToken = generateSecureRandomToken();
-        refreshTokenRepository.save(new RefreshToken(
+        RefreshToken saved = refreshTokenRepository.save(new RefreshToken(
                 user, sha256Hex(rawRefreshToken), familyId, refreshExpiresAt, familyExpiresAt, now));
+        if (previous != null) {
+            previous.replacedBy(saved.getId());
+        }
 
         return AuthTokens.bearer(accessToken.tokenValue(), accessToken.expiresAt(), rawRefreshToken);
     }

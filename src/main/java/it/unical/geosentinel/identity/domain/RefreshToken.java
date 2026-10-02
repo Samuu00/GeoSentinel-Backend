@@ -11,6 +11,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -46,6 +47,10 @@ public class RefreshToken {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    // Token emesso dalla rotazione di questo (ADR-0019): null se non è mai stato ruotato
+    @Column(name = "replaced_by_id")
+    private UUID replacedById;
+
     // Richiesto da JPA
     protected RefreshToken() {}
 
@@ -70,6 +75,16 @@ public class RefreshToken {
     // Scaduto se ha superato la propria scadenza o quella assoluta della sessione (estremo incluso)
     public boolean isExpired(Instant now) { return !now.isBefore(expiresAt) || !now.isBefore(familyExpiresAt); }
     public boolean isValid(Instant now) { return !isRevoked() && !isExpired(now); }
+    public UUID getReplacedById() { return replacedById; }
+
+    // Periodo di grazia (ADR-0019): solo un token revocato da una rotazione, e da non più di `grace`
+    public boolean isInRotationGrace(Instant now, Duration grace) {
+        return replacedById != null && revokedAt != null && !now.isAfter(revokedAt.plus(grace));
+    }
+
+    public void replacedBy(UUID successorId) {
+        this.replacedById = Objects.requireNonNull(successorId, "Successor id cannot be null");
+    }
 
     // Il tempo arriva dal Clock del service: niente Instant.now() nel dominio
     public void revoke(Instant now) {

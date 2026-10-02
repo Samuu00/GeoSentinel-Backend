@@ -50,6 +50,7 @@ import java.util.TreeSet;
                         - Send at most one `refreshTokens` request at a time (e.g. Ktor `Auth` plugin, `bearer { refreshTokens { } }`).
                         - Each refresh token is single-use. Reusing one (for instance two parallel refreshes with the same token) \
                         is treated as token theft: the whole session is revoked and the user must log in again.
+                        - Exception for a lost response: if the connection drops before the client reads the new pair,                         it may retry with the same refresh token within 60 seconds, as long as the new token has never                         been used; the server issues a fresh pair. Never retry a refresh automatically in any other case.
 
                         ## Conditional GET
                         Public `GET` routes under `/api/v1/trails` and `/api/v1/pois` return an `ETag` with `Cache-Control: no-cache`: \

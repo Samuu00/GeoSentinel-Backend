@@ -42,6 +42,7 @@ Parametri applicativi principali (`application.properties`):
 | `geosentinel.jwt.access-ttl` | `15m` | Durata dell'access token |
 | `geosentinel.jwt.refresh-ttl` | `7d` | Durata di un refresh token |
 | `geosentinel.jwt.session-max-ttl` | `30d` | Durata massima di una sessione |
+| `geosentinel.jwt.refresh-reuse-grace` | `60s` | Per quanto un refresh token appena ruotato resta accettato se il successore non è mai stato usato (ADR-0019) |
 | `geosentinel.rate-limit.login-per-minute` | `30` | Per IP su login, registrazione, logout |
 | `geosentinel.rate-limit.refresh-per-minute` | `120` | Per IP sul refresh |
 | `geosentinel.rate-limit.general-per-minute` | `60` | Per utente (o IP) sul resto |

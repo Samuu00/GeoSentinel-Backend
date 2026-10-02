@@ -38,6 +38,11 @@ Sul refresh bisogna stare attenti. Ogni refresh token vale una volta sola, e se 
 server lo tratta come un furto: revoca l'intera sessione e serve un nuovo login. Succede anche con due
 refresh partiti in parallelo, quindi il client deve farne uno alla volta (con Ktor basta il plugin `Auth`,
 `bearer { refreshTokens { } }`). La sessione dura al massimo 30 giorni dal login, poi il refresh risponde 401.
+
+Unica eccezione ([ADR-0019](adr/0019-periodo-di-grazia-refresh.md)): se la connessione cade prima che l'app legga la
+risposta del refresh, l'app può riprovare con lo stesso refresh token entro 60 secondi, purché il token nuovo non sia
+mai stato usato. Il server emette una coppia nuova e invalida quella persa. In ogni altro caso il refresh non si
+ripete da solo.
 I token vanno salvati cifrati (Android Keystore, iOS Keychain).
 
 Il cambio password (`POST /users/me/password`, che restituisce token nuovi) e la cancellazione dell'account

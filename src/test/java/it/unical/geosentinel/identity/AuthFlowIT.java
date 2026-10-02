@@ -44,15 +44,59 @@ class AuthFlowIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void reusingARefreshTokenRevokesTheWholeFamily() {
+    void reusingARefreshTokenAfterItsSuccessorWasUsedRevokesTheWholeFamily() {
         String first = register().get("refreshToken").asString();
-        HttpResult rotated = refresh(first);
-        assertThat(rotated.status()).isEqualTo(200);
-        String second = json(rotated.body()).get("refreshToken").asString();
+        String second = rotate(first);
+        String third = rotate(second);
 
-        // riuso del token già ruotato: 401, e anche il token nuovo della stessa famiglia è revocato
+        // il successore di first è già stato usato: niente periodo di grazia, è un furto
+        assertThat(refresh(first).status()).isEqualTo(401);
+        assertThat(refresh(third).status()).isEqualTo(401);
+    }
+
+    // ADR-0019: la risposta della rotazione si è persa (rete caduta), il client riprova con il token vecchio
+    @Test
+    void aLostRotationResponseIsRecoveredWithinTheGracePeriod() {
+        String first = register().get("refreshToken").asString();
+        rotate(first); // risposta mai arrivata al client
+
+        String recovered = rotate(first);
+
+        assertThat(refresh(recovered).status()).isEqualTo(200);
+    }
+
+    @Test
+    void theftWithinTheGracePeriodIsDetectedWhenTheLegitimateSuccessorIsUsed() {
+        String first = register().get("refreshToken").asString();
+        String legitimate = rotate(first);
+        String stolen = rotate(first); // un ladro usa first nella finestra: il successore legittimo viene revocato
+
+        assertThat(refresh(legitimate).status()).isEqualTo(401);
+        // il riuso del successore revoca la famiglia: anche il token del ladro è morto
+        assertThat(refresh(stolen).status()).isEqualTo(401);
+    }
+
+    @Test
+    void outsideTheGracePeriodTheOldTokenIsTreatedAsTheft() {
+        String first = register().get("refreshToken").asString();
+        String second = rotate(first);
+        jdbcTemplate.update("UPDATE refresh_tokens SET revoked_at = now() - interval '2 minutes' WHERE replaced_by_id IS NOT NULL");
+
         assertThat(refresh(first).status()).isEqualTo(401);
         assertThat(refresh(second).status()).isEqualTo(401);
+    }
+
+    @Test
+    void afterALogoutTheRotatedTokenGetsNoGrace() {
+        String first = register().get("refreshToken").asString();
+        HttpResult rotated = refresh(first);
+        JsonNode tokens = json(rotated.body());
+        HttpResult logout = call(HttpMethod.POST, "/api/v1/auth/logout", tokens.get("accessToken").asString(),
+                "{\"refreshToken\":\"%s\"}".formatted(tokens.get("refreshToken").asString()));
+        assertThat(logout.status()).isEqualTo(204);
+
+        // first è nella finestra, ma il suo successore è stato revocato dal logout: la sessione resta chiusa
+        assertThat(refresh(first).status()).isEqualTo(401);
     }
 
     @Test
@@ -116,5 +160,11 @@ class AuthFlowIT extends AbstractIntegrationTest {
 
     private HttpResult refresh(String refreshToken) {
         return call(HttpMethod.POST, "/api/v1/auth/refresh", null, "{\"refreshToken\":\"%s\"}".formatted(refreshToken));
+    }
+
+    private String rotate(String refreshToken) {
+        HttpResult result = refresh(refreshToken);
+        assertThat(result.status()).isEqualTo(200);
+        return json(result.body()).get("refreshToken").asString();
     }
 }
