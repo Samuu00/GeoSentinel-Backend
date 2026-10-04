@@ -55,6 +55,8 @@ public class TrailDtos {
             @Schema(requiredMode = REQUIRED) String name,
             @Schema(requiredMode = REQUIRED) Difficulty difficulty,
             @Schema(requiredMode = REQUIRED) TrailStatus status,
-            @Schema(requiredMode = REQUIRED) Double lengthM
+            @Schema(requiredMode = REQUIRED) Double lengthM,
+            @Schema(requiredMode = REQUIRED, description = "Simplified path (about 5 m tolerance) for drawing the trail on a map; the full path is in the trail detail")
+            GeoJsonLineString path
     ) {}
 }

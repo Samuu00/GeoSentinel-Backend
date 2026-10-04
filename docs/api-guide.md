@@ -149,6 +149,9 @@ diverso risponde 400.
 
 Le risposte JSON sopra 1 KB arrivano compresse in gzip se la richiesta manda `Accept-Encoding: gzip`.
 
+`GET /trails?bbox=minLon,minLat,maxLon,maxLat` restituisce fino a 200 sentieri che attraversano l'area, ognuno con
+un `path` semplificato (circa 5 m) che basta per disegnarlo; il percorso completo è in `GET /trails/{id}` (ADR-0020).
+
 Le GET pubbliche di `/trails` e `/pois` hanno un `ETag` debole e `Cache-Control: no-cache`: rimandando l'ETag
 in `If-None-Match` si riceve `304 Not Modified` senza body. Tutte le altre risposte sono `no-store`.
 

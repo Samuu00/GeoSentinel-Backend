@@ -4886,7 +4886,7 @@
             "description" : "Unexpected error (internal-error)"
           }
         },
-        "summary" : "Find trails contained within a map bounding box",
+        "summary" : "Find trails that cross a map bounding box (bbox=minLon,minLat,maxLon,maxLat), at most 200",
         "tags" : [ "Trails" ]
       },
       "post" : {
@@ -6561,12 +6561,16 @@
           "name" : {
             "type" : "string"
           },
+          "path" : {
+            "$ref" : "#/components/schemas/GeoJsonLineString",
+            "description" : "Simplified path (about 5 m tolerance) for drawing the trail on a map; the full path is in the trail detail"
+          },
           "status" : {
             "type" : "string",
             "enum" : [ "OPEN", "WARNING", "CLOSED" ]
           }
         },
-        "required" : [ "difficulty", "id", "lengthM", "name", "status" ]
+        "required" : [ "difficulty", "id", "lengthM", "name", "path", "status" ]
       },
       "UpdateCapacityRequest" : {
         "type" : "object",

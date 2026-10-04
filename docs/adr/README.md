@@ -25,3 +25,4 @@ del vecchio (`Sostituito da ADR-XXXX`). Il modello è in [`template.md`](templat
 | [0017](0017-revoca-per-utente.md) | Revoca per utente degli access token | 2026-10-01 | Accettato |
 | [0018](0018-errori-rfc7807.md) | Errori RFC 7807 con slug stabili | 2026-09-22 | Accettato |
 | [0019](0019-periodo-di-grazia-refresh.md) | Periodo di grazia sul refresh token appena ruotato | 2026-10-02 | Accettato |
+| [0020](0020-percorso-nei-sentieri-della-mappa.md) | Percorso semplificato nei sentieri della mappa e bbox per intersezione | 2026-10-04 | Accettato |

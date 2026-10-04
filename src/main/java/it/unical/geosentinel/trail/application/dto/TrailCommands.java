@@ -6,6 +6,7 @@ import it.unical.geosentinel.trail.domain.Difficulty;
 import it.unical.geosentinel.trail.domain.TrailStatus;
 import it.unical.geosentinel.trail.domain.Trail;
 import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.simplify.DouglasPeuckerSimplifier;
 
 import java.util.UUID;
 
@@ -45,14 +46,22 @@ public class TrailCommands {
             );
         }
     }
-    public record TrailSummary(UUID id, String name, Difficulty difficulty, TrailStatus status, Double lengthM) {
-        public static TrailSummary from(Trail trail) {
+    // path semplificato (ADR-0020): basta per disegnare il sentiero sulla mappa, il percorso completo è nel dettaglio
+    public record TrailSummary(UUID id, String name, Difficulty difficulty, TrailStatus status, Double lengthM,
+                               GeoJsonLineString path) {
+        // ~5 m a queste latitudini (gradi, perché la geometria è in 4326): sotto la risoluzione della mappa
+        static final double SIMPLIFY_TOLERANCE_DEGREES = 0.00005;
+
+        public static TrailSummary from(Trail trail, GeometryMapper geo) {
+            // Douglas-Peucker su una LineString tiene sempre i due estremi: il risultato ha almeno due punti
+            LineString simplified = (LineString) DouglasPeuckerSimplifier.simplify(trail.getPath(), SIMPLIFY_TOLERANCE_DEGREES);
             return new TrailSummary(
                     trail.getId(),
                     trail.getName(),
                     trail.getDifficulty(),
                     trail.getStatus(),
-                    trail.getLengthM()
+                    trail.getLengthM(),
+                    geo.toDto(simplified)
             );
         }
     }

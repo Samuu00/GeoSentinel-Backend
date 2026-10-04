@@ -51,14 +51,14 @@ public class TrailService {
         int limit = Math.max(1, Math.min(query.limit(), MAX_RESULTS));
         return trailRepository.findWithinDistance(query.lon(), query.lat(), radius, limit)
                 .stream()
-                .map(TrailSummary::from)
+                .map(trail -> TrailSummary.from(trail, geometryMapper))
                 .toList();
     }
     @Transactional(readOnly = true)
     public List<TrailSummary> findInBoundingBox(BoundingBox box){
-        return trailRepository.findContainedIn(box.minLon(), box.minLat(), box.maxLon(), box.maxLat(), MAX_BBOX_RESULTS)
+        return trailRepository.findIntersecting(box.minLon(), box.minLat(), box.maxLon(), box.maxLat(), MAX_BBOX_RESULTS)
                 .stream()
-                .map(TrailSummary::from)
+                .map(trail -> TrailSummary.from(trail, geometryMapper))
                 .toList();
     }
 
