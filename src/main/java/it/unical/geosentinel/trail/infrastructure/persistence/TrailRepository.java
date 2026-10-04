@@ -20,6 +20,7 @@ public interface TrailRepository extends JpaRepository<Trail, UUID>{
     @Query(value = """
             SELECT t.* FROM trails t
             WHERE ST_Intersects(ST_MakeEnvelope(:minLon, :minLat, :maxLon, :maxLat, 4326), t.path)
+            ORDER BY t.id
             LIMIT :limit
             """, nativeQuery = true)
     List<Trail> findIntersecting(@Param("minLon") double minLon, @Param("minLat") double minLat, @Param("maxLon") double maxLon, @Param("maxLat") double maxLat, @Param("limit") int limit);

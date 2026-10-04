@@ -3,7 +3,7 @@
 > Ruolo di Claude: mentore/architetto/reviewer. **Il codice lo scrivi tu.** Qui trovi solo struttura, contratti (firme), vincoli e checkpoint.
 > Regola di avanzamento: un task si chiude solo quando **tutti** i suoi checkpoint passano. Poi chiedi la review (vedi §5).
 >
-> **Stato (01/10): M0–M7 completate lato backend.** Restano i checkpoint di M7 che richiedono l'app KMP (push vere, foto da emulatore/simulatore, flusso completo). M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (42 unit + 104 IT); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
+> **Stato (01/10): M0–M7 completate lato backend.** Restano i checkpoint di M7 che richiedono l'app KMP (push vere, foto da emulatore/simulatore, flusso completo). M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (42 unit + 109 IT, 04/10: bbox per intersezione e percorso nei sentieri della lista, ADR-0020); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
 ---
 
@@ -522,11 +522,12 @@ I 401/403 generati nei filtri **non passano** da `@RestControllerAdvice`.
 Query native (servono il cast `::geography` e le funzioni PostGIS):
 - [x] `TrailRepository`:
   - `List<Trail> findWithinDistance(double lon, double lat, double radiusMeters, int limit)` → predicato `ST_DWithin(path::geography, ST_SetSRID(ST_MakePoint(:lon,:lat),4326)::geography, :radius)`, ordinato per `ST_Distance` (stesse espressioni geography)
-  - `List<Trail> findContainedIn(double minLon, double minLat, double maxLon, double maxLat)` → `ST_Contains(ST_MakeEnvelope(…, 4326), path)` (sentieri interamente nel viewport della mappa)
+  - `List<Trail> findIntersecting(double minLon, double minLat, double maxLon, double maxLat)` → `ST_Intersects(ST_MakeEnvelope(…, 4326), path)` (sentieri che attraversano il viewport della mappa; fino al 04/10 era `findContainedIn` con `ST_Contains`, ADR-0020)
 - [x] `PoiRepository`: `List<Poi> findNearby(double lon, double lat, double radiusMeters, @Nullable String type, int limit)`
   - **Trappola:** `:type IS NULL` con un `null` non tipizzato fa fallire PostgreSQL ("could not determine data type of parameter"): serve `CAST(:type AS varchar)`. Vale per ogni parametro facoltativo nelle query native
 - [x] `HazardReportRepository`: `List<HazardReport> findActiveNearTrail(UUID trailId, double bufferMeters)` → `ST_DWithin(h.location::geography, t.path::geography, :buffer)` con join su `trails`
-- [x] `TrailRepository.findContainedIn(…, int limit)`: anche la bbox ha un `LIMIT` (max 200), altrimenti un viewport grande quanto il mondo restituisce tutto
+- [x] `TrailRepository.findIntersecting(…, int limit)`: anche la bbox ha un `LIMIT` (max 200), altrimenti un viewport grande quanto il mondo restituisce tutto
+- [x] (04/10, ADR-0020) `TrailSummary` ha il `path` semplificato con Douglas-Peucker a 0,00005° (circa 5 m): l'app disegna i sentieri della bbox senza un `GET /trails/{id}` per ognuno
 - [x] View in `application/dto` (`TrailDetail`, `TrailSummary`, `PoiView`, `HazardView`): record con `GeoJsonLineString`/`GeoPointDto`, **mai** geometrie JTS (non serializzabili in JSON né cachabili). Si costruiscono con `from(entity, GeometryMapper)`: il service inietta il `GeometryMapper`. La dipendenza `application → shared/web/geo` è accettata (record puri, condivisi)
 - [x] **Flush prima del DTO** in `create` (`saveAndFlush`), `update`, `changeStatus`: `length_m` (colonna generata) e `version` si aggiornano solo con l'SQL; senza flush la risposta ha `lengthM` null/vecchio e la version precedente (ETag sbagliato)
 - [x] `TrailService` (il web è in M5.2):
@@ -740,7 +741,7 @@ Validazione dei parametri: niente `@Validated` sui controller. Spring MVC valida
 | Test | Cosa dimostra | Criterio |
 |---|---|---|
 | `MigrationIT` | Flyway V1–V7 + `ddl-auto=validate` su vero PostGIS | context carica |
-| `TrailSpatialQueryIT` | `ST_DWithin` in **metri**, `ST_Contains` bbox | punto a ~100 m trovato con r=200, non con r=50; **regressione lon/lat**: con coordinate invertite il test fallisce |
+| `TrailSpatialQueryIT` | `ST_DWithin` in **metri**, `ST_Intersects` bbox, percorso semplificato | punto a ~100 m trovato con r=200, non con r=50; bbox che taglia il sentiero lo trova, una accanto no; **regressione lon/lat**: con coordinate invertite il test fallisce |
 | `RefugeBookingConcurrencyIT` | nessun overbooking | capacity 10, **50 thread** × 1 posto stesse date, ognuno con la **sua** `Idempotency-Key` (con la stessa chiave e lo stesso utente sarebbe un retry, non una nuova prenotazione), `CountDownLatch` di partenza → **esattamente 10 successi, 40 × 409**, `maxNightlyOccupancy == 10` |
 | `SosAssignmentConcurrencyIT` | invio esclusivo della squadra | 10 operatori concorrenti su un alert, ognuno con una squadra diversa → **1 successo, 9 × 409**; dispatch concorrente dello stesso team su 2 alert → 1 successo |
 | `MaintenanceOptimisticLockIT` | lost update impedito | due update con la stessa `expectedVersion` → il secondo 409; versione finale = +1 |

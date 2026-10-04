@@ -67,6 +67,7 @@ class TrailSpatialQueryIT extends AbstractIntegrationTest {
         assertThat(coordinates.get(0).get(0).asDouble()).isEqualTo(16.6);
         assertThat(coordinates.get(0).get(1).asDouble()).isEqualTo(39.4);
         assertThat(coordinates.get(1).get(0).asDouble()).isCloseTo(16.62, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(coordinates.get(1).get(1).asDouble()).isEqualTo(39.4);
     }
 
     @Test
