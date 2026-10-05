@@ -9,6 +9,7 @@ import it.unical.geosentinel.trail.domain.HazardStatus;
 import it.unical.geosentinel.trail.domain.HazardType;
 import it.unical.geosentinel.trail.domain.Severity;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
@@ -40,6 +41,8 @@ public class HazardDtos {
             @Schema(requiredMode = REQUIRED) Severity severity,
             String description,
             @Schema(requiredMode = REQUIRED) GeoPointDto location,
-            @Schema(requiredMode = REQUIRED) HazardStatus status
+            @Schema(requiredMode = REQUIRED) HazardStatus status,
+            // data della segnalazione (lista "Le mie segnalazioni" dell'app)
+            @Schema(requiredMode = REQUIRED) Instant createdAt
     ) {}
 }

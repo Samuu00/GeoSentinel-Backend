@@ -5,6 +5,11 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 
 ## [Non rilasciato]
 
+### Aggiunto
+- `GET /hazards/mine` (`findMyHazards`): le segnalazioni dell'utente corrente in ogni stato, paginate, dalla più
+  recente (sort solo su `createdAt`). Serve alla lista "Le mie segnalazioni" dell'app (M4.3).
+- `HazardResponse.createdAt` (obbligatorio): data della segnalazione. Il client va rigenerato.
+
 ### Sicurezza
 - Periodo di grazia di 60 secondi sul refresh token appena ruotato, se il successore non è mai stato usato
   (ADR-0019): una risposta di refresh persa per la rete non chiude più la sessione. Migration V10.

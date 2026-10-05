@@ -2,6 +2,8 @@ package it.unical.geosentinel.trail.infrastructure.persistence;
 
 import it.unical.geosentinel.trail.domain.HazardReport;
 import it.unical.geosentinel.trail.domain.HazardStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,4 +21,7 @@ public interface HazardReportRepository extends JpaRepository<HazardReport, UUID
     List<HazardReport> findActiveNearTrail(@Param("trailId") UUID trailId, @Param("bufferMeters") double bufferMeters);
 
     List<HazardReport> findByStatus(HazardStatus status);
+
+    // Le segnalazioni di un utente (lista "Le mie segnalazioni" dell'app), su idx_hazard_reports_reporter
+    Page<HazardReport> findByReporterId(UUID reporterId, Pageable pageable);
 }

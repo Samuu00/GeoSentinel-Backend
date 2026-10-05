@@ -11,6 +11,11 @@ import it.unical.geosentinel.trail.application.dto.HazardCommands.HazardView;
 import it.unical.geosentinel.trail.web.dto.HazardDtos.CreateHazardRequest;
 import it.unical.geosentinel.trail.web.dto.HazardDtos.HazardResponse;
 import it.unical.geosentinel.trail.web.dto.HazardDtos.UpdateHazardStatusRequest;
+import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.data.web.PagedModel;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,10 +26,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
@@ -46,6 +53,17 @@ public class HazardReportController {
     public ResponseEntity<HazardResponse> getById(@PathVariable UUID id) {
         HazardView view = hazardReportService.getHazard(id);
         return ResponseEntity.ok(trailMapper.toResponse(view));
+    }
+
+    // Le segnalazioni dell'utente corrente, in ogni stato, dalla più recente. "/mine" vince su "/{id}" (path letterale)
+    @GetMapping("/mine")
+    @Operation(operationId = "findMyHazards", summary = "List current user's hazard reports, newest first", security = @SecurityRequirement(name = "bearerAuth"))
+    public PagedModel<HazardResponse> getMyHazardReports(
+            @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        checkSortable(pageable.getSort());
+        UUID reporterId = currentUser.getRequiredUserId();
+        return new PagedModel<>(hazardReportService.findMine(reporterId, pageable).map(trailMapper::toResponse));
     }
 
     @GetMapping("/trail/{trailId}")
@@ -77,5 +95,17 @@ public class HazardReportController {
     ) {
         HazardView updated = hazardReportService.changeStatus(id, request.status());
         return ResponseEntity.ok(trailMapper.toResponse(updated));
+    }
+
+    // Whitelist del sort, come nelle altre liste: un campo qualsiasi darebbe un 500 (proprietà inesistente)
+    private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt");
+
+    static void checkSortable(Sort sort) {
+        for (Sort.Order order : sort) {
+            if (!SORTABLE_FIELDS.contains(order.getProperty())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Cannot sort by '" + order.getProperty() + "'. Allowed: " + SORTABLE_FIELDS);
+            }
+        }
     }
 }

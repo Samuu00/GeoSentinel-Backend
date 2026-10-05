@@ -8,6 +8,7 @@ import it.unical.geosentinel.trail.domain.HazardType;
 import it.unical.geosentinel.trail.domain.Severity;
 import org.locationtech.jts.geom.Point;
 
+import java.time.Instant;
 import java.util.UUID;
 
 public class HazardCommands {
@@ -20,7 +21,8 @@ public class HazardCommands {
             Severity severity,
             String description,
             GeoPointDto location,
-            HazardStatus status
+            HazardStatus status,
+            Instant createdAt
         ) {
         public static HazardView from(HazardReport h, GeometryMapper geo) {
             return new HazardView(
@@ -31,7 +33,8 @@ public class HazardCommands {
                     h.getSeverity(),
                     h.getDescription(),
                     geo.toDto(h.getLocation()),
-                    h.getStatus()
+                    h.getStatus(),
+                    h.getCreatedAt()
             );
         }
     }

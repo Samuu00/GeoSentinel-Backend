@@ -9,6 +9,8 @@ import it.unical.geosentinel.trail.domain.HazardReport;
 import it.unical.geosentinel.trail.domain.HazardStatus;
 import it.unical.geosentinel.trail.domain.Trail;
 import it.unical.geosentinel.trail.infrastructure.persistence.HazardReportRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.prepost.PostAuthorize;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -55,6 +57,14 @@ public class HazardReportService {
                 .stream()
                 .map(h -> HazardView.from(h, geometryMapper))
                 .toList();
+    }
+
+    // Le proprie segnalazioni in ogni stato, anche REJECTED: chi le ha fatte può sempre vederle (come in getHazard).
+    // reporterId arriva dal sub del JWT, quindi un utente non può chiedere quelle di un altro
+    @Transactional(readOnly = true)
+    public Page<HazardView> findMine(UUID reporterId, Pageable pageable) {
+        return hazardReportRepository.findByReporterId(reporterId, pageable)
+                .map(h -> HazardView.from(h, geometryMapper));
     }
 
     // reporterId arriva dal sub del JWT: l'utente esiste, e comunque la FK su users lo garantisce
