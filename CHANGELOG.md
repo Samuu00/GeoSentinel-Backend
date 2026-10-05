@@ -9,6 +9,9 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 - `GET /hazards/mine` (`findMyHazards`): le segnalazioni dell'utente corrente in ogni stato, paginate, dalla più
   recente (sort solo su `createdAt`). Serve alla lista "Le mie segnalazioni" dell'app (M4.3).
 - `HazardResponse.createdAt` (obbligatorio): data della segnalazione. Il client va rigenerato.
+- `GET /hazards/nearby` (`findHazardsNearby`): i pericoli attivi (`VERIFIED`) di tutti gli utenti intorno a un punto,
+  dal più vicino (`radius` in metri, default 5000, massimo 50000; `limit` default 30, massimo 50), solo da loggati.
+  Usa l'indice GiST su `location::geography` già in V4. Serve a "Pericoli vicino a me" dell'app (M4.4).
 
 ### Sicurezza
 - Periodo di grazia di 60 secondi sul refresh token appena ruotato, se il successore non è mai stato usato

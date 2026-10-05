@@ -24,4 +24,15 @@ public interface HazardReportRepository extends JpaRepository<HazardReport, UUID
 
     // Le segnalazioni di un utente (lista "Le mie segnalazioni" dell'app), su idx_hazard_reports_reporter
     Page<HazardReport> findByReporterId(UUID reporterId, Pageable pageable);
+
+    // "Pericoli vicino a me" (M4.4 dell'app): solo VERIFIED (niente in verifica, falsi o risolti), di tutti gli utenti,
+    // dal più vicino. ST_DWithin sul geography usa idx_hazard_reports_location_geog (V4)
+    @Query(value = """
+            SELECT h.* FROM hazard_reports h
+            WHERE h.status = 'VERIFIED'
+              AND ST_DWithin(h.location::geography, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :radiusMeters)
+            ORDER BY ST_Distance(h.location::geography, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography) ASC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<HazardReport> findActiveNearby(@Param("lon") double lon, @Param("lat") double lat, @Param("radiusMeters") double radiusMeters, @Param("limit") int limit);
 }

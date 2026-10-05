@@ -11,6 +11,10 @@ import it.unical.geosentinel.trail.application.dto.HazardCommands.HazardView;
 import it.unical.geosentinel.trail.web.dto.HazardDtos.CreateHazardRequest;
 import it.unical.geosentinel.trail.web.dto.HazardDtos.HazardResponse;
 import it.unical.geosentinel.trail.web.dto.HazardDtos.UpdateHazardStatusRequest;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -24,6 +28,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -64,6 +69,20 @@ public class HazardReportController {
         checkSortable(pageable.getSort());
         UUID reporterId = currentUser.getRequiredUserId();
         return new PagedModel<>(hazardReportService.findMine(reporterId, pageable).map(trailMapper::toResponse));
+    }
+
+    // I pericoli attivi (VERIFIED) intorno a un punto, di tutti gli utenti, dal più vicino. Lista come /pois/nearby:
+    // niente Pageable (con una query nativa un ?sort= arriverebbe nell'SQL). "/nearby" vince su "/{id}" (path letterale)
+    @GetMapping("/nearby")
+    @Operation(operationId = "findHazardsNearby", summary = "List active (verified) hazards near coordinates, nearest first", security = @SecurityRequirement(name = "bearerAuth"))
+    public ResponseEntity<List<HazardResponse>> findNearby(
+            @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") double lon,
+            @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") double lat,
+            @RequestParam(defaultValue = "5000.0") @Min(1) @Max(50000) double radius,
+            @RequestParam(defaultValue = "30") @Min(1) @Max(50) int limit
+    ) {
+        List<HazardView> views = hazardReportService.findNearby(lon, lat, radius, limit);
+        return ResponseEntity.ok(views.stream().map(trailMapper::toResponse).toList());
     }
 
     @GetMapping("/trail/{trailId}")

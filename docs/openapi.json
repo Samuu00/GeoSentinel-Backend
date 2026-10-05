@@ -1125,6 +1125,124 @@
         "tags" : [ "Hazard Reports" ]
       }
     },
+    "/api/v1/hazards/nearby" : {
+      "get" : {
+        "operationId" : "findHazardsNearby",
+        "parameters" : [ {
+          "in" : "query",
+          "name" : "lon",
+          "required" : true,
+          "schema" : {
+            "type" : "number",
+            "format" : "double",
+            "maximum" : 180.0,
+            "minimum" : -180.0
+          }
+        }, {
+          "in" : "query",
+          "name" : "lat",
+          "required" : true,
+          "schema" : {
+            "type" : "number",
+            "format" : "double",
+            "maximum" : 90.0,
+            "minimum" : -90.0
+          }
+        }, {
+          "in" : "query",
+          "name" : "radius",
+          "required" : false,
+          "schema" : {
+            "type" : "number",
+            "format" : "double",
+            "default" : 5000.0,
+            "maximum" : 50000,
+            "minimum" : 1
+          }
+        }, {
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "default" : 30,
+            "maximum" : 50,
+            "minimum" : 1
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/HazardResponse"
+                  }
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Invalid request (validation-error)"
+          },
+          "401" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Missing, invalid, expired or revoked access token (unauthorized)"
+          },
+          "403" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Role not allowed (forbidden)"
+          },
+          "429" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Rate limit exceeded, see Retry-After (rate-limit-exceeded)"
+          },
+          "500" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Unexpected error (internal-error)"
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        } ],
+        "summary" : "List active (verified) hazards near coordinates, nearest first",
+        "tags" : [ "Hazard Reports" ]
+      }
+    },
     "/api/v1/hazards/trail/{trailId}" : {
       "get" : {
         "operationId" : "findActiveHazardsByTrail",

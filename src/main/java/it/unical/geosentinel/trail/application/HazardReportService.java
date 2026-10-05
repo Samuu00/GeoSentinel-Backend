@@ -67,6 +67,17 @@ public class HazardReportService {
                 .map(h -> HazardView.from(h, geometryMapper));
     }
 
+    // I pericoli attivi (VERIFIED) di tutti gli utenti intorno a un punto, dal più vicino. Limiti come per i POI
+    @Transactional(readOnly = true)
+    public List<HazardView> findNearby(double lon, double lat, double radiusMeters, int limit) {
+        double radius = Math.min(radiusMeters, TrailService.MAX_SEARCH_RADIUS_METERS);
+        int boundedLimit = Math.max(1, Math.min(limit, TrailService.MAX_RESULTS));
+        return hazardReportRepository.findActiveNearby(lon, lat, radius, boundedLimit)
+                .stream()
+                .map(h -> HazardView.from(h, geometryMapper))
+                .toList();
+    }
+
     // reporterId arriva dal sub del JWT: l'utente esiste, e comunque la FK su users lo garantisce
     @Transactional
     @PreAuthorize("hasRole('HIKER')")
