@@ -86,9 +86,13 @@ public class HazardReportController {
     }
 
     @GetMapping("/trail/{trailId}")
-    @Operation(operationId = "findActiveHazardsByTrail", summary = "List active hazards near a specific trail (buffer 100m)", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(operationId = "findActiveHazardsByTrail",
+            summary = "List active hazards near a specific trail (buffer 100m), newest first, at most 50",
+            description = "Verified hazards of all users; submitted ones only of the caller (all of them for a park manager)",
+            security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<HazardResponse>> getActiveNearTrail(@PathVariable UUID trailId) {
-        List<HazardView> views = hazardReportService.findNearTrail(trailId);
+        List<HazardView> views = hazardReportService.findNearTrail(
+                trailId, currentUser.getRequiredUserId(), currentUser.isParkManager());
         return ResponseEntity.ok(views.stream().map(trailMapper::toResponse).toList());
     }
 

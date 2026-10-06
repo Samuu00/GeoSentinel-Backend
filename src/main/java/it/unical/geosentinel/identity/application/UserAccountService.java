@@ -74,7 +74,10 @@ public class UserAccountService {
     // per ultimi gli oggetti dello storage, l'unico passo irreversibile
     @Transactional
     public void deleteAccount(UUID userId, Jwt accessToken) {
-        User user = activeUser(userId);
+        // Lock come in changePassword: un refresh concorrente non crea una sessione dopo la revoca
+        User user = userRepository.findByIdForUpdate(userId)
+                .filter(User::isEnabled)
+                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
         if (user.getRole() != Role.HIKER) {
             throw new AccountManagedException("Staff accounts are closed by an administrator");
         }

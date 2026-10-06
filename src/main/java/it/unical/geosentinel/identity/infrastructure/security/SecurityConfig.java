@@ -20,11 +20,12 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
@@ -44,6 +45,7 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -116,11 +118,13 @@ public class SecurityConfig {
                 .macAlgorithm(MacAlgorithm.HS256)
                 .build();
 
-        DelegatingOAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(
-                JwtValidators.createDefaultWithIssuer(jwtProperties.issuer()),
+        // Tolleranza sull'orario a zero (default 60 s): emittente e verificatore sono questo processo, con lo stesso
+        // orologio. Con 60 s un token revocato tornava valido dopo exp, quando le chiavi della blacklist erano già scadute
+        decoder.setJwtValidator(JwtValidators.createDefaultWithValidators(List.of(
+                new JwtTimestampValidator(Duration.ZERO),
+                new JwtIssuerValidator(jwtProperties.issuer()),
                 jtiBlacklistValidator
-        );
-        decoder.setJwtValidator(validator);
+        )));
         return decoder;
     }
 

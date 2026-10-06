@@ -39,6 +39,8 @@ public interface SosAlertRepository extends JpaRepository<SosAlert, UUID>{
 
     Optional<SosAlert> findFirstByHikerIdAndStatusIn(UUID hikerId, Collection<SosStatus> statuses);
     Optional<SosAlert> findByHikerIdAndIdempotencyKey(UUID hikerId, UUID idempotencyKey);
+    // Allerte recenti di un escursionista, per il limite delle push (ADR-0021)
+    long countByHikerIdAndCreatedAtAfter(UUID hikerId, Instant since);
 
     // lock transazionale per escursionista: due SOS simultanei (retry, doppio tap) si mettono in fila
     // e il secondo trova l'allerta del primo. Si rilascia da solo al commit

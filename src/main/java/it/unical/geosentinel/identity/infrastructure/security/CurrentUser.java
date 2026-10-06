@@ -7,6 +7,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Component
@@ -32,8 +33,17 @@ public class CurrentUser {
 
     // le authority vengono dal claim roles del JWT: un ADMIN ha ROLE_ADMIN (la RoleHierarchy vale solo nelle espressioni di sicurezza)
     public boolean isAdmin() {
+        return hasAnyAuthority(Set.of("ROLE_ADMIN"));
+    }
+
+    // ADMIN compreso, come nella RoleHierarchy
+    public boolean isParkManager() {
+        return hasAnyAuthority(Set.of("ROLE_PARK_MANAGER", "ROLE_ADMIN"));
+    }
+
+    private static boolean hasAnyAuthority(Set<String> authorities) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth != null && auth.getAuthorities().stream()
-                .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+                .anyMatch(a -> authorities.contains(a.getAuthority()));
     }
 }

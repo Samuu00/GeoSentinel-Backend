@@ -10,5 +10,6 @@
 | [Runbook](operations.md) | Chi avvia e gestisce il sistema | Configurazione, avvio, salute, backup, problemi noti |
 | [Contribuire](../CONTRIBUTING.md) | Chi modifica il codice | Ambiente, convenzioni, test, migrazioni, commit |
 | [Sicurezza](../SECURITY.md) | Tutti | Modello di sicurezza, controlli, limiti noti |
+| [Audit di sicurezza 05/10](security-audit-2026-10.md) | Sviluppatori | 7 piste da verificare e correggere, con IT e correzione proposta |
 | [Changelog](../CHANGELOG.md) | Tutti | Cosa è cambiato, per versione |
 | [Piano di lavoro](MASTER_PLAN.md) | Sviluppatori | Milestone, task e checkpoint (storico dettagliato) |

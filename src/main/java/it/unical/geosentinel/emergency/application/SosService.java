@@ -17,6 +17,8 @@ import it.unical.geosentinel.emergency.infrastructure.persistence.SosAlertReposi
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
 import it.unical.geosentinel.shared.web.geo.GeometryMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -26,6 +28,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,6 +38,10 @@ import java.util.UUID;
 public class SosService {
     private static final List<SosStatus> ACTIVE_STATUSES = List.of(SosStatus.ACTIVE, SosStatus.DISPATCHED);
     private static final double MAX_RADIUS_METERS = 100_000;
+    // ADR-0021: al massimo 3 push agli operatori ogni 15 minuti per escursionista
+    static final int MAX_PUSHES_PER_WINDOW = 3;
+    static final Duration PUSH_WINDOW = Duration.ofMinutes(15);
+    private static final Logger log = LoggerFactory.getLogger(SosService.class);
 
     private final SosAlertRepository sosAlertRepository;
     private final RescueTeamRepository rescueTeamRepository;
@@ -64,8 +72,21 @@ public class SosService {
             return new SosRaiseResult(SosAlertView.from(existing.get(), geometryMapper), false);
         }
 
-        SosAlert saved = sosAlertRepository.save(
-                SosAlert.raise(hikerId, idempotencyKey, cmd.location(), cmd.medicalNotes(), clock.instant()));
+        // Contate prima del save, sotto il lock dell'escursionista: un ciclo raise -> cancel -> raise non può
+        // tempestare gli operatori di push (il rate limit non copre il POST dell'SOS, ADR-0021)
+        Instant now = clock.instant();
+        boolean pushAllowed = sosAlertRepository.countByHikerIdAndCreatedAtAfter(hikerId, now.minus(PUSH_WINDOW))
+                < MAX_PUSHES_PER_WINDOW;
+
+        SosAlert saved = sosAlertRepository.saveAndFlush(
+                SosAlert.raise(hikerId, idempotencyKey, cmd.location(), cmd.medicalNotes(), now));
+
+        if (!pushAllowed) {
+            // L'allerta resta nella lista degli operatori; notified_at evita che SosNotificationRecovery la rilanci
+            sosAlertRepository.markNotified(saved.getId(), now);
+            log.warn("SOS push suppressed for alert {}: too many alerts from the same hiker", saved.getId());
+            return new SosRaiseResult(SosAlertView.from(saved, geometryMapper), true);
+        }
 
         applicationEventPublisher.publishEvent(new SosAlertRaisedEvent(
                 saved.getId(),

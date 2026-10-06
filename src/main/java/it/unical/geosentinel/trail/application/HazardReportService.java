@@ -51,9 +51,10 @@ public class HazardReportService {
                 .orElseThrow(() -> new ResourceNotFoundException("Hazard", id));
     }
     @Transactional(readOnly = true)
-    public List<HazardView> findNearTrail(UUID trailId) {
+    public List<HazardView> findNearTrail(UUID trailId, UUID requesterId, boolean requesterIsParkManager) {
         trailService.getTrailOrThrow(trailId); // 404 invece di una lista vuota per un sentiero inesistente
-        return hazardReportRepository.findActiveNearTrail(trailId, DEFAULT_BUFFER_METERS)
+        return hazardReportRepository.findActiveNearTrail(trailId, DEFAULT_BUFFER_METERS, requesterId,
+                        requesterIsParkManager, TrailService.MAX_RESULTS)
                 .stream()
                 .map(h -> HazardView.from(h, geometryMapper))
                 .toList();

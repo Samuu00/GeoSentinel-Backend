@@ -99,6 +99,8 @@ services:
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc mb --ignore-existing "local/$$MINIO_BUCKET"
         mc anonymous set none "local/$$MINIO_BUCKET"
+        # Upload di staging (policy POST riusate dopo il confirm): cancellati dopo un giorno. Import = sostituzione, idempotente
+        echo '{"Rules":[{"ID":"staging-expiry","Status":"Enabled","Filter":{"Prefix":"staging/"},"Expiration":{"Days":1}}]}' | mc ilm import "local/$$MINIO_BUCKET"
     networks:
       - geosentinel-net
 

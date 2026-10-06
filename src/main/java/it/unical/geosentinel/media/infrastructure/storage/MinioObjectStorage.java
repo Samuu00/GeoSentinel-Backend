@@ -1,5 +1,6 @@
 package it.unical.geosentinel.media.infrastructure.storage;
 
+import io.minio.CopyObjectArgs;
 import io.minio.GetObjectArgs;
 import io.minio.GetObjectResponse;
 import io.minio.GetPresignedObjectUrlArgs;
@@ -7,6 +8,7 @@ import io.minio.Http;
 import io.minio.MinioClient;
 import io.minio.PostPolicy;
 import io.minio.RemoveObjectArgs;
+import io.minio.SourceObject;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import io.minio.errors.ErrorResponseException;
@@ -32,6 +34,9 @@ public class MinioObjectStorage implements ObjectStorage {
     private static final Logger log = LoggerFactory.getLogger(MinioObjectStorage.class);
     // Region fissa: senza, il client la chiede al server prima di firmare (una chiamata di rete verso il publicEndpoint)
     private static final String REGION = "us-east-1";
+    // Gli upload del client finiscono qui; ciò che resta (policy riusate dopo il confirm) lo cancella la regola di
+    // lifecycle del bucket (minio-init), non l'app
+    static final String STAGING_PREFIX = "staging/";
 
     private final MinioClient minioClient;
     private final MinioClient signingClient;
@@ -65,20 +70,42 @@ public class MinioObjectStorage implements ObjectStorage {
     @Override
     public PresignedUpload presignUpload(String objectKey, String contentType, long maxBytes, Duration expiration) {
         try {
+            String stagingKey = STAGING_PREFIX + objectKey;
             PostPolicy policy = new PostPolicy(bucket, ZonedDateTime.now(clock).plus(expiration));
-            policy.addEqualsCondition("key", objectKey);
+            policy.addEqualsCondition("key", stagingKey);
             policy.addEqualsCondition("Content-Type", contentType);
             policy.addContentLengthRangeCondition(1L, maxBytes);
 
             // La firma non include key e Content-Type: il client li invia come campi del form, e la policy li vincola
             Map<String, String> fields = new LinkedHashMap<>(signingClient.getPresignedPostFormData(policy));
-            fields.put("key", objectKey);
+            fields.put("key", stagingKey);
             fields.put("Content-Type", contentType);
             return new PresignedUpload(uploadUrl, Map.copyOf(fields));
         } catch (MinioException e) {
             log.error("Failed to generate presigned upload policy for key={}", objectKey, e);
             throw new StorageUnavailableException("Could not generate presigned upload policy", e);
         }
+    }
+
+    // Copia lato server (nessun byte passa dall'app). Il client può riscrivere lo staging fino alla scadenza della
+    // policy, ma qualunque versione venga copiata è quella che il service poi verifica sull'oggetto finale
+    @Override
+    public Optional<StoredObject> promoteUpload(String objectKey) {
+        String stagingKey = STAGING_PREFIX + objectKey;
+        if (stat(stagingKey).isPresent()) {
+            try {
+                minioClient.copyObject(CopyObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(objectKey)
+                        .source(SourceObject.builder().bucket(bucket).object(stagingKey).build())
+                        .build());
+            } catch (MinioException e) {
+                log.error("Failed to promote upload key={}", objectKey, e);
+                throw new StorageUnavailableException("Could not promote uploaded object", e);
+            }
+            removeObject(stagingKey);
+        }
+        return stat(objectKey);
     }
 
     @Override
@@ -135,6 +162,11 @@ public class MinioObjectStorage implements ObjectStorage {
 
     @Override
     public void deleteObject(String objectKey) {
+        removeObject(objectKey);
+        removeObject(STAGING_PREFIX + objectKey);
+    }
+
+    private void removeObject(String objectKey) {
         try {
             minioClient.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(objectKey).build());
             log.debug("Successfully removed physical object key={}", objectKey);

@@ -92,6 +92,28 @@ class SosPushIT extends AbstractIntegrationTest {
         assertThat(sent.message().title() + sent.message().body()).doesNotContain("diabetic", "39.3", "16.5");
     }
 
+    // Audit 2026-10, pista 3: raise -> cancel ripetuti creano sempre l'allerta, ma al massimo 3 push in 15 minuti.
+    // Le allerte senza push risultano notificate, così SosNotificationRecovery non le rilancia
+    @Test
+    void raiseCancelCyclesPushOperatorsAtMostThreeTimes() throws InterruptedException {
+        registerDevice(tokenFor(createUser(Role.RESCUE_OPERATOR)), "operator-phone", "ANDROID");
+        String hiker = obtainToken(Role.HIKER);
+
+        List<UUID> alerts = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            HttpResult raised = call(HttpMethod.POST, "/api/v1/sos", hiker, """
+                    {"location":{"lat":39.3050,"lon":16.5020}}
+                    """);
+            assertThat(raised.status()).isEqualTo(201);
+            UUID alertId = UUID.fromString(json(raised.body()).get("id").asString());
+            alerts.add(alertId);
+            assertThat(call(HttpMethod.DELETE, "/api/v1/sos/" + alertId, hiker, null).status()).isEqualTo(204);
+        }
+
+        awaitTrue(() -> alerts.stream().allMatch(id -> notifiedAt(id) != null));
+        assertThat(pushedTypes("operator-phone")).hasSize(3);
+    }
+
     @Test
     void failedPushLeavesAlertUnnotifiedAndRecoveryDeliversItLater() {
         registerDevice(tokenFor(createUser(Role.RESCUE_OPERATOR)), "operator-phone", "ANDROID");

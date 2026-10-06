@@ -1,6 +1,7 @@
 package it.unical.geosentinel.media;
 
 import io.minio.BucketExistsArgs;
+import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.StatObjectArgs;
@@ -41,6 +42,7 @@ class MediaUploadIT extends AbstractIntegrationTest {
     private static final String SECRET_KEY = "test-secret-key";
     private static final String BUCKET = "geosentinel-media";
     private static final byte[] JPEG = jpeg(2048);
+    private static final String STAGING = "staging/";
 
     // Stessa immagine del compose (le ufficiali minio/minio non si scaricano più)
     private static final GenericContainer<?> MINIO =
@@ -156,11 +158,37 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(postToStorage(session, Map.of(), text).status()).isEqualTo(204);
         assertThat(json(confirm(hiker, session).body()).get("status").asString()).isEqualTo("QUARANTINED");
 
-        String key = session.get("formFields").get("key").asString();
-        assertThatThrownBy(() -> admin.statObject(StatObjectArgs.builder().bucket(BUCKET).object(key).build()))
-                .isInstanceOf(ErrorResponseException.class);
+        // né la copia di staging né l'oggetto finale
+        String stagingKey = session.get("formFields").get("key").asString();
+        assertThat(stagingKey).startsWith(STAGING);
+        for (String key : new String[]{stagingKey, stagingKey.substring(STAGING.length())}) {
+            assertThatThrownBy(() -> admin.statObject(StatObjectArgs.builder().bucket(BUCKET).object(key).build()))
+                    .isInstanceOf(ErrorResponseException.class);
+        }
         // Un retry del confirm restituisce lo stesso esito
         assertThat(json(confirm(hiker, session).body()).get("status").asString()).isEqualTo("QUARANTINED");
+    }
+
+    // Audit 2026-10, pista 2: la policy resta valida 10 minuti, ma dopo il confirm scrive solo sullo staging.
+    // L'oggetto verificato non cambia e lo staging lo cancella la regola di lifecycle del bucket
+    @Test
+    void policyReusedAfterConfirmCannotReplaceTheVerifiedObject() throws Exception {
+        String hiker = obtainToken(Role.HIKER);
+        JsonNode session = requestUpload(hiker, JPEG.length, "HAZARD_REPORT", createHazard(hiker));
+        assertThat(postToStorage(session, Map.of(), JPEG).status()).isEqualTo(204);
+        assertThat(json(confirm(hiker, session).body()).get("status").asString()).isEqualTo("READY");
+
+        byte[] replacement = "<script>not the verified photo</script>".getBytes(StandardCharsets.UTF_8);
+        assertThat(postToStorage(session, Map.of(), replacement).status()).isEqualTo(204);
+
+        String finalKey = session.get("formFields").get("key").asString().substring(STAGING.length());
+        try (var stored = admin.getObject(GetObjectArgs.builder().bucket(BUCKET).object(finalKey).build())) {
+            assertThat(stored.readAllBytes()).isEqualTo(JPEG);
+        }
+        // un nuovo confirm restituisce l'esito già registrato, senza rileggere lo staging
+        JsonNode media = json(confirm(hiker, session).body());
+        assertThat(media.get("status").asString()).isEqualTo("READY");
+        assertThat(media.get("sizeBytes").asLong()).isEqualTo(JPEG.length);
     }
 
     // ------------------------------------------------------------------------------------------------------------

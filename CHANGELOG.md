@@ -13,7 +13,24 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
   dal più vicino (`radius` in metri, default 5000, massimo 50000; `limit` default 30, massimo 50), solo da loggati.
   Usa l'indice GiST su `location::geography` già in V4. Serve a "Pericoli vicino a me" dell'app (M4.4).
 
+### Modificato
+- `GET /hazards/trail/{trailId}`: le segnalazioni `SUBMITTED` le vedono solo chi le ha fatte e i `PARK_MANAGER`
+  (prima tutti); al massimo 50 risultati, dalla più recente.
+- Prenotazioni: check-in al massimo a 365 giorni e al massimo 5 prenotazioni attive per utente, altrimenti 422 (ADR-0021).
+- Upload dei media: il POST presigned scrive su `staging/<key>`; il confirm copia l'oggetto sulla chiave finale e lo
+  verifica lì. Il contratto per l'app non cambia (si usano i `formFields` restituiti). `minio-init` aggiunge una regola
+  di lifecycle che cancella lo staging dopo un giorno: va rilanciato (`docker compose up -d`).
+
 ### Sicurezza
+- Audit del 05/10, tutte e 7 le piste confermate da un IT e corrette:
+  - una refresh concorrente al cambio password o alla cancellazione dell'account sopravviveva alla revoca: ora lock
+    sulla riga dell'utente in `changePassword`, `deleteAccount` e `refresh`;
+  - la policy POST di MinIO, valida 10 minuti, sostituiva un file già verificato: ora upload su staging;
+  - un ciclo SOS raise → cancel mandava una push agli operatori a ogni giro: al massimo 3 ogni 15 minuti (ADR-0021);
+  - un account occupava tutti i posti di un rifugio, e un check-in lontanissimo bloccava il rifugio con un
+    `generate_series` enorme: tetto per utente, orizzonte di 365 giorni, `statement_timeout = 30s`;
+  - un access token revocato tornava valido per 60 s dopo `exp` (tolleranza di `JwtTimestampValidator`): tolleranza a 0;
+  - `GET /hazards/trail/{id}` senza `LIMIT` e con le `SUBMITTED` di tutti: vedi sopra.
 - Periodo di grazia di 60 secondi sul refresh token appena ruotato, se il successore non è mai stato usato
   (ADR-0019): una risposta di refresh persa per la rete non chiude più la sessione. Migration V10.
 

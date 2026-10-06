@@ -107,7 +107,8 @@ public class AuthService {
     // Revoca tutte le sessioni (anche quelle di un eventuale ladro) e ne apre una nuova per chi ha cambiato la password
     @Transactional
     public AuthTokens changePassword(UUID userId, String currentPassword, String newPassword) {
-        User user = userRepository.findById(userId)
+        // Lock sull'utente: un refresh concorrente attende e poi trova la famiglia già revocata
+        User user = userRepository.findByIdForUpdate(userId)
                 .filter(User::isEnabled)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
         // Stesso limite per account del login: con un access token rubato (15 min) non si indovina la password
@@ -154,6 +155,12 @@ public class AuthService {
     public AuthTokens refresh(String rawRefreshToken) {
         Instant now = clock.instant();
         String hash = sha256Hex(rawRefreshToken);
+
+        // Prima il lock sull'utente, poi il token: stesso ordine di changePassword e deleteAccount (niente deadlock).
+        // Un cambio password in corso finisce prima, e la revoca dei suoi token si vede nell'UPDATE qui sotto
+        UUID userId = refreshTokenRepository.findUserIdByTokenHash(hash)
+                .orElseThrow(() -> new BadCredentialsException("Invalid refresh token"));
+        userRepository.findByIdForUpdate(userId);
 
         // UPDATE atomico: solo una richiesta concorrente vince la rotazione
         int updatedRows = refreshTokenRepository.revokeIfActive(hash, now);

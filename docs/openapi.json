@@ -1245,6 +1245,7 @@
     },
     "/api/v1/hazards/trail/{trailId}" : {
       "get" : {
+        "description" : "Verified hazards of all users; submitted ones only of the caller (all of them for a park manager)",
         "operationId" : "findActiveHazardsByTrail",
         "parameters" : [ {
           "in" : "path",
@@ -1333,7 +1334,7 @@
         "security" : [ {
           "bearerAuth" : [ ]
         } ],
-        "summary" : "List active hazards near a specific trail (buffer 100m)",
+        "summary" : "List active hazards near a specific trail (buffer 100m), newest first, at most 50",
         "tags" : [ "Hazard Reports" ]
       }
     },

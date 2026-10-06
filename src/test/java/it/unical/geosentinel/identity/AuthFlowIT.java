@@ -120,14 +120,15 @@ class AuthFlowIT extends AbstractIntegrationTest {
     @Test
     void expiredAccessTokenIsRejected() {
         UUID userId = createUser(Role.HIKER).getId();
-        // oltre i 60 s di tolleranza di JwtTimestampValidator
-        Instant past = Instant.now().minus(Duration.ofMinutes(10));
+        // Scaduto da 2 s: con la tolleranza di default (60 s) passava, e un token revocato tornava valido dopo exp,
+        // quando le chiavi della blacklist su Redis erano già scadute (audit 2026-10, pista 6)
+        Instant now = Instant.now();
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .issuer("https://geosentinel.dev")
                 .subject(userId.toString())
                 .id(UUID.randomUUID().toString())
-                .issuedAt(past)
-                .expiresAt(past.plus(Duration.ofMinutes(5)))
+                .issuedAt(now.minus(Duration.ofMinutes(15)))
+                .expiresAt(now.minusSeconds(2))
                 .claim("roles", List.of("HIKER"))
                 .build();
         String expired = jwtEncoder.encode(JwtEncoderParameters.from(JwsHeader.with(MacAlgorithm.HS256).build(), claims))

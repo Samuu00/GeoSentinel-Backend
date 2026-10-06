@@ -44,6 +44,8 @@ public interface BookingRepository extends JpaRepository<Booking, UUID>{
     Optional<Booking> findByUserIdAndIdempotencyKey(UUID userId, UUID idempotencyKey);
     Page<Booking> findByUserId(UUID userId, Pageable pageable);
     List<Booking> findByUserIdAndStatusAndCheckInGreaterThanEqual(UUID userId, BookingStatus status, LocalDate from);
+    // Prenotazioni non ancora concluse di un utente: tetto per utente in RefugeBookingService.book
+    long countByUserIdAndStatusAndCheckOutAfter(UUID userId, BookingStatus status, LocalDate date);
     @Query(value = """
             SELECT b.* FROM bookings b
             WHERE b.refuge_id = :refugeId

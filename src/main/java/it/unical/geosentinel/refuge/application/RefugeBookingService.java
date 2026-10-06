@@ -36,6 +36,10 @@ import java.util.UUID;
 @Service
 public class RefugeBookingService {
     private static final double MAX_SEARCH_RADIUS_METERS = 50_000.0;
+    // Orizzonte del check-in: oltre, generate_series di maxNightlyOccupancy diventa enorme (sotto il lock del rifugio)
+    static final int MAX_DAYS_AHEAD = 365;
+    // Tetto per utente: un solo account non occupa un rifugio per mesi (nessuna API libera i posti altrui)
+    static final int MAX_ACTIVE_BOOKINGS_PER_USER = 5;
 
     private final RefugeRepository refugeRepository;
     private final BookingRepository bookingRepository;
@@ -54,6 +58,9 @@ public class RefugeBookingService {
         LocalDate today = LocalDate.now(clock);
         if (checkIn.isBefore(today)) {
             throw new BusinessRuleViolationException("Check-in date cannot be in the past");
+        }
+        if (checkIn.isAfter(today.plusDays(MAX_DAYS_AHEAD))) {
+            throw new BusinessRuleViolationException("Check-in date cannot be more than " + MAX_DAYS_AHEAD + " days ahead");
         }
         if (!checkOut.isAfter(checkIn)) {
             throw new BusinessRuleViolationException("Check-out date must be strictly after check-in date");
@@ -84,6 +91,12 @@ public class RefugeBookingService {
         }
 
         validateBookingDates(cmd.checkIn(), cmd.checkOut());
+        // ponytail: il lock è sul rifugio, non sull'utente: richieste simultanee su rifugi diversi possono superare il
+        // tetto di qualche unità. Serve un lock per utente se diventa un problema
+        if (bookingRepository.countByUserIdAndStatusAndCheckOutAfter(userId, BookingStatus.CONFIRMED, LocalDate.now(clock))
+                >= MAX_ACTIVE_BOOKINGS_PER_USER) {
+            throw new BusinessRuleViolationException("Too many active bookings: at most " + MAX_ACTIVE_BOOKINGS_PER_USER);
+        }
 
         int maxOccupancy = bookingRepository.maxNightlyOccupancy(refuge.getId(), cmd.checkIn(), cmd.checkOut());
         int remainingCapacity = refuge.getCapacity() - maxOccupancy;

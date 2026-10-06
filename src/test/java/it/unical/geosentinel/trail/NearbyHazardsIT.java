@@ -8,6 +8,7 @@ import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -81,6 +82,36 @@ class NearbyHazardsIT extends AbstractIntegrationTest {
         assertThat(call(HttpMethod.GET, NEARBY + "&radius=50001", hiker, null).status()).isEqualTo(400);
         assertThat(call(HttpMethod.GET, NEARBY + "&limit=51", hiker, null).status()).isEqualTo(400);
         assertThat(call(HttpMethod.GET, "/api/v1/hazards/nearby?lon=7", hiker, null).status()).isEqualTo(400);
+    }
+
+    // Audit 2026-10, pista 7: /hazards/trail/{id} mostra le VERIFIED a tutti, le SUBMITTED solo a chi le ha fatte
+    // e al PARK_MANAGER, dalla più recente e al massimo 50
+    @Test
+    void trailHazardsShowSubmittedOnlyToTheirReporterAndToParkManagers() {
+        UUID trailId = insertTrail("Sentiero pericoli", "LINESTRING(%s %s, %s %s)".formatted(LON, LAT, LON, LAT + 0.01));
+        String reporter = obtainToken(Role.HIKER);
+        String verified = createVerified(reporter, LAT + 0.001);
+        String submitted = createHazard(reporter, LAT + 0.002);
+        String path = "/api/v1/hazards/trail/" + trailId;
+
+        assertThat(ids(json(call(HttpMethod.GET, path, obtainToken(Role.HIKER), null).body()))).containsExactly(verified);
+        assertThat(ids(json(call(HttpMethod.GET, path, reporter, null).body()))).containsExactly(submitted, verified);
+        assertThat(ids(json(call(HttpMethod.GET, path, obtainToken(Role.PARK_MANAGER), null).body())))
+                .containsExactly(submitted, verified);
+    }
+
+    @Test
+    void trailHazardsAreLimited() {
+        UUID trailId = insertTrail("Sentiero affollato", "LINESTRING(%s %s, %s %s)".formatted(LON, LAT, LON, LAT + 0.01));
+        UUID reporter = createUser(Role.HIKER).getId();
+        jdbcTemplate.update("""
+                INSERT INTO hazard_reports (id, reporter_id, type, severity, status, location, created_at)
+                SELECT gen_random_uuid(), ?, 'FALLEN_TREE', 'LOW', 'VERIFIED', ST_SetSRID(ST_MakePoint(?, ?), 4326), now()
+                FROM generate_series(1, 60)
+                """, reporter, LON, LAT + 0.005);
+
+        assertThat(json(call(HttpMethod.GET, "/api/v1/hazards/trail/" + trailId, obtainToken(Role.HIKER), null).body()))
+                .hasSize(50);
     }
 
     private String createVerified(String token, double lat) {

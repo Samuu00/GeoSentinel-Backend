@@ -12,6 +12,9 @@ import java.time.Instant;
 
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID> {
     Optional<RefreshToken> findByTokenHash(String token);
+    // Solo l'id dell'utente, senza caricare il token: il refresh blocca l'utente prima di toccare il token
+    @Query("SELECT r.user.id FROM RefreshToken r WHERE r.tokenHash = :hash")
+    Optional<UUID> findUserIdByTokenHash(@Param("hash") String tokenHash);
     @Modifying
     @Query("UPDATE RefreshToken r SET r.revokedAt = :now WHERE r.tokenHash = :hash AND r.revokedAt IS NULL")
     int revokeIfActive(@Param("hash") String tokenHash, @Param("now") Instant now);

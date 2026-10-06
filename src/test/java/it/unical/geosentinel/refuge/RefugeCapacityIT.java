@@ -48,6 +48,41 @@ class RefugeCapacityIT extends AbstractIntegrationTest {
         assertThat(changeCapacity(tokenFor(manager), refugeId, 1).status()).isEqualTo(200);
     }
 
+    // Audit 2026-10, piste 4 e 5: check-in al massimo a un anno (niente generate_series enormi sotto il lock del
+    // rifugio) e al massimo 5 prenotazioni attive per utente (un account non occupa un rifugio per mesi)
+    @Test
+    void checkInTooFarAheadIsRejected() {
+        UUID refugeId = insertRefuge(10, createUser(Role.PARK_MANAGER).getId());
+        String hiker = obtainToken(Role.HIKER);
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+
+        HttpResult farAhead = book(hiker, refugeId, today.plusDays(366), 1);
+        assertThat(farAhead.status()).isEqualTo(422);
+        assertThat(isProblemJson(farAhead)).isTrue();
+        assertThat(book(hiker, refugeId, today.plusDays(365), 1).status()).isEqualTo(201);
+    }
+
+    @Test
+    void oneUserCannotHoldMoreThanFiveActiveBookings() {
+        UUID refugeId = insertRefuge(20, createUser(Role.PARK_MANAGER).getId());
+        String hoarder = obtainToken(Role.HIKER);
+        LocalDate checkIn = LocalDate.now(ZoneOffset.UTC).plusDays(10);
+
+        for (int i = 0; i < 5; i++) {
+            assertThat(book(hoarder, refugeId, checkIn.plusDays(i * 2L), 2).status()).isEqualTo(201);
+        }
+        assertThat(book(hoarder, refugeId, checkIn.plusDays(20), 2).status()).isEqualTo(422);
+        // gli altri continuano a prenotare
+        assertThat(book(obtainToken(Role.HIKER), refugeId, checkIn, 2).status()).isEqualTo(201);
+    }
+
+    private HttpResult book(String token, UUID refugeId, LocalDate checkIn, int guests) {
+        return call(HttpMethod.POST, "/api/v1/bookings", token, """
+                {"refugeId":"%s","checkIn":"%s","checkOut":"%s","guests":%d}
+                """.formatted(refugeId, checkIn, checkIn.plusDays(1), guests),
+                Map.of("Idempotency-Key", UUID.randomUUID().toString()));
+    }
+
     private HttpResult changeCapacity(String token, UUID refugeId, int capacity) {
         return call(HttpMethod.PATCH, "/api/v1/refuges/" + refugeId + "/capacity", token, """
                 {"capacity":%d}

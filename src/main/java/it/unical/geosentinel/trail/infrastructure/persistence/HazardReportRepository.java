@@ -12,13 +12,21 @@ import java.util.UUID;
 import java.util.List;
 
 public interface HazardReportRepository extends JpaRepository<HazardReport, UUID> {
+    // VERIFIED di tutti; SUBMITTED (non ancora verificate) solo del richiedente, o tutte se includeAllSubmitted
+    // (PARK_MANAGER, che le deve verificare). Dalla più recente, con LIMIT: qualsiasi HIKER può crearne
     @Query(value = """
             SELECT h.* FROM hazard_reports h
             INNER JOIN trails t ON t.id = :trailId
-            WHERE h.status IN ('SUBMITTED', 'VERIFIED')
+            WHERE (h.status = 'VERIFIED'
+                   OR (h.status = 'SUBMITTED' AND (:includeAllSubmitted OR h.reporter_id = :requesterId)))
               AND ST_DWithin(h.location::geography, t.path::geography, :bufferMeters)
+            ORDER BY h.created_at DESC
+            LIMIT :limit
             """, nativeQuery = true)
-    List<HazardReport> findActiveNearTrail(@Param("trailId") UUID trailId, @Param("bufferMeters") double bufferMeters);
+    List<HazardReport> findActiveNearTrail(@Param("trailId") UUID trailId, @Param("bufferMeters") double bufferMeters,
+                                           @Param("requesterId") UUID requesterId,
+                                           @Param("includeAllSubmitted") boolean includeAllSubmitted,
+                                           @Param("limit") int limit);
 
     List<HazardReport> findByStatus(HazardStatus status);
 

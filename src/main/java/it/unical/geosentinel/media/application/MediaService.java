@@ -124,8 +124,9 @@ public class MediaService {
             return MediaFileView.from(mediaFile);
         }
 
+        // Verifica sull'oggetto finale, dopo la promozione dallo staging: il client non può più sostituirlo
         String key = mediaFile.getObjectKey();
-        StoredObject stored = objectStorage.stat(key)
+        StoredObject stored = objectStorage.promoteUpload(key)
                 .orElseThrow(() -> new BusinessRuleViolationException(
                         "File was not found on object storage. Upload must be completed prior to confirmation"
                 ));
