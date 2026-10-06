@@ -8,7 +8,7 @@ name: geosentinel-prod
 
 services:
   postgres:
-    image: postgis/postgis:16-3.4-alpine
+    image: postgis/postgis:17-3.5-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB mancante}
@@ -140,7 +140,7 @@ services:
   # ponytail: sleep di 24 h dall'avvio (non a un'ora fissa) e copia sullo stesso server; per un guasto del
   # server va copiata altrove (rclone, snapshot del provider) quando i dati diventano importanti
   db-backup:
-    image: postgis/postgis:16-3.4-alpine
+    image: postgis/postgis:17-3.5-alpine
     restart: unless-stopped
     environment:
       PGHOST: postgres
