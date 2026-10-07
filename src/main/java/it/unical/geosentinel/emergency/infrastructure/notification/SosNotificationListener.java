@@ -56,7 +56,7 @@ public class SosNotificationListener {
         try {
             List<UUID> operators = userQueryService.activeUserIdsWithRole(Role.RESCUE_OPERATOR);
             DeliveryReport report = deviceService.sendToUsers(operators, new PushMessage(
-                    "SOS alert", "A hiker needs help: open GeoSentinel", data("SOS_RAISED", event.alertId())));
+                    "Nuovo SOS", "Un escursionista ha chiesto aiuto. Tocca per aprire le allerte.", data("SOS_RAISED", event.alertId())));
             // Riuscito se almeno un dispositivo l'ha ricevuto: riprovare finché tutti lo ricevono ripeterebbe la push
             // ogni 30 s agli altri operatori per un solo token guasto. Nessun dispositivo registrato: non c'è a chi
             // riprovare, l'allerta resta comunque nella lista degli operatori (findActiveSosAlerts)
@@ -79,12 +79,15 @@ public class SosNotificationListener {
     @Async("sosNotificationExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onSosAlertStatusChanged(SosAlertStatusChangedEvent event) {
-        String body = event.status() == SosStatus.DISPATCHED
-                ? "A rescue team is on its way"
-                : "Your SOS alert has been closed";
+        // Testi in italiano, gli stessi che l'app mostra quando la push arriva in primo piano
+        boolean dispatched = event.status() == SosStatus.DISPATCHED;
+        String title = dispatched ? "Soccorso in arrivo" : "Allerta chiusa";
+        String body = dispatched
+                ? "Una squadra è stata inviata verso di te. Tieni l’app aperta."
+                : "Il soccorso ha chiuso la tua richiesta di aiuto.";
         try {
             deviceService.sendToUsers(List.of(event.hikerId()),
-                    new PushMessage("SOS update", body, data("SOS_" + event.status().name(), event.alertId())));
+                    new PushMessage(title, body, data("SOS_" + event.status().name(), event.alertId())));
         } catch (Exception e) {
             log.error("Failed to notify SOS status {} for alert ID: {}", event.status(), event.alertId(), e);
         }
