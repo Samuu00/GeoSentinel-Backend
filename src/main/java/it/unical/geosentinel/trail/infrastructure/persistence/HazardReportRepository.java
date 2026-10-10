@@ -30,6 +30,9 @@ public interface HazardReportRepository extends JpaRepository<HazardReport, UUID
 
     List<HazardReport> findByStatus(HazardStatus status);
 
+    // Coda "Da verificare" del gestore (M8.1 dell'app): le SUBMITTED di tutti, anche lontane dai sentieri
+    Page<HazardReport> findByStatus(HazardStatus status, Pageable pageable);
+
     // Le segnalazioni di un utente (lista "Le mie segnalazioni" dell'app), su idx_hazard_reports_reporter
     Page<HazardReport> findByReporterId(UUID reporterId, Pageable pageable);
 

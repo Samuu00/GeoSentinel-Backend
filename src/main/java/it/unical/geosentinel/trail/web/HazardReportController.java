@@ -71,6 +71,16 @@ public class HazardReportController {
         return new PagedModel<>(hazardReportService.findMine(reporterId, pageable).map(trailMapper::toResponse));
     }
 
+    // Coda del gestore: le segnalazioni ancora da verificare di tutti, dalla più recente. "/pending" vince su "/{id}"
+    @GetMapping("/pending")
+    @Operation(operationId = "findPendingHazards", summary = "List hazard reports awaiting verification (park manager), newest first", security = @SecurityRequirement(name = "bearerAuth"))
+    public PagedModel<HazardResponse> getPendingHazardReports(
+            @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        checkSortable(pageable.getSort());
+        return new PagedModel<>(hazardReportService.findPending(pageable).map(trailMapper::toResponse));
+    }
+
     // I pericoli attivi (VERIFIED) intorno a un punto, di tutti gli utenti, dal più vicino. Lista come /pois/nearby:
     // niente Pageable (con una query nativa un ?sort= arriverebbe nell'SQL). "/nearby" vince su "/{id}" (path letterale)
     @GetMapping("/nearby")

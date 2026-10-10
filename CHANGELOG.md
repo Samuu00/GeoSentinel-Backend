@@ -6,6 +6,10 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 ## [Non rilasciato]
 
 ### Aggiunto
+- `GET /hazards/pending` (`findPendingHazards`, solo `PARK_MANAGER`): le segnalazioni `SUBMITTED` di tutti, ovunque
+  siano, paginate, dalla più recente (sort solo su `createdAt`). `/hazards/trail/{id}` vede solo quelle entro 100 m da
+  un sentiero: una segnalazione dalla mappa lontana dai sentieri non arrivava mai a un gestore. Serve alla scheda
+  Gestione dell'app (M8.1). `PendingHazardsIT`.
 - `GET /hazards/mine` (`findMyHazards`): le segnalazioni dell'utente corrente in ogni stato, paginate, dalla più
   recente (sort solo su `createdAt`). Serve alla lista "Le mie segnalazioni" dell'app (M4.3).
 - `HazardResponse.createdAt` (obbligatorio): data della segnalazione. Il client va rigenerato.

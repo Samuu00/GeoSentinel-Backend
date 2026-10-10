@@ -68,6 +68,15 @@ public class HazardReportService {
                 .map(h -> HazardView.from(h, geometryMapper));
     }
 
+    // Le segnalazioni da verificare (SUBMITTED) di tutti, ovunque siano: /hazards/trail/{id} vede solo quelle entro
+    // 100 m da un sentiero, e una segnalazione dalla mappa lontana dai sentieri non arriverebbe mai a un gestore
+    @Transactional(readOnly = true)
+    @PreAuthorize("hasRole('PARK_MANAGER')")
+    public Page<HazardView> findPending(Pageable pageable) {
+        return hazardReportRepository.findByStatus(HazardStatus.SUBMITTED, pageable)
+                .map(h -> HazardView.from(h, geometryMapper));
+    }
+
     // I pericoli attivi (VERIFIED) di tutti gli utenti intorno a un punto, dal più vicino. Limiti come per i POI
     @Transactional(readOnly = true)
     public List<HazardView> findNearby(double lon, double lat, double radiusMeters, int limit) {

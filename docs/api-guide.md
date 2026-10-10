@@ -59,7 +59,7 @@ Il cambio password (`POST /users/me/password`, che restituisce token nuovi) e la
 |---|---|---|
 | Sentieri | `GET /trails?bbox=`, `/trails/nearby`, `/trails/{id}`; `POST`, `PUT /{id}`, `PATCH /{id}/status` | lettura pubblica, scrittura `PARK_MANAGER` |
 | POI | `GET /pois/{id}`, `/pois/nearby`, `/pois/trail/{trailId}`; `POST` | lettura pubblica, scrittura `PARK_MANAGER` |
-| Segnalazioni | `POST /hazards`; `GET /hazards/{id}`, `/hazards/trail/{trailId}`; `PATCH /{id}/status` | creazione `HIKER`, verifica `PARK_MANAGER` |
+| Segnalazioni | `POST /hazards`; `GET /hazards/{id}`, `/hazards/trail/{trailId}`, `/hazards/mine`, `/hazards/nearby`, `/hazards/pending`; `PATCH /{id}/status` | creazione `HIKER`, verifica e `/pending` `PARK_MANAGER` |
 | Rifugi | `GET /refuges/{id}`, `/nearby`, `/{id}/availability`; `POST`; `PATCH /{id}/capacity` | lettura autenticata, scrittura del gestore del rifugio o `ADMIN` |
 | Prenotazioni | `POST /bookings`; `GET /bookings/my`, `/{id}`; `DELETE /{id}` | `HIKER`, solo le proprie |
 | Ticket | `/maintenance-tickets` (creazione, ricerca, modifica, assegnazione, stati, per sentiero) | `PARK_MANAGER` |
