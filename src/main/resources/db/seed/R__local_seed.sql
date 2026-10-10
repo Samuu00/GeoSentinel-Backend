@@ -42,6 +42,41 @@ VALUES ('20000000-0000-0000-0000-000000000001', 'Rifugio Monte Botte Donato',
         ST_SetSRID(ST_MakePoint(16.4520, 39.2780), 4326), 4, '00000000-0000-0000-0000-000000000002')
 ON CONFLICT DO NOTHING;
 
+-- Un secondo rifugio, più grande, sulla Sila Grande
+INSERT INTO refuges (id, name, location, capacity, manager_id)
+VALUES ('20000000-0000-0000-0000-000000000002', 'Rifugio Cupone',
+        ST_SetSRID(ST_MakePoint(16.5560, 39.3660), 4326), 24, '00000000-0000-0000-0000-000000000002')
+ON CONFLICT DO NOTHING;
+
+-- Descrizione dei rifugi (V11): UPDATE e non INSERT, così vale anche per un database già popolato
+UPDATE refuges SET
+    description = 'Piccolo bivacco in pietra al limite della faggeta, a pochi minuti dalla Fonte Botte Donato. '
+               || 'Quattro posti in una stanza unica con la stufa: si arriva in un''ora da Lorica per il sentiero dell''anello.',
+    altitude_m = 1830,
+    season = 'Aperto da giugno a settembre; d''inverno solo su prenotazione',
+    phone = '+39 0984 000 001'
+WHERE id = '20000000-0000-0000-0000-000000000001';
+
+UPDATE refuges SET
+    description = 'Rifugio con ristoro vicino al Lago Cecita, punto di partenza per le escursioni nella Sila Grande. '
+               || 'Camerate e camere doppie, cucina tipica silana e una sala comune con il camino.',
+    altitude_m = 1180,
+    season = 'Aperto tutto l''anno',
+    phone = '+39 0984 000 002'
+WHERE id = '20000000-0000-0000-0000-000000000002';
+
+INSERT INTO refuge_amenities (refuge_id, amenity)
+VALUES ('20000000-0000-0000-0000-000000000001', 'DRINKING_WATER'),
+       ('20000000-0000-0000-0000-000000000001', 'HEATING'),
+       ('20000000-0000-0000-0000-000000000001', 'DOGS_ALLOWED'),
+       ('20000000-0000-0000-0000-000000000002', 'DRINKING_WATER'),
+       ('20000000-0000-0000-0000-000000000002', 'RESTAURANT'),
+       ('20000000-0000-0000-0000-000000000002', 'HEATING'),
+       ('20000000-0000-0000-0000-000000000002', 'SHOWER'),
+       ('20000000-0000-0000-0000-000000000002', 'ELECTRICITY'),
+       ('20000000-0000-0000-0000-000000000002', 'SHEETS_PROVIDED')
+ON CONFLICT DO NOTHING;
+
 INSERT INTO bookings (id, refuge_id, user_id, check_in, check_out, guests, status, idempotency_key)
 VALUES ('21000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001',
         '00000000-0000-0000-0000-000000000004', CURRENT_DATE + 5, CURRENT_DATE + 7, 2, 'CONFIRMED',

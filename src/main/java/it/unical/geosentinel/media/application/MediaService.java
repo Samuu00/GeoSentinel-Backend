@@ -11,6 +11,7 @@ import it.unical.geosentinel.media.domain.MediaPolicy;
 import it.unical.geosentinel.media.domain.MediaStatus;
 import it.unical.geosentinel.media.domain.MediaTargetType;
 import it.unical.geosentinel.media.infrastructure.persistence.MediaFileRepository;
+import it.unical.geosentinel.refuge.application.RefugeBookingService;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
 import it.unical.geosentinel.trail.application.HazardReportService;
@@ -42,6 +43,7 @@ public class MediaService {
     private final ObjectStorage objectStorage;
     private final TrailService trailService;
     private final HazardReportService hazardReportService;
+    private final RefugeBookingService refugeService;
     private final Clock clock;
 
     public MediaService(
@@ -49,12 +51,14 @@ public class MediaService {
             ObjectStorage objectStorage,
             TrailService trailService,
             HazardReportService hazardReportService,
+            RefugeBookingService refugeService,
             Clock clock
     ) {
         this.mediaRepository = mediaRepository;
         this.objectStorage = objectStorage;
         this.trailService = trailService;
         this.hazardReportService = hazardReportService;
+        this.refugeService = refugeService;
         this.clock = clock;
     }
 
@@ -71,10 +75,10 @@ public class MediaService {
         return filename.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 
-    // Le foto di un sentiero sono contenuto ufficiale (visibile a tutti): solo PARK_MANAGER.
-    // Un escursionista allega foto alle proprie segnalazioni di pericolo
+    // Le foto di un sentiero o di un rifugio sono contenuto ufficiale (visibile a tutti): solo PARK_MANAGER, e per un rifugio
+    // solo il suo gestore (checkTarget). Un escursionista allega foto alle proprie segnalazioni di pericolo
     @Transactional
-    @PreAuthorize("#cmd.entityType() != T(it.unical.geosentinel.media.domain.MediaTargetType).TRAIL or hasRole('PARK_MANAGER')")
+    @PreAuthorize("#cmd.entityType() == null or #cmd.entityType() == T(it.unical.geosentinel.media.domain.MediaTargetType).HAZARD_REPORT or hasRole('PARK_MANAGER')")
     public UploadSessionView initiateUpload(UUID ownerId, InitUploadCommand cmd) {
         Instant now = clock.instant();
         MediaFile mediaFile = MediaFile.initUpload(
@@ -109,6 +113,12 @@ public class MediaService {
             case HAZARD_REPORT -> {
                 if (!hazardReportService.getHazardOrThrow(entityId).getReporterId().equals(ownerId)) {
                     throw new ResourceNotFoundException("Hazard", entityId);
+                }
+            }
+            // ponytail: solo il gestore del rifugio, non un ADMIN (servirebbe il ruolo qui): aggiungerlo se serve moderare
+            case REFUGE -> {
+                if (!refugeService.getRefugeOrThrow(entityId).isManagedBy(ownerId)) {
+                    throw new AccessDeniedException("Only the refuge manager can add photos to this refuge");
                 }
             }
         }
@@ -180,7 +190,7 @@ public class MediaService {
                 .orElseThrow(() -> new ResourceNotFoundException("MediaFile", mediaId));
     }
 
-    // I sentieri sono pubblici; una segnalazione segue la regola di HazardReportService.getHazard
+    // I sentieri sono pubblici, i rifugi visibili a ogni utente loggato; una segnalazione segue la regola di HazardReportService.getHazard
     // (una REJECTED la vedono solo PARK_MANAGER e chi l'ha fatta): unica fonte della regola, riusata tramite il proxy
     private boolean isTargetVisible(MediaTargetType entityType, UUID entityId) {
         if (entityType == null) {
@@ -188,6 +198,15 @@ public class MediaService {
         }
         if (entityType == MediaTargetType.TRAIL) {
             return true;
+        }
+        // i rifugi li vede ogni utente loggato (come GET /refuges/{id}): basta che esista
+        if (entityType == MediaTargetType.REFUGE) {
+            try {
+                refugeService.getRefugeOrThrow(entityId);
+                return true;
+            } catch (ResourceNotFoundException e) {
+                return false;
+            }
         }
         try {
             hazardReportService.getHazard(entityId);

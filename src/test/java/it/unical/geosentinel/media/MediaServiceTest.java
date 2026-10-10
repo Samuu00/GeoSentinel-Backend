@@ -1,5 +1,6 @@
 package it.unical.geosentinel.media;
 
+import it.unical.geosentinel.refuge.application.RefugeBookingService;
 import it.unical.geosentinel.media.application.MediaService;
 import it.unical.geosentinel.media.application.dto.MediaCommands.InitUploadCommand;
 import it.unical.geosentinel.media.application.port.ObjectStorage;
@@ -40,7 +41,7 @@ class MediaServiceTest {
     private final MediaFileRepository repository = mock(MediaFileRepository.class);
     private final ObjectStorage storage = mock(ObjectStorage.class);
     private final HazardReportService hazards = mock(HazardReportService.class);
-    private final MediaService service = new MediaService(repository, storage, mock(TrailService.class), hazards,
+    private final MediaService service = new MediaService(repository, storage, mock(TrailService.class), hazards, mock(RefugeBookingService.class),
             Clock.fixed(Instant.parse("2026-09-28T10:00:00Z"), ZoneOffset.UTC));
 
     private MediaFile readyHazardPhoto(UUID hazardId) {

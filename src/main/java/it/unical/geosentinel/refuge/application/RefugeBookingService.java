@@ -188,6 +188,7 @@ public class RefugeBookingService {
     @PreAuthorize("hasRole('PARK_MANAGER')")
     public RefugeView createRefuge(CreateRefugeCommand cmd){
         Refuge refuge = new Refuge(cmd.name(), cmd.location(), cmd.capacity(), cmd.managerId());
+        refuge.describe(cmd.description(), cmd.altitudeM(), cmd.season(), cmd.phone(), cmd.amenities());
         return RefugeView.from(refugeRepository.save(refuge), geometryMapper);
     }
 

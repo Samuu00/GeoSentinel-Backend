@@ -6,6 +6,12 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 ## [Non rilasciato]
 
 ### Aggiunto
+- Rifugi descritti (V11): `RefugeResponse` con `description`, `altitudeM`, `season`, `phone` (facoltativi) e `amenities`
+  (sempre presente, elenco fisso `RefugeAmenity` nell'ordine dell'enum, tabella `refuge_amenities`); gli stessi campi,
+  facoltativi, in `CreateRefugeRequest`. Il client va rigenerato. Seed: i due rifugi descritti (nuovo Rifugio Cupone).
+  `RefugeDetailsIT`.
+- Foto dei rifugi: `MediaTargetType.REFUGE`; le carica solo il gestore del rifugio, le vede ogni utente loggato.
+  `MediaUploadIT`.
 - `GET /hazards/pending` (`findPendingHazards`, solo `PARK_MANAGER`): le segnalazioni `SUBMITTED` di tutti, ovunque
   siano, paginate, dalla più recente (sort solo su `createdAt`). `/hazards/trail/{id}` vede solo quelle entro 100 m da
   un sentiero: una segnalazione dalla mappa lontana dai sentieri non arrivava mai a un gestore. Serve alla scheda

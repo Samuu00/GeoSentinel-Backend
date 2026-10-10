@@ -1,13 +1,23 @@
 package it.unical.geosentinel.refuge.domain;
 
+import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.BatchSize;
 import it.unical.geosentinel.shared.domain.AuditableEntity;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
 import org.locationtech.jts.geom.Point;
 
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -21,6 +31,22 @@ public class Refuge extends AuditableEntity{
     private Integer capacity;
     @Column(name = "manager_id", nullable = false)
     private UUID managerId;
+    // Descrizione (V11): tutto facoltativo
+    @Column(name = "description", length = 2000)
+    private String description;
+    @Column(name = "altitude_m")
+    private Integer altitudeM;
+    @Column(name = "season", length = 200)
+    private String season;
+    @Column(name = "phone", length = 30)
+    private String phone;
+    // LAZY con BatchSize: la lista dei rifugi vicini (fino a 50) li legge con una query sola, non una per rifugio
+    @ElementCollection
+    @CollectionTable(name = "refuge_amenities", joinColumns = @JoinColumn(name = "refuge_id"))
+    @Column(name = "amenity", nullable = false, length = 30)
+    @Enumerated(EnumType.STRING)
+    @BatchSize(size = 50)
+    private Set<RefugeAmenity> amenities = new HashSet<>();
 
     protected Refuge() {}
 
@@ -54,10 +80,33 @@ public class Refuge extends AuditableEntity{
 
     public void changeCapacity(int newCapacity) { this.capacity = validateCapacity(newCapacity); }
 
+    /** Descrizione, quota, stagione, telefono e servizi: tutti facoltativi (null o vuoti), testi senza spazi ai bordi. */
+    public void describe(String description, Integer altitudeM, String season, String phone, Collection<RefugeAmenity> amenities) {
+        if (altitudeM != null && (altitudeM < 0 || altitudeM > 5000)) {
+            throw new BusinessRuleViolationException("Altitude must be between 0 and 5000 meters");
+        }
+        this.description = blankToNull(description);
+        this.altitudeM = altitudeM;
+        this.season = blankToNull(season);
+        this.phone = blankToNull(phone);
+        this.amenities.clear();
+        if (amenities != null) this.amenities.addAll(amenities);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+
     public boolean isManagedBy(UUID userId) { return managerId.equals(userId); }
 
     public String getName() { return name; }
     public Point getLocation() { return location; }
     public Integer getCapacity() { return capacity; }
     public UUID getManagerId() { return managerId; }
+    public String getDescription() { return description; }
+    public Integer getAltitudeM() { return altitudeM; }
+    public String getSeason() { return season; }
+    public String getPhone() { return phone; }
+    // nell'ordine dell'enum, non in quello del Set: l'app li mostra sempre uguali
+    public Set<RefugeAmenity> getAmenities() { return amenities.isEmpty() ? EnumSet.noneOf(RefugeAmenity.class) : EnumSet.copyOf(amenities); }
 }

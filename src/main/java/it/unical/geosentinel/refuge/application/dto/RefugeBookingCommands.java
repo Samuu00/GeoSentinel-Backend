@@ -3,11 +3,13 @@ package it.unical.geosentinel.refuge.application.dto;
 import it.unical.geosentinel.refuge.domain.Booking;
 import it.unical.geosentinel.refuge.domain.BookingStatus;
 import it.unical.geosentinel.refuge.domain.Refuge;
+import it.unical.geosentinel.refuge.domain.RefugeAmenity;
 import it.unical.geosentinel.shared.web.geo.GeoPointDto;
 import it.unical.geosentinel.shared.web.geo.GeometryMapper;
 import org.locationtech.jts.geom.Point;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -16,7 +18,12 @@ public class RefugeBookingCommands {
             String name,
             Point location,
             Integer capacity,
-            UUID managerId
+            UUID managerId,
+            String description,
+            Integer altitudeM,
+            String season,
+            String phone,
+            List<RefugeAmenity> amenities
     ) {}
     public record BookingCommand(
             UUID refugeId,
@@ -29,11 +36,17 @@ public class RefugeBookingCommands {
             String name,
             GeoPointDto location,
             Integer capacity,
-            UUID managerId
+            UUID managerId,
+            String description,
+            Integer altitudeM,
+            String season,
+            String phone,
+            List<RefugeAmenity> amenities
     ) {
         // GeoPointDto e non Point: le view non contengono geometrie JTS (non serializzabili in JSON)
         public static RefugeView from(Refuge r, GeometryMapper geo) {
-            return new RefugeView(r.getId(), r.getName(), geo.toDto(r.getLocation()), r.getCapacity(), r.getManagerId());
+            return new RefugeView(r.getId(), r.getName(), geo.toDto(r.getLocation()), r.getCapacity(), r.getManagerId(),
+                    r.getDescription(), r.getAltitudeM(), r.getSeason(), r.getPhone(), List.copyOf(r.getAmenities()));
         }
     }
     public record BookingView(

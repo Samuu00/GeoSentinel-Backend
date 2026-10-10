@@ -128,6 +128,34 @@ class MediaUploadIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void refugeManagerUploadsPhotoOnOwnRefugeAndAHikerSeesIt() {
+        var manager = createUser(Role.PARK_MANAGER);
+        String token = tokenFor(manager);
+        UUID refugeId = insertRefuge(10, manager.getId());
+
+        JsonNode session = requestUpload(token, JPEG.length, "REFUGE", refugeId);
+        assertThat(postToStorage(session, Map.of(), JPEG).status()).isEqualTo(204);
+        assertThat(json(confirm(token, session).body()).get("status").asString()).isEqualTo("READY");
+
+        HttpResult attached = call(HttpMethod.GET,
+                "/api/v1/media/attached?entityType=REFUGE&entityId=" + refugeId, obtainToken(Role.HIKER), null);
+        assertThat(attached.status()).isEqualTo(200);
+        assertThat(json(attached.body())).hasSize(1);
+    }
+
+    @Test
+    void onlyTheRefugeManagerUploadsPhotosOnARefuge() {
+        UUID refugeId = insertRefuge(10, createUser(Role.PARK_MANAGER).getId());
+        String body = """
+                {"originalFilename":"IMG_0001.jpg","contentType":"image/jpeg","sizeBytes":%d,"entityType":"REFUGE","entityId":"%s"}
+                """.formatted(JPEG.length, refugeId);
+
+        // un escursionista: ruolo sbagliato; un altro gestore: non è il suo rifugio
+        assertThat(call(HttpMethod.POST, "/api/v1/media/upload-requests", obtainToken(Role.HIKER), body).status()).isEqualTo(403);
+        assertThat(call(HttpMethod.POST, "/api/v1/media/upload-requests", obtainToken(Role.PARK_MANAGER), body).status()).isEqualTo(403);
+    }
+
+    @Test
     void storageRejectsFileLargerThanDeclared() {
         String hiker = obtainToken(Role.HIKER);
         JsonNode session = requestUpload(hiker, 1024, "HAZARD_REPORT", createHazard(hiker));
