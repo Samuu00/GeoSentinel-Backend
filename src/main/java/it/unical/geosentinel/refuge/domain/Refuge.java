@@ -57,9 +57,12 @@ public class Refuge extends AuditableEntity{
         this.managerId = Objects.requireNonNull(managerId, "managerId cannot be null");
     }
 
+    // lo stesso tetto dei DTO: vale anche per chi non passa dalla validazione web
+    public static final int MAX_CAPACITY = 1000;
+
     private static Integer validateCapacity(Integer capacity) {
-        if(capacity == null || capacity <= 0) {
-            throw new BusinessRuleViolationException("Capacity must be a positive integer");
+        if(capacity == null || capacity <= 0 || capacity > MAX_CAPACITY) {
+            throw new BusinessRuleViolationException("Capacity must be between 1 and " + MAX_CAPACITY);
         }
         return capacity;
     }

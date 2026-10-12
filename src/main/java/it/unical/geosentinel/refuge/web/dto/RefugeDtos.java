@@ -29,6 +29,8 @@ public class RefugeDtos {
             GeoPointDto location,
             @NotNull(message = "Capacity is required")
             @Min(value = 1, message = "Capacity must be at least 1")
+            // tetto: un numero enorme farebbe sembrare il rifugio sempre libero (review di sicurezza di M8 dell'app)
+            @Max(value = 1000, message = "Capacity must be at most 1000")
             Integer capacity,
             // niente managerId dal body: il gestore è chi crea il rifugio (sub del JWT)
             // Descrizione (V11): tutto facoltativo
@@ -60,6 +62,8 @@ public class RefugeDtos {
     public record UpdateCapacityRequest(
             @NotNull(message = "Capacity is required")
             @Min(value = 1, message = "Capacity must be at least 1")
+            // tetto: un numero enorme farebbe sembrare il rifugio sempre libero (review di sicurezza di M8 dell'app)
+            @Max(value = 1000, message = "Capacity must be at most 1000")
             Integer capacity
     ) {}
     // availableBedsPerNight: in JSON le chiavi sono stringhe ISO-8601 ("2026-10-01")

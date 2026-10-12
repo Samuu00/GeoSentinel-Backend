@@ -6201,6 +6201,7 @@
           "capacity" : {
             "type" : "integer",
             "format" : "int32",
+            "maximum" : 1000,
             "minimum" : 1
           },
           "description" : {
@@ -6975,6 +6976,7 @@
           "capacity" : {
             "type" : "integer",
             "format" : "int32",
+            "maximum" : 1000,
             "minimum" : 1
           }
         },

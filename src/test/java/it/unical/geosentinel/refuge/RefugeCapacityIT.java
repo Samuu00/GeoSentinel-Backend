@@ -37,6 +37,19 @@ class RefugeCapacityIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void capacityHasAnUpperBound() {
+        User manager = createUser(Role.PARK_MANAGER);
+        UUID refugeId = insertRefuge(10, manager.getId());
+
+        // un numero enorme farebbe sembrare il rifugio sempre libero
+        HttpResult huge = changeCapacity(tokenFor(manager), refugeId, Integer.MAX_VALUE);
+        assertThat(huge.status()).isEqualTo(400);
+        assertThat(json(huge.body()).get("type").asString()).endsWith("/validation-error");
+
+        assertThat(changeCapacity(tokenFor(manager), refugeId, 1000).status()).isEqualTo(200);
+    }
+
+    @Test
     void cancelledAndPastBookingsDoNotCount() {
         User manager = createUser(Role.PARK_MANAGER);
         UUID refugeId = insertRefuge(10, manager.getId());
