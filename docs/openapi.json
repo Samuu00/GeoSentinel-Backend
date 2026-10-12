@@ -3237,7 +3237,7 @@
             "type" : "integer",
             "format" : "int32",
             "default" : 30,
-            "maximum" : 50,
+            "maximum" : 300,
             "minimum" : 1
           }
         } ],
@@ -5215,7 +5215,7 @@
             "description" : "Unexpected error (internal-error)"
           }
         },
-        "summary" : "Find trails that cross a map bounding box (bbox=minLon,minLat,maxLon,maxLat), at most 200",
+        "summary" : "Find trails that cross a map bounding box (bbox=minLon,minLat,maxLon,maxLat), at most 500",
         "tags" : [ "Trails" ]
       },
       "post" : {
@@ -6460,6 +6460,9 @@
           "createdAt" : {
             "type" : "string",
             "format" : "date-time"
+          },
+          "credit" : {
+            "type" : "string"
           },
           "entityId" : {
             "type" : "string",

@@ -42,3 +42,6 @@ build/
 
 # Account di servizio Firebase (M7.4): nome predefinito del file scaricato dalla console
 *-firebase-adminsdk-*.json
+
+# Estratto OSM e file intermedi dell'import della Calabria (tools/osm-import)
+tools/osm-import/.cache/

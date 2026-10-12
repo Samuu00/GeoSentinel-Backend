@@ -25,7 +25,8 @@ import java.util.UUID;
 public class TrailService {
     static final double MAX_SEARCH_RADIUS_METERS = 50_000.0; // 50 km max
     static final int MAX_RESULTS = 50;
-    private static final int MAX_BBOX_RESULTS = 200;
+    // Tutti i sentieri della Calabria (circa 350) stanno in una richiesta: la mappa li ha subito, anche da lontano
+    private static final int MAX_BBOX_RESULTS = 500;
 
     private final TrailRepository trailRepository;
     private final GeometryMapper geometryMapper;

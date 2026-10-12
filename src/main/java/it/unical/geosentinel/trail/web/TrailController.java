@@ -71,7 +71,7 @@ public class TrailController {
     }
 
     @GetMapping
-    @Operation(operationId = "findTrailsInBoundingBox", summary = "Find trails that cross a map bounding box (bbox=minLon,minLat,maxLon,maxLat), at most 200")
+    @Operation(operationId = "findTrailsInBoundingBox", summary = "Find trails that cross a map bounding box (bbox=minLon,minLat,maxLon,maxLat), at most 500")
     public ResponseEntity<List<TrailSummaryResponse>> findInBoundingBox(@RequestParam String bbox) {
         List<TrailSummary> summaries = trailService.findInBoundingBox(parseBoundingBox(bbox));
         return ResponseEntity.ok(summaries.stream().map(trailMapper::toResponse).toList());

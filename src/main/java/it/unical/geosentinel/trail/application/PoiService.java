@@ -32,10 +32,13 @@ public class PoiService {
                 .orElseThrow(() -> new ResourceNotFoundException("Poi", id));
         return PoiView.from(poi, geometryMapper);
     }
+    // La mappa chiede i POI dell'area visibile: con le icone che si nascondono a vicenda (app) ne bastano anche tanti
+    static final int MAX_POI_RESULTS = 300;
+
     @Transactional(readOnly = true)
     public List<PoiView> findNearby(double lon, double lat, double radiusMeters, PoiType type, int limit) {
         double radius = Math.min(radiusMeters, TrailService.MAX_SEARCH_RADIUS_METERS);
-        int boundedLimit = Math.max(1, Math.min(limit, TrailService.MAX_RESULTS));
+        int boundedLimit = Math.max(1, Math.min(limit, MAX_POI_RESULTS));
         return poiRepository.findNearby(lon, lat, radius, type != null ? type.name() : null, boundedLimit)
                 .stream()
                 .map(poi -> PoiView.from(poi, geometryMapper))

@@ -49,7 +49,8 @@ public class MediaDtos {
             @Schema(requiredMode = REQUIRED) String downloadUrl
     ) {}
 
-    // checksum: null finché l'upload non è confermato
+    // checksum: null finché l'upload non è confermato. credit: autore e licenza di una foto importata da una fonte
+    // esterna, da mostrare accanto alla foto; null per quelle caricate dagli utenti
     public record MediaResponse(
             @Schema(requiredMode = REQUIRED) UUID id,
             @Schema(requiredMode = REQUIRED) String originalFilename,
@@ -59,6 +60,7 @@ public class MediaDtos {
             MediaTargetType entityType,
             UUID entityId,
             String checksum,
+            String credit,
             @Schema(requiredMode = REQUIRED) Instant createdAt
     ) {}
 }

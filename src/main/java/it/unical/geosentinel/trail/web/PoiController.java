@@ -56,7 +56,7 @@ public class PoiController {
             @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") double lat,
             @RequestParam(defaultValue = "5000.0") @Min(1) @Max(50000) double radius,
             @RequestParam(required = false) PoiType type,
-            @RequestParam(defaultValue = "30") @Min(1) @Max(50) int limit
+            @RequestParam(defaultValue = "30") @Min(1) @Max(300) int limit
     ) {
         List<PoiView> views = poiService.findNearby(lon, lat, radius, type, limit);
         return ResponseEntity.ok(views.stream().map(trailMapper::toResponse).toList());

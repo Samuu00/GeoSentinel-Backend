@@ -35,6 +35,7 @@ public class MediaCommands {
             MediaTargetType entityType,
             UUID entityId,
             String checksum,
+            String credit,
             Instant createdAt
     ) {
         public static MediaFileView from(MediaFile file) {
@@ -47,6 +48,7 @@ public class MediaCommands {
                     file.getEntityType(),
                     file.getEntityId(),
                     file.getChecksum(),
+                    file.getCredit(),
                     file.getCreatedAt()
             );
         }

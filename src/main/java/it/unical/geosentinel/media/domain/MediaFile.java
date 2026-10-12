@@ -36,6 +36,9 @@ public class MediaFile extends AuditableEntity {
     private UUID entityId;
     @Column(name = "checksum", length = 64)
     private String checksum;
+    // Autore e licenza di una foto importata (V12); null per quelle degli utenti. Solo in lettura dall'API
+    @Column(name = "credit", length = 300)
+    private String credit;
 
     @Version
     @Column(name = "version", nullable = false)
@@ -109,5 +112,6 @@ public class MediaFile extends AuditableEntity {
     public MediaTargetType getEntityType() { return entityType; }
     public UUID getEntityId() { return entityId; }
     public String getChecksum() { return checksum; }
+    public String getCredit() { return credit; }
     public Long getVersion() { return version; }
 }
