@@ -58,8 +58,12 @@ import java.util.Set;
 public class SecurityConfig {
     // register/login/refresh non usano l'access token: se il client ne allega uno scaduto,
     // BearerTokenAuthenticationFilter risponderebbe 401 anche su queste rotte permitAll
-    private static final Set<String> TOKENLESS_AUTH_PATHS =
-            Set.of("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh");
+    private static final Set<String> TOKENLESS_AUTH_PATHS = Set.of(
+            "/api/v1/auth/register",
+            "/api/v1/auth/login",
+            "/api/v1/auth/refresh",
+            "/api/v1/auth/password-reset/request",
+            "/api/v1/auth/password-reset/confirm");
 
     // GET pubbliche del catalogo con ETag (HttpCacheConfig): "no-cache" permette all'app di conservare la risposta
     // e la obbliga a rivalidarla con If-None-Match. Il "no-store" di default impedirebbe sia la cache del client

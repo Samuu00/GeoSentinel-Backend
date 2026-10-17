@@ -12,6 +12,7 @@ import it.unical.geosentinel.shared.domain.exception.OptimisticConflictException
 import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
 import it.unical.geosentinel.shared.domain.exception.StorageUnavailableException;
+import it.unical.geosentinel.shared.domain.exception.InvalidResetCodeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -249,6 +250,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handleAgeRequirementNotMet(AgeRequirementNotMetException ex, WebRequest request) {
         return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.AGE_REQUIREMENT_NOT_MET, "Age requirement not met",
                 "Registration is not available for this age", new HttpHeaders(), request);
+    }
+
+    // Un solo messaggio per tutti i motivi (sbagliato, scaduto, già usato, tentativi finiti): non si distingue quale
+    @ExceptionHandler(InvalidResetCodeException.class)
+    public ResponseEntity<Object> handleInvalidResetCode(InvalidResetCodeException ex, WebRequest request) {
+        return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.INVALID_RESET_CODE, "Invalid reset code",
+                "The reset code is invalid or expired", new HttpHeaders(), request);
     }
 
     // ---- metodi di supporto ----------------------------------------------------------------------------------------------

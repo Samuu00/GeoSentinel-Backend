@@ -27,3 +27,5 @@ del vecchio (`Sostituito da ADR-XXXX`). Il modello è in [`template.md`](templat
 | [0019](0019-periodo-di-grazia-refresh.md) | Periodo di grazia sul refresh token appena ruotato | 2026-10-02 | Accettato |
 | [0020](0020-percorso-nei-sentieri-della-mappa.md) | Percorso semplificato nei sentieri della mappa e bbox per intersezione | 2026-10-04 | Accettato |
 | [0021](0021-limiti-per-utente-sos-e-prenotazioni.md) | Limiti per utente sulle push SOS e sulle prenotazioni | 2026-10-06 | Accettato |
+| [0022](0022-calcolo-frane-worker-cpp.md) | Calcolo del rischio frane in un worker C++ (MPI + pthread) con il database come contratto | 2026-10-17 | Proposto |
+| [0023](0023-modello-frane.md) | Modello delle frane: pendio indefinito con Monte Carlo e automa cellulare | 2026-10-17 | Proposto |

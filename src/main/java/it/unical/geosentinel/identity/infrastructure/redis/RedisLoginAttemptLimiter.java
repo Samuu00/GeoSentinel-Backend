@@ -23,4 +23,9 @@ public class RedisLoginAttemptLimiter implements LoginAttemptLimiter {
         RateLimitDecision decision = redisRateLimiter.tryConsume(KEY_PREFIX + accountKey, POLICY);
         return decision.allowed() ? Optional.empty() : Optional.of(Duration.ofMillis(decision.retryAfterMillis()));
     }
+
+    @Override
+    public void reset(String accountKey) {
+        redisRateLimiter.reset(KEY_PREFIX + accountKey);
+    }
 }

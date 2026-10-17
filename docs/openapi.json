@@ -192,6 +192,113 @@
         "tags" : [ "Authentication" ]
       }
     },
+    "/api/v1/auth/password-reset/confirm" : {
+      "post" : {
+        "operationId" : "confirmPasswordReset",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/PasswordResetConfirmRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Invalid request (validation-error)"
+          },
+          "422" : {
+            "description" : "Code wrong, expired, already used or out of attempts"
+          },
+          "429" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Rate limit exceeded, see Retry-After (rate-limit-exceeded)"
+          },
+          "500" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Unexpected error (internal-error)"
+          }
+        },
+        "summary" : "Set a new password with the code received by email",
+        "tags" : [ "Authentication" ]
+      }
+    },
+    "/api/v1/auth/password-reset/request" : {
+      "post" : {
+        "operationId" : "requestPasswordReset",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/PasswordResetRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Invalid request (validation-error)"
+          },
+          "429" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Rate limit exceeded, see Retry-After (rate-limit-exceeded)"
+          },
+          "500" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Unexpected error (internal-error)"
+          }
+        },
+        "summary" : "Send a password reset code by email",
+        "tags" : [ "Authentication" ]
+      }
+    },
     "/api/v1/auth/refresh" : {
       "post" : {
         "operationId" : "refreshTokens",
@@ -6587,6 +6694,40 @@
         },
         "required" : [ "content", "page" ]
       },
+      "PasswordResetConfirmRequest" : {
+        "type" : "object",
+        "properties" : {
+          "code" : {
+            "type" : "string",
+            "maxLength" : 32,
+            "minLength" : 0
+          },
+          "email" : {
+            "type" : "string",
+            "format" : "email",
+            "maxLength" : 254,
+            "minLength" : 0
+          },
+          "newPassword" : {
+            "type" : "string",
+            "maxLength" : 2147483647,
+            "minLength" : 12
+          }
+        },
+        "required" : [ "code", "email", "newPassword" ]
+      },
+      "PasswordResetRequest" : {
+        "type" : "object",
+        "properties" : {
+          "email" : {
+            "type" : "string",
+            "format" : "email",
+            "maxLength" : 254,
+            "minLength" : 0
+          }
+        },
+        "required" : [ "email" ]
+      },
       "PoiResponse" : {
         "type" : "object",
         "properties" : {
@@ -6660,7 +6801,7 @@
           "type" : {
             "type" : "string",
             "format" : "uri",
-            "description" : "https://geosentinel.dev/problems/<slug>, stable slugs: account-managed, age-requirement-not-met, alert-already-taken, business-rule, capacity-exceeded, concurrent-modification, conflict, forbidden, idempotency-key-reused, internal-error, media-payload-too-large, media-quota-exceeded, media-unsupported-type, not-found, precondition-required, rate-limit-exceeded, resource-busy, storage-unavailable, unauthorized, validation-error. Clients must map the slug, never the detail text, and tolerate unknown slugs",
+            "description" : "https://geosentinel.dev/problems/<slug>, stable slugs: account-managed, age-requirement-not-met, alert-already-taken, business-rule, capacity-exceeded, concurrent-modification, conflict, forbidden, idempotency-key-reused, internal-error, invalid-reset-code, media-payload-too-large, media-quota-exceeded, media-unsupported-type, not-found, precondition-required, rate-limit-exceeded, resource-busy, storage-unavailable, unauthorized, validation-error. Clients must map the slug, never the detail text, and tolerate unknown slugs",
             "example" : "https://geosentinel.dev/problems/validation-error"
           }
         },

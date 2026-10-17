@@ -3,7 +3,17 @@
 > Ruolo di Claude: mentore/architetto/reviewer. **Il codice lo scrivi tu.** Qui trovi solo struttura, contratti (firme), vincoli e checkpoint.
 > Regola di avanzamento: un task si chiude solo quando **tutti** i suoi checkpoint passano. Poi chiedi la review (vedi §5).
 >
-> **Stato (01/10): M0–M7 completate lato backend.** Restano i checkpoint di M7 che richiedono l'app KMP (push vere, foto da emulatore/simulatore, flusso completo). M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web). `./mvnw clean verify` verde (42 unit + 109 IT, 04/10: bbox per intersezione e percorso nei sentieri della lista, ADR-0020); M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
+> **Stato (17/10): M0–M7 completate.** M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web), che dal 12/10 è a M9 (`../GeoSentinel-Mobile`): i checkpoint di M7 che richiedevano l'app (push FCM, foto dall'emulatore → `READY`, flusso completo) sono stati provati da lì; restano le push su iOS (APNs, serve un account Apple).
+> Dopo M7, su richiesta dell'app (dettagli in `CHANGELOG.md` e negli ADR):
+> - ADR-0019: periodo di grazia di 60 s sul refresh token appena ruotato (`V10__refresh_token_successor`);
+> - ADR-0020: percorso semplificato nei sentieri della bbox, bbox per `ST_Intersects`;
+> - ADR-0021 + audit di sicurezza del 05/10 (7 piste corrette, `docs/security-audit-2026-10.md`): limiti per utente su push SOS e prenotazioni, upload su `staging/`, lock sull'utente nelle operazioni sulle sessioni;
+> - rotte `GET /hazards/mine`, `/hazards/nearby`, `/hazards/pending`; rifugi descritti e foto `REFUGE` (`V11__refuge_details`); crediti delle foto esterne (`V12__media_credit`); capacità del rifugio al massimo 1000;
+> - dati veri della Calabria da OpenStreetMap e Wikimedia Commons (`tools/osm-import`).
+>
+> - reset della password con codice via email (M7.2.2, `V13__password_reset_tokens`), completato e verificato il 17/10, da committare.
+> **Pianificata (17/10): M8, rischio frane** con un calcolo parallelo in C++ (MPI + pthread) e la feature `landslide` (ADR-0022, ADR-0023).
+> M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
 ---
 
@@ -46,11 +56,13 @@ GeoSentinel-Backend/
 ├── pom.xml
 ├── CONTRIBUTING.md, SECURITY.md, CHANGELOG.md
 ├── docker-compose.prod.yml + deploy/Caddyfile   # produzione (M7.6)
+├── simulation/            # C++20 + MPI + pthread: landslide-sim, landslide-worker (M8, CMake, Dockerfile proprio)
+├── tools/                 # osm-import (dati della Calabria), dem-prep (DEM per M8)
 ├── docs/
 │   ├── README.md          # indice della documentazione
 │   ├── MASTER_PLAN.md
 │   ├── architecture.md    # arc42 + C4
-│   ├── adr/               # Architecture Decision Records (0001–0018 + template)
+│   ├── adr/               # Architecture Decision Records (0001–0023 + template)
 │   ├── api-guide.md       # guida per chi sviluppa il client
 │   ├── operations.md      # runbook
 │   └── openapi.json       # contratto (OpenApiContractIT)
@@ -95,14 +107,20 @@ GeoSentinel-Backend/
     │   │   │   ├── domain/        User, Role, RefreshToken
     │   │   │   ├── application/   AuthService (anche changePassword), UserQueryService (letture per le altre feature),
     │   │   │   │                  UserAccountService + UserProfile (M7.2), RefreshTokenCleanupJob,
-    │   │   │   │                  port/TokenBlacklist, port/LoginAttemptLimiter
+    │   │   │   │                  PasswordResetService, PasswordResetMailListener, PasswordResetRequested,
+    │   │   │   │                  PasswordResetCleanupJob (M7.2.2),
+    │   │   │   │                  port/TokenBlacklist, port/LoginAttemptLimiter, port/PasswordResetLimiter,
+    │   │   │   │                  port/PasswordResetMailer
     │   │   │   ├── infrastructure/
-    │   │   │   │   ├── persistence/  UserRepository, RefreshTokenRepository
-    │   │   │   │   ├── redis/        RedisTokenBlacklist, RedisRateLimiter, RedisLoginAttemptLimiter, RateLimitPolicy, RateLimitDecision
+    │   │   │   │   ├── persistence/  UserRepository, RefreshTokenRepository, PasswordResetTokenRepository
+    │   │   │   │   ├── redis/        RedisTokenBlacklist, RedisRateLimiter, RedisLoginAttemptLimiter,
+    │   │   │   │   │                 RedisPasswordResetLimiter, RateLimitPolicy, RateLimitDecision
+    │   │   │   │   ├── mail/         SmtpPasswordResetMailer, LoggingPasswordResetMailer (M7.2.2)
     │   │   │   │   └── security/     SecurityConfig, JwtTokenService, JtiBlacklistValidator,
     │   │   │   │                     RateLimitFilter, ProblemAuthenticationEntryPoint,
     │   │   │   │                     ProblemAccessDeniedHandler, JwtProperties, CurrentUser
-    │   │   │   └── web/           AuthController, UserController (/users/me, M7.2), dto/* (UserDtos)
+    │   │   │   └── web/           AuthController, UserController (/users/me, M7.2),
+    │   │   │                      PasswordResetController (M7.2.2), dto/* (UserDtos, PasswordReset*Request)
     │   │   │
     │   │   ├── trail/                                # sentieri, POI, segnalazioni pericoli
     │   │   │   ├── domain/        Trail, TrailStatus, Difficulty, Poi, PoiType,
@@ -145,13 +163,19 @@ GeoSentinel-Backend/
     │   │   │   │   └── storage/      MinioObjectStorage, MinioConfig, MinioProperties
     │   │   │   └── web/           MediaController (/api/v1/media), dto/ MediaDtos, MediaMapper
     │   │   │
-    │   │   └── notification/                         # dispositivi e push (M7.4)
-    │   │       ├── domain/        DeviceToken, DevicePlatform
-    │   │       ├── application/   DeviceService, port/PushNotifier (+ record Result, PushMessage)
-    │   │       ├── infrastructure/
-    │   │       │   ├── persistence/  DeviceTokenRepository (upsert ON CONFLICT)
-    │   │       │   └── push/         FcmPushNotifier (push.enabled=true), LoggingPushNotifier (default)
-    │   │       └── web/           DeviceController (/api/v1/devices), dto/ DeviceDtos
+    │   │   ├── notification/                         # dispositivi e push (M7.4)
+    │   │   │   ├── domain/        DeviceToken, DevicePlatform
+    │   │   │   ├── application/   DeviceService, port/PushNotifier (+ record Result, PushMessage)
+    │   │   │   ├── infrastructure/
+    │   │   │   │   ├── persistence/  DeviceTokenRepository (upsert ON CONFLICT)
+    │   │   │   │   └── push/         FcmPushNotifier (push.enabled=true), LoggingPushNotifier (default)
+    │   │   │   └── web/           DeviceController (/api/v1/devices), dto/ DeviceDtos
+    │   │   │
+    │   │   └── landslide/                            # rischio frane (M8, pianificata)
+    │   │       ├── domain/        SimulationJob, SimulationType, SimulationStatus, ZoneKind, RiskLevel
+    │   │       ├── application/   LandslideRiskService, LandslideResultIngestJob, dto/LandslideCommands
+    │   │       ├── infrastructure/  persistence/ (job, rischio per sentiero), event/HazardVerifiedListener
+    │   │       └── web/           LandslideRiskController (/api/v1/landslide-risk), dto/ LandslideDtos, LandslideMapper
     │   │
     │   └── resources/
     │       ├── application.properties
@@ -387,6 +411,7 @@ Firme chiave (solo contratti):
 |---|---|
 | `POST /api/v1/auth/register`, `/login`, `/refresh` | permitAll |
 | `POST /api/v1/auth/logout` | `authenticated()`: senza access token non si può mettere il `jti` in blacklist |
+| `POST /api/v1/auth/password-reset/request`, `/confirm` (M7.2.2) | permitAll, `Authorization` ignorato come su login (`TOKENLESS_AUTH_PATHS`) |
 | `/api/v1/users/me/**` (M7.2) | `authenticated()`; `DELETE` solo HIKER, il personale riceve 409 `account-managed` (controllo nel service) |
 | `GET /api/v1/trails/**`, `GET /api/v1/pois/**` | permitAll (informazioni di sicurezza pubbliche) |
 | `/v3/api-docs/**`, `/swagger-ui/**`, `/actuator/health` | permitAll (docs solo in `local`) |
@@ -646,6 +671,7 @@ Stato: in `GlobalExceptionHandler` sono gestite tutte le righe, comprese le ecce
 | `RateLimitExceededException` (limite per account sul login) | 429 + `Retry-After` | `rate-limit-exceeded` |
 | `AccountManagedException` (`DELETE /users/me` del personale, M7.2) | 409 | `account-managed` |
 | `AgeRequirementNotMetException` (registrazione sotto `geosentinel.registration.min-age`, M7.2.1) | 422 | `age-requirement-not-met` (detail generico, senza la soglia) |
+| `InvalidResetCodeException` (codice sbagliato, scaduto, già usato o tentativi finiti, M7.2.2) | 422 | `invalid-reset-code` (un solo detail per tutti i motivi) |
 | `Exception` (fallback) | 500 | `internal-error`, detail generico, log con `traceId`, **mai** stack trace |
 
 **Trappola:** le eccezioni di `@PreAuthorize` sono lanciate dentro l'invocazione del controller e quindi **arrivano** all'advice. Senza un handler dedicato le prende il fallback `Exception` → 500 invece di 403.
@@ -682,6 +708,8 @@ Endpoint:
 | `POST /api/v1/users/me/password` (M7.2) | authenticated | 200 + nuovi token, tutte le altre sessioni revocate; password attuale sbagliata → 422 |
 | `DELETE /api/v1/users/me` (M7.2) | HIKER | 204, anonimizzazione; personale → 409 `account-managed` |
 | `POST /api/v1/auth/register` (M7.2.1) | public | `birthDate` obbligatoria; sotto i 14 anni → 422 `age-requirement-not-met` |
+| `POST /api/v1/auth/password-reset/request` (M7.2.2) | public | sempre 204, anche per un'email sconosciuta; 3 richieste all'ora per email → 429 |
+| `POST /api/v1/auth/password-reset/confirm` (M7.2.2) | public | 204, tutte le sessioni chiuse; codice non valido → 422 `invalid-reset-code` |
 | `PATCH /api/v1/refuges/{id}/capacity` | PARK_MANAGER **gestore del rifugio**, o ADMIN | capacità; un altro PARK_MANAGER → 403 |
 | `POST /api/v1/maintenance-tickets` (`trailId` / `refugeId` / `hazardReportId` nel body, esattamente uno) | PARK_MANAGER | 201 + `Location` + `ETag` |
 | `GET /api/v1/maintenance-tickets/{id}` · `?status&priority&assignedTo` (paginato, `PagedModel`) | PARK_MANAGER | `ETag` sul singolo |
@@ -852,6 +880,49 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 - Test: `UserAccountIT` (4), `RegistrationAgeIT` (4); aggiornati `AuthFlowIT`, `MaxUtf8BytesTest`, i due unit test di `AuthService`, `MigrationIT` (V8). `docs/openapi.json` rigenerato. `./mvnw clean verify` verde: 41 unit + 74 IT.
 - Limite noto: se MinIO fallisce a metà di `deleteAllOf`, gli oggetti già cancellati non tornano; la riprova della cancellazione è idempotente.
 
+#### M7.2.2 — Reset della password con codice via email
+> Aggiunta il 17/10, dopo M7: l'app non aveva modo di rientrare con una password dimenticata. Scritta dall'utente, revisionata e corretta da Claude su richiesta.
+
+**Obiettivo:** chi ha dimenticato la password ne imposta una nuova dall'app con un codice ricevuto per email, senza rivelare quali email sono registrate.
+
+**Perché un codice e non un link:** l'app è l'unico client (D13) e non esiste una pagina web su cui atterrare; un link richiederebbe deep link verificati (App Links / Universal Links). Il codice si copia nella stessa schermata della nuova password.
+
+- [x] **Codice:** 16 caratteri dall'alfabeto di Crockford (senza `I L O U`), ~80 bit, mostrato come `XXXXXXXX-XXXXXXXX`. `PasswordResetCode.normalize` accetta minuscole, trattini, spazi e le lettere ambigue (`O → 0`, `I/L → 1`). Valido 15 minuti (`geosentinel.password-reset.ttl`), una sola volta, consumato dopo 5 errori (`max-attempts`)
+- [x] `V13__password_reset_tokens.sql`: `id`, `user_id` FK (indice `(user_id, created_at DESC)`), `code_hash` (BCrypt con `{bcrypt}`, il codice in chiaro non si salva), `expires_at` (indice per la pulizia), `consumed_at`, `failed_attempts smallint CHECK >= 0`, `created_at`
+- [x] **`POST /api/v1/auth/password-reset/request`** (`requestPasswordReset`) → sempre 204:
+  - nel thread della richiesta solo il limite e l'evento `PasswordResetRequested(normalizedEmail)`: nessuna lettura del DB né BCrypt, così il tempo di risposta non dice se l'account esiste (`PasswordResetServiceTest`)
+  - limite **per email** di 3 richieste all'ora (`RedisPasswordResetLimiter`, `rl:pwreset::<sha256>`, fail-closed), uguale per le email inesistenti: anche il 429 non rivela nulla
+  - `PasswordResetMailListener` (`@Async("passwordResetMailExecutor")` + `@EventListener`) chiama `issueCode`, che in una transazione blocca l'utente, consuma i codici aperti, salva il nuovo e lo restituisce **dopo il commit**; poi spedisce. Un'email non parte mai per un codice non salvato
+  - executor dedicato a un thread (FIFO, `MdcTaskDecorator` per il `traceId`), separato da `sosNotificationExecutor`: un SMTP lento non ritarda gli SOS
+- [x] **`POST /api/v1/auth/password-reset/confirm`** (`confirmPasswordReset`) → 204 o 422 `invalid-reset-code`:
+  - lock sull'utente (`findByIdForUpdate`), poi il codice aperto più recente: stesso ordine di `changePassword` (ADR-0021)
+  - BCrypt **sempre**: hash fittizio se non c'è un codice aperto, segnaposto fisso al posto di un codice malformato (mai l'input grezzo: oltre 72 byte BCrypt lancia → 500)
+  - un errore conta anche se la risposta è 422: `@Transactional(noRollbackFor = InvalidResetCodeException.class)`
+  - codice giusto: consumato con tutti gli altri aperti, nuova password (`@Size(min = 12)`, `@MaxUtf8Bytes(72)`, come M7.2), refresh token revocati e `revokeAllIssuedUntil(userId, now)` (M7.7). Nessuna sessione nuova: l'app manda al login
+  - limite per account sul login azzerato (`LoginAttemptLimiter.reset`): chi era bloccato dai tentativi sbagliati entra subito con la password nuova
+- [x] **Email:** porta `PasswordResetMailer`, `SmtpPasswordResetMailer` (MIME UTF-8, testo semplice) se `geosentinel.mail.enabled=true`, altrimenti `LoggingPasswordResetMailer` (log senza email né codice). Configurazione `MAIL_*` nel `.env` → `spring.mail.*`, timeout SMTP di 5/10 s
+  - `management.health.mail.enabled=false`: un SMTP giù non deve portare `/actuator/health` a 503 (proxy e compose darebbero morta l'app, SOS compresi)
+  - sviluppo: Mailpit nel compose (`axllent/mailpit`, SMTP 1025, caselle su `http://localhost:8025`), acceso dal profilo `local`
+- [x] Cancellazione dell'account: `UserAccountService.deleteAccount` cancella anche i codici (`PasswordResetTokenRepository.deleteAllOf`, regola di M7.2)
+- [x] `PasswordResetCleanupJob` ogni notte alle 03:35 UTC: via i codici scaduti da più di un giorno
+
+**Checkpoint:**
+- [x] `PasswordResetIT` (10): flusso completo (vecchia password 401, nuova 200, access token e refresh token precedenti 401); codice valido una volta; email sconosciuta → 204 e nessuna riga; 5 errori salvati e codice consumato; codice malformato o di 96 byte → 422, non 500; una nuova richiesta invalida la precedente; codice scaduto → 422; quarta richiesta → 429 con `Retry-After`, anche per un'email inesistente; password debole → 400; codici cancellati con l'account e dal job; account bloccato dai login sbagliati sbloccato dal reset
+- [x] `PasswordResetCodeTest`, `PasswordResetTokenTest`, `PasswordResetServiceTest`; `MigrationIT` con V13; `docs/openapi.json` rigenerato
+- [x] dal vivo con Mailpit: l'email arriva (accentate corrette), codice in minuscolo accettato, nel log né email né codice, invio sul thread `pwreset-mail-1` con il `traceId` della richiesta
+- [x] `./mvnw clean verify` verde: 51 unit + 152 IT
+
+**Fatto (17/10).** Bug corretti nella review:
+- l'app non partiva: `@Id` di `org.springframework.data.annotation` invece di `jakarta.persistence` in `PasswordResetToken`;
+- nessun codice era mai valido: `expiresAt.isBefore(expiresAt)` (sempre falso) in `isUsable`;
+- un codice malformato saltava BCrypt solo se esisteva un codice aperto: il tempo rivelava l'email; un codice di 32 caratteri accentati dava 500;
+- `.env.example` con valori `//` (`MAIL_ENABLED=//` → nessun mailer, avvio fallito) e chiavi `MAIL_HOST/PORT/USER/PASSWORD` non collegate a `spring.mail.*`; nessun timeout SMTP;
+- `/actuator/health` a 503 con l'SMTP spento (trovato da `ProdProfileIT`); tag di Mailpit segnaposto (`vX.Y.Z`); import di `infrastructure` nel listener; `@ResponseStatus(NO_CONTENT)` mancante (OpenAPI e client documentavano 200).
+
+Limiti chiusi subito dopo (17/10, su richiesta): richiesta asincrona (tempo uguale con o senza account, BCrypt fuori dal thread HTTP), executor dedicato con `traceId`, limite sui login azzerato dal reset.
+
+**Limite noto:** se l'SMTP fallisce, l'utente non riceve il codice e non lo sa (risposta già 204); lo ritenta dall'app, entro il limite di 3 all'ora. Nessuna coda di reinvio: un codice vecchio non ha valore.
+
 #### M7.3 — Rete mobile: rate limit, compressione, timeout
 - [x] **Rate limit su `/auth/**` adatto al CGNAT**, con tre policy configurabili invece di costanti (`@ConfigurationProperties` `geosentinel.rate-limit.*`, così `RateLimitIT` imposta i suoi valori), ognuna con il proprio prefisso di bucket:
   - `login-per-minute` = 30 per IP su login e register (fail-closed): il brute force lo ferma il limite **per account** (`RedisLoginAttemptLimiter`, 10 / 15 min), l'IP è solo un tetto contro gli abusi
@@ -969,6 +1040,251 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 
 ---
 
+### Milestone 8 — Rischio frane: calcolo parallelo in C++ (MPI + pthread)
+
+> Pianificata il 17/10. Decisioni in ADR-0022 (architettura) e ADR-0023 (modello). Il codice lo scrivi tu, come sempre.
+
+**Obiettivo:** stimare **dove una frana è probabile** (suscettibilità, con uno scenario di pioggia) e **dove arriverebbe** (propagazione), poi capire **quali sentieri attraversa**. Il calcolo pesante è un programma C++ parallelo (MPI tra processi, pthread dentro ogni processo); il backend Java mette in coda i calcoli, legge i risultati e li espone all'app.
+
+**Perché qui ha senso il calcolo parallelo** (stime su un PC a 12 core, da misurare in M8.8):
+- suscettibilità su tutta la Calabria a 30 m: circa 16,7 milioni di celle × 1000 campioni Monte Carlo ≈ 1,7·10¹⁰ valutazioni del fattore di sicurezza. Qualche minuto su un core, decine di secondi su 12;
+- propagazione su una finestra di 5 × 5 km a 10 m: 250 000 celle × migliaia di passi dell'automa cellulare.
+
+**Contesto e limiti, da dire anche nell'app:** è una **stima indicativa**, non sostituisce il PAI dell'Autorità di Bacino né i bollettini della Protezione Civile. Il modello non conosce la geologia locale (parametri del suolo per intervalli, ADR-0023). Per questo **nessuna azione automatica sui sentieri**: il backend calcola e segnala, lo stato `OPEN/WARNING/CLOSED` lo decide un `PARK_MANAGER`.
+
+**Architettura** (ADR-0022):
+```
+PARK_MANAGER verifica una segnalazione LANDSLIDE        ADMIN lancia una suscettibilità
+        │ HazardVerifiedEvent (stessa transazione)              │ POST .../susceptibility-runs
+        ▼                                                        ▼
+   simulation_jobs (PENDING)  ◄──── unico contratto tra Java e C++ ────►  landslide-worker (C++)
+                                                                     claim con FOR UPDATE SKIP LOCKED
+                                                                     mpirun -np P landslide-sim (T thread)
+                                                                     zone in landslide_zones, job DONE
+        ▲
+   LandslideResultIngestJob (@Scheduled): ST_Intersects(zone, trails.path) → trail_landslide_risk
+        ▼
+   GET /api/v1/landslide-risk/...  →  app (livello di rischio sulla mappa)
+```
+- **Niente JNI, niente chiamate HTTP tra Java e C++:** il contratto è il database. Un crash del calcolo non tocca il backend (e quindi l'SOS).
+- **Niente porta in `application`:** Java non chiama il worker, scrive una riga. Una porta qui sarebbe un'interfaccia senza un secondo sistema da sostituire (D2).
+- **Il worker non sa cosa sia un sentiero:** produce poligoni. L'intersezione con i sentieri la fa PostGIS, lato Java.
+
+**Ordine:** M8.1 → M8.2 → M8.3 → M8.4 → M8.5 → M8.6 → M8.8, con **M8.7 (lato Java) in parallelo** da subito dopo aver fissato le tabelle (V14): si prova con zone finte inserite in SQL, senza il C++.
+
+#### M8.1 — Dati: DEM, inventario frane, parametri
+**Obiettivo:** dati di ingresso riproducibili da uno script, mai committati (pesano centinaia di MB).
+- [ ] `tools/dem-prep/` (accanto a `tools/osm-import`): script che scarica, ritaglia sulla Calabria, riproietta in **EPSG:32633** (UTM 33N, metri) e scrive GeoTIFF in `${SIM_DATA_DIR}` (volume Docker, fuori dal repo, in `.gitignore` e `.dockerignore`)
+  - **DEM 30 m** (Copernicus GLO-30) per la suscettibilità di tutta la regione
+  - **DEM 10 m** (TINITALY, INGV) per la propagazione, letto a finestre
+  - licenze e attribuzioni da verificare al download e da scrivere in `tools/dem-prep/README.md` (come i crediti delle foto, V12)
+- [ ] Inventario delle frane IFFI (ISPRA) per la Calabria, solo per la validazione (M8.8). Non entra nel calcolo
+- [ ] `simulation/config/soil-params.json`: intervalli dei parametri (ADR-0023), un'unica classe di suolo per partire. Valori iniziali da letteratura (SINMAP), da calibrare in M8.8
+- **Vincolo:** il calcolo lavora in metri (32633); il passaggio a EPSG:4326 lo fa **PostGIS** (`ST_Transform`) all'inserimento, mai il C++. Così l'ordine lon/lat (D10) resta in un solo punto e si evita la trappola dell'ordine degli assi di GDAL 3 per EPSG:4326.
+
+**Checkpoint:**
+- [ ] lo script è idempotente: rilanciato non riscarica e produce gli stessi file (checksum)
+- [ ] `gdalinfo` sui file: EPSG:32633, risoluzione 30 m e 10 m, nodata definito
+- [ ] `ST_Transform(ST_SetSRID(ST_MakePoint(x, y), 32633), 4326)` di un punto noto (es. un rifugio del seed) torna alle sue coordinate entro 1 m
+
+#### M8.2 — Progetto C++: struttura, build, decomposizione del dominio
+**Obiettivo:** scheletro compilabile e testato, con la decomposizione e lo scambio dei bordi già verificati prima di metterci un modello sopra.
+
+Struttura (nuova cartella del repo backend, progetto CMake indipendente da Maven):
+```
+simulation/
+├── CMakeLists.txt            # C++20, -Wall -Wextra -Werror, target: landslide-sim, landslide-worker, test
+├── Dockerfile                # build: ubuntu:24.04 + build-essential cmake libopenmpi-dev libgdal-dev libpqxx-dev
+│                             # runtime: solo le librerie, utente non root
+├── config/soil-params.json
+├── include/geosentinel/sim/
+│   ├── Grid.hpp              # griglia locale: righe proprie + 1 riga di halo sopra e sotto, row-major
+│   ├── Decomposition.hpp     # strisce di righe per rank (MPI), blocchi di righe per thread
+│   ├── HaloExchange.hpp      # MPI_Sendrecv delle righe di bordo (solo il thread principale)
+│   ├── ThreadPool.hpp        # T pthread creati una volta, pthread_barrier_t tra le fasi
+│   ├── Rng.hpp               # generatore counter-based: (seed, cella, campione) → numero
+│   ├── RasterIo.hpp          # GDAL: lettura di una finestra per rank, scrittura GeoTIFF dal rank 0
+│   └── Polygonize.hpp        # GDALPolygonize + semplificazione → GeoJSON in EPSG:32633
+├── src/   (sim/, worker/)
+└── test/                     # GoogleTest + CTest; i test MPI girano con mpirun -np 1, 2, 4
+```
+Contratti:
+- [ ] `Decomposition::forRank(int rows, int ranks, int rank) → RowRange {first, count}`: strisce contigue, differenza massima di una riga tra i rank
+- [ ] `HaloExchange::exchange(Grid<T>&)`: riga 0 ↔ rank sopra, ultima riga ↔ rank sotto, `MPI_PROC_NULL` ai bordi del dominio
+- [ ] MPI inizializzato con `MPI_Init_thread(..., MPI_THREAD_FUNNELED, ...)`: **solo il thread principale chiama MPI**; se il livello concesso è inferiore, uscita con errore
+- [ ] I/O: ogni rank legge la sua finestra con `RasterIO` (lettura parallela di un file locale), il rank 0 raccoglie con `MPI_Gatherv` e scrive. Nessun rank tiene in memoria la griglia intera, tranne il rank 0 durante la scrittura
+- [ ] `Rng`: risultato funzione solo di `(seed, indice globale della cella, indice del campione)` (es. Philox o splitmix64 sulla chiave combinata), mai di rank o thread: è ciò che rende il risultato indipendente da P e T
+- [ ] Sviluppo su Windows: build e test in **WSL2 o nel container** (pthread e OpenMPI sono Linux; MS-MPI non si usa)
+- [ ] CI: nuovo job `simulation` in `.github/workflows/ci.yml` (Ubuntu): `cmake --build` + `ctest`, con i test MPI a `-np 4` (i runner hanno 4 core)
+
+**Trappole:**
+- **OpenMPI in Docker:** `/dev/shm` è di 64 MB e il trasporto a memoria condivisa fallisce o rallenta → `shm_size: 1gb` nel compose. OpenMPI rifiuta di girare come root: l'utente non root del Dockerfile serve anche a questo.
+- **False sharing:** accumulatori per thread allineati a 64 byte (`alignas(64)`), altrimenti con 12 thread lo speedup crolla senza un motivo apparente.
+- `pthread_barrier_t` non esiste su macOS: va bene, il calcolo gira solo su Linux.
+
+**Checkpoint:**
+- [ ] `ctest` verde nel container e in CI
+- [ ] test dell'halo: griglia con valore = indice globale della riga, dopo `exchange` le righe di halo di ogni rank contengono le righe giuste, con `-np 1, 2, 4`
+- [ ] test della decomposizione: unione dei range = tutte le righe, nessuna sovrapposizione, anche con più rank che righe
+- [ ] lettura e riscrittura di un GeoTIFF con `-np 4`: file identico all'originale (byte per byte sui dati, georeferenziazione uguale)
+
+#### M8.3 — Preprocessing del terreno: pendenza e area drenata
+**Obiettivo:** gli strati che servono al modello, calcolati una volta per DEM e salvati come GeoTIFF in `${SIM_DATA_DIR}/derived/`.
+- [ ] **Pendenza** θ con il metodo di Horn (stencil 3×3): parallela, MPI (halo di 1 riga) + pthread (blocchi di righe). Celle nodata e bordo del dominio → nodata
+- [ ] **Riempimento delle depressioni** (priority-flood) e **direzioni di deflusso D8**: sequenziali
+- [ ] **Area drenata specifica** `a` (area a monte / larghezza della cella, in metri): accumulo D8 in ordine topologico, **sequenziale**. L'accumulo dipende da tutto il bacino a monte e non si decompone a strisce in modo semplice: farlo in parallelo è un'estensione facoltativa (M8.8), non un requisito
+- [ ] Sottocomando `landslide-sim prepare --dem <file> --out <dir>`
+
+**Checkpoint:**
+- [ ] test su un piano inclinato sintetico (pendenza nota, es. 30°): θ = 30° ± 0,01° in tutte le celle interne, con `-np 1` e `-np 4`
+- [ ] test su un cono rovesciato sintetico: tutta l'area drena verso il centro e l'accumulo al centro = numero di celle valide
+- [ ] su un DEM vero, pendenza confrontata con `gdaldem slope -alg Horn`: differenza massima < 0,01°
+
+#### M8.4 — Suscettibilità: Monte Carlo del fattore di sicurezza (MPI + pthread)
+**Obiettivo:** per ogni cella, la probabilità che il versante ceda con uno scenario di pioggia dato, `P(FS < 1)`.
+
+Modello (pendio indefinito + idrologia stazionaria, come SINMAP; ADR-0023):
+```
+w  = min(1, R·a / (T·sin θ))                       # saturazione relativa
+FS = (C + cos θ · (1 − w·r) · tan φ) / sin θ        # r = ρw/ρs ≈ 0,5
+```
+- `θ` e `a` da M8.3; `R` (ricarica, m/giorno) dallo scenario: `R = pioggia_mm_24h / 1000 · infiltrazione`
+- `C` (coesione adimensionale), `φ` (angolo d'attrito) e `T` (trasmissività) **campionati** negli intervalli di `soil-params.json` con `Rng(seed, cella, campione)`
+- `P = (campioni con FS < 1) / N`; celle piatte (θ < 1°) → `P = 0`
+
+Contratti:
+- [ ] `landslide-sim susceptibility --derived <dir> --rain-mm <x> --samples <N> --seed <s> --out <dir>` → `probability.tif` (float32) + `zones.geojson` (EPSG:32633)
+- [ ] Parallelismo: strisce MPI, blocchi di righe ai pthread; nessuno scambio di halo (ogni cella è indipendente), solo `Gatherv` finale. Il tempo di calcolo deve dominare quello di I/O e poligonizzazione: da misurare (M8.8)
+- [ ] Classi: `MEDIUM` se `0,1 ≤ P < 0,5`, `HIGH` se `P ≥ 0,5` (soglie in `soil-params.json`). Poligoni con `GDALPolygonize` sulle classi, semplificati a 10 m, scartati sotto 2 celle. `LOW` non si scrive (sarebbe quasi tutta la regione)
+- [ ] Ogni feature GeoJSON ha `kind` (`SUSCEPTIBILITY_MEDIUM`/`SUSCEPTIBILITY_HIGH`) e `max_value` (P massima nel poligono)
+
+**Checkpoint:**
+- [ ] test del fattore di sicurezza su valori calcolati a mano (3 casi: secco, saturo, pendio piatto)
+- [ ] **riproducibilità:** stesso seed → `probability.tif` identico byte per byte con (P, T) = (1, 1), (4, 1), (2, 6), (12, 1)
+- [ ] più pioggia → P mai minore in nessuna cella (test su due scenari)
+- [ ] piano inclinato sintetico: P cresce con la pendenza, celle sotto 1° a zero
+
+#### M8.5 — Propagazione: automa cellulare della colata (MPI + pthread)
+**Obiettivo:** a partire da un punto d'innesco (una frana verificata, o un "e se" del gestore), l'area che la colata invade.
+
+Modello (semplificazione ispirata a SCIDDICA-T, ADR-0023): celle quadrate, vicinato di von Neumann (4 vicini), sottostati `z` (quota del DEM) e `h` (spessore della colata); a ogni passo i deflussi verso i vicini si calcolano con l'**algoritmo di minimizzazione delle differenze** sulla quantità `z + h`, al netto di uno spessore di **aderenza** `p_adh` che resta nella cella, e si scalano con un fattore di rilassamento `p_r`.
+- [ ] Finestra: DEM 10 m, 5 × 5 km centrata sull'innesco (letta con `RasterIO`, non l'intero DEM)
+- [ ] Innesco: celle entro `raggio` dal punto con spessore iniziale `h0` (dallo scenario o dal gestore)
+- [ ] **Passo in due fasi**, con barriere tra i thread:
+  1. ogni thread calcola i deflussi delle sue celle (array dei deflussi, 4 valori per cella)
+  2. barriera → il thread principale scambia l'**halo dei deflussi** con i rank vicini (MPI) → barriera
+  3. ogni thread aggiorna `h` delle sue celle: `h += Σ entranti − Σ uscenti`, sommando gli entranti **sempre nello stesso ordine dei vicini** (così il risultato non dipende da P e T)
+- [ ] Arresto: deflusso totale < ε (`MPI_Allreduce`) o numero massimo di passi
+- [ ] Ottimizzazione facoltativa: calcolo solo nel rettangolo delle celle attive (la colata occupa una piccola parte della finestra)
+- [ ] `landslide-sim runout --dem10 <file> --lon --lat --radius-m --h0-m --out <dir>` → `max_thickness.tif` + `zones.geojson` (`kind = RUNOUT`, area dove lo spessore massimo ha superato una soglia, es. 5 cm)
+- Il punto d'innesco arriva in EPSG:4326 dal backend: la conversione in 32633 la fa il **worker** con una query PostGIS (`ST_Transform`) prima di lanciare il calcolo, non GDAL
+
+**Checkpoint:**
+- [ ] **conservazione della massa:** volume totale costante a ogni passo, errore relativo < 1e-9
+- [ ] risultato identico con (P, T) = (1, 1), (4, 1), (2, 6)
+- [ ] piano inclinato: la colata scende lungo la pendenza massima e non risale; superficie piana: si allarga in modo simmetrico
+- [ ] test di regressione D10 sul punto d'innesco: un innesco a est di un crinale noto finisce nel versante est
+
+#### M8.6 — Worker: coda dei job, ciclo di vita, scrittura dei risultati
+**Obiettivo:** il processo che collega la coda nel database al calcolo MPI.
+
+- [ ] `landslide-worker` (C++, libpqxx, **non MPI**): ciclo che prende un job, lancia `mpirun -np ${SIM_PROCESSES} landslide-sim ... --threads ${SIM_THREADS}` e aspetta. Separato dal calcolo così `landslide-sim` si testa senza database, e nessun rank MPI resta in attesa a vuoto tra un job e l'altro (OpenMPI consuma CPU mentre aspetta)
+- [ ] **Presa di un job** (atomica, più worker non prendono lo stesso job):
+  ```sql
+  UPDATE simulation_jobs SET status = 'RUNNING', attempts = attempts + 1, worker_id = $1,
+         started_at = now(), lease_until = now() + interval '10 minutes'
+   WHERE id = (SELECT id FROM simulation_jobs
+                WHERE (status = 'PENDING' OR (status = 'RUNNING' AND lease_until < now()))
+                  AND attempts < 3
+                ORDER BY created_at
+                FOR UPDATE SKIP LOCKED LIMIT 1)
+  RETURNING id, type, ...
+  ```
+- [ ] **Lease:** un thread del worker (con la sua connessione) allunga `lease_until` ogni minuto finché il calcolo gira. Worker morto → il lease scade → un altro worker riprende il job
+- [ ] **Chiusura, in una transazione:** `DELETE` delle zone del job (un retry non duplica) → `INSERT` delle zone con `ST_Multi(ST_Transform(ST_GeomFromWKB($wkb, 32633), 4326))` → `UPDATE ... SET status = 'DONE', finished_at, runtime_ms, processes, threads WHERE id = $1 AND worker_id = $me`. Se l'`UPDATE` tocca 0 righe (lease perso) → rollback
+- [ ] **Errore:** `FAILED` se `attempts >= 3`, altrimenti di nuovo `PENDING`; in `error` un messaggio breve (mai stringhe di connessione o stack)
+- [ ] **Permessi minimi:** ruolo `geosentinel_sim` creato da V14 senza login né password; `GRANT SELECT` e `UPDATE` (solo sulle colonne di stato) su `simulation_jobs`, `INSERT`/`DELETE` su `landslide_zones`, nient'altro (non legge `users`, `sos_alerts`, …)
+- [ ] Password del ruolo dal `.env` (`SIM_DB_PASSWORD`, aggiunta a `.env.example`): servizio `landslide-db-init` nel compose (come `minio-init`) che aspetta che V14 esista e poi fa `ALTER ROLE geosentinel_sim LOGIN PASSWORD ...`. **Trappola:** `psql -c` non sostituisce le variabili `:'pw'`, servono `-v pw=...` con il comando da stdin (heredoc), altrimenti la password va in chiaro nella riga di comando o la query si rompe
+- [ ] Compose: servizio `landslide-worker` sotto `profiles: ["sim"]`, `shm_size: 1gb`, volume `${SIM_DATA_DIR}` in sola lettura (output in una cartella temporanea del container), `depends_on` postgres healthy + `landslide-db-init` completato
+
+**Checkpoint:**
+- [ ] due worker accesi, 10 job in coda: ogni job eseguito una volta sola
+- [ ] `kill -9` del worker durante un calcolo: dopo la scadenza del lease il job riparte su un altro worker e termina `DONE`, senza zone duplicate
+- [ ] con le credenziali di `geosentinel_sim`: `SELECT * FROM users` → permesso negato
+- [ ] `docker compose --profile sim up -d`: un job di suscettibilità inserito a mano diventa `DONE` con zone in 4326 che cadono in Calabria
+
+#### M8.7 — Backend Java: feature `landslide`
+**Obiettivo:** mettere in coda i calcoli, trasformare le zone in rischio per sentiero, esporlo all'app.
+
+`V14__landslide.sql` (V13 è il reset della password, M7.2.2):
+| Tabella | Contenuto |
+|---|---|
+| `simulation_jobs` | id uuid PK, type CHECK `SUSCEPTIBILITY/RUNOUT`, status CHECK `PENDING/RUNNING/DONE/FAILED`, `source_hazard_id` FK `hazard_reports(id)` NULL, `requested_by` FK `users(id)` NULL, **parametri in colonne tipizzate** (`rain_mm_24h`, `samples`, `seed`, `trigger_location geometry(Point,4326)`, `radius_m`, `h0_m`; niente `jsonb`: con Jackson 3 il mapping JSON di Hibernate va verificato, e le colonne si validano con `CHECK`), `attempts int NOT NULL DEFAULT 0`, `lease_until`, `worker_id varchar(64)`, `started_at`, `finished_at`, `error varchar(500)`, `runtime_ms`, `processes`, `threads`, `processed_at timestamptz NULL` (ingestione Java), audit cols. `CHECK` sui parametri obbligatori per tipo; `UNIQUE (source_hazard_id) WHERE type = 'RUNOUT'` (una propagazione per segnalazione, anche con due verifiche concorrenti); indici parziali `(created_at) WHERE status = 'PENDING'` e `(finished_at) WHERE status = 'DONE' AND processed_at IS NULL` |
+| `landslide_zones` | id uuid `DEFAULT gen_random_uuid()` (unica tabella con default: le righe le scrive il worker, non Hibernate; `gen_random_uuid()` è nel core da PG 13, niente `pgcrypto`), `job_id` FK con indice, kind CHECK `SUSCEPTIBILITY_MEDIUM/SUSCEPTIBILITY_HIGH/RUNOUT`, `max_value double precision`, `geom geometry(MultiPolygon,4326) NOT NULL` + GiST |
+| `trail_landslide_risk` | PK `(job_id, trail_id)`, `trail_id` FK con indice, level CHECK `MEDIUM/HIGH`, `exposed_length_m double precision NOT NULL`, `exposed_path geometry(MultiLineString,4326) NOT NULL`, `computed_at` |
+| ruolo | `geosentinel_sim` `NOLOGIN` (blocco `DO` con `IF NOT EXISTS`: i ruoli valgono per tutto il cluster) + i `GRANT` di M8.6 |
+
+Struttura (come le altre feature):
+```
+landslide/
+├── domain/        SimulationJob, SimulationType, SimulationStatus, ZoneKind, RiskLevel
+├── application/   LandslideRiskService, LandslideResultIngestJob, dto/LandslideCommands
+├── infrastructure/
+│   ├── persistence/  SimulationJobRepository, TrailLandslideRiskRepository (query native di esposizione)
+│   └── event/        HazardVerifiedListener
+└── web/           LandslideRiskController (/api/v1/landslide-risk), dto/ LandslideDtos, LandslideMapper
+```
+- [ ] **Innesco dalla verifica:** `HazardReportService` pubblica `HazardVerifiedEvent(hazardId, type, lon, lat)` (record in `trail/domain`, dati e non entità) alla transizione `SUBMITTED → VERIFIED`. `HazardVerifiedListener` con `@TransactionalEventListener(phase = BEFORE_COMMIT)`: se `type == LANDSLIDE`, inserisce il job `RUNOUT` **nella stessa transazione** (verifica e job insieme o niente). `trail` non dipende da `landslide`
+- [ ] **Ingestione:** `LandslideResultIngestJob` ogni 30 s (`@Scheduled`, spento nei test come gli altri) prende i job `DONE` con `processed_at IS NULL` e, per ognuno, calcola l'esposizione in una sola query:
+  ```sql
+  INSERT INTO trail_landslide_risk (...)
+  SELECT t.id, z.job_id, <livello da kind>, ST_Length(ST_Intersection(t.path, z.geom)::geography), ...
+    FROM landslide_zones z JOIN trails t ON ST_Intersects(t.path, z.geom)
+   WHERE z.job_id = :jobId
+  ```
+  aggregando per sentiero, scartando le esposizioni sotto `geosentinel.landslide.min-exposed-length-m` (default 20) e impostando `processed_at`. **Eccezione dichiarata** alla regola "una feature non usa le tabelle di un'altra": il join spaziale con `trails` deve stare nel database (ADR-0022). Solo lettura, nessun repository di `trail` usato
+- [ ] **Rischio corrente di un sentiero:** il livello massimo tra l'ultima suscettibilità `DONE` e le propagazioni con segnalazione d'origine ancora `VERIFIED` (una frana `RESOLVED` smette di contare senza cancellare nulla)
+- [ ] **Rotte** (`/api/v1/landslide-risk`, ogni `@Operation` con `operationId`, `*Response` con `REQUIRED`, regole di M7.1):
+  | Metodo | Rotta | Chi | operationId |
+  |---|---|---|---|
+  | GET | `/trails?bbox=` | pubblica (informazione di sicurezza: la vede anche l'ospite) | `findTrailLandslideRisk` |
+  | GET | `/trails/{trailId}` | pubblica | `getTrailLandslideRisk` |
+  | GET | `/zones?bbox=&kind=` | pubblica, al massimo 500 poligoni | `findLandslideZones` |
+  | POST | `/susceptibility-runs` | `ADMIN` | `requestSusceptibilityRun` |
+  | POST | `/runout-runs` | `PARK_MANAGER` ("e se" su un punto) | `requestRunoutRun` |
+  | GET | `/runs` (paginata, whitelist del sort) e `/runs/{id}` | `PARK_MANAGER` | `findSimulationRuns`, `getSimulationRun` |
+  - le POST rispondono **202 Accepted** + `Location` del job (il calcolo è asincrono); al massimo 3 job `PENDING/RUNNING` per utente, oltre → 409 `simulation-queue-full` (nuovo slug in `ProblemTypes` + eccezione in `shared`)
+  - le GET pubbliche entrano nel catalogo con ETag debole: vanno aggiunte **sia** in `HttpCacheConfig` **sia** in `PUBLIC_CATALOG` (regola di M7.3)
+  - `TrailRiskResponse(trailId, level, exposedLengthM, exposedPath, sources, computedAt)`; `exposedPath` e i poligoni come GeoJSON: nuovi record `GeoJsonMultiLineString` e `GeoJsonMultiPolygon` in `shared/web/geo`, validati nel costruttore come `GeoJsonLineString`, + metodi in `GeometryMapper`
+- [ ] **Push facoltativa** ai `PARK_MANAGER` quando un sentiero passa a `HIGH` per una propagazione: tipo `LANDSLIDE_RISK` + `trailId` nel payload (regole di M7.4: niente altro). L'app deve già tollerare tipi sconosciuti
+- [ ] **Pulizia:** zone e rischi delle suscettibilità superate da più di 30 giorni cancellati da un job notturno
+- [ ] `docs/openapi.json` rigenerato, `api-guide.md` con l'avviso "stima indicativa" e il ciclo di vita dei job, `CHANGELOG.md`
+
+**Checkpoint (IT, senza il C++: le zone si inseriscono in SQL):**
+- [ ] `LandslideJobIT`: verifica di una `LANDSLIDE` → un job `RUNOUT` `PENDING`; verifica di un altro tipo → nessun job; rollback della verifica → nessun job
+- [ ] `LandslideIngestIT`: zona finta che taglia un sentiero del seed per 300 m → `exposed_length_m` 300 ± 5; segnalazione d'origine `RESOLVED` → il sentiero non risulta più a rischio; ingestione ripetuta → nessuna riga doppia
+- [ ] `LandslideRiskApiIT`: GET pubblica da ospite → 200, seconda GET con `If-None-Match` → 304; POST da `HIKER` → 403; quarto job dello stesso utente → 409 `simulation-queue-full`; 202 con `Location`
+- [ ] `MigrationIT` esteso: il ruolo `geosentinel_sim` non può leggere `users`
+- [ ] `./mvnw verify` verde
+
+#### M8.8 — Validazione, prestazioni, review
+- [ ] **Validazione** su IFFI: curva ROC della mappa `P` contro le frane censite in Calabria, AUC calcolata e scritta in `docs/landslide-validation.md` con i parametri usati. Soglia minima: meglio del caso (AUC > 0,5); l'obiettivo è documentare, non dichiarare un modello certificato. Calibrazione degli intervalli di `soil-params.json` se l'AUC migliora
+- [ ] **Prestazioni** in `docs/landslide-performance.md`, sul PC a 12 core:
+  - strong scaling della suscettibilità e della propagazione: (P × T) = 1×1, 2×1, 4×1, 8×1, 12×1, 1×12, 2×6, 3×4
+  - speedup ed efficienza, frazione seriale stimata (Amdahl) e quanto pesano I/O, `Gatherv` e poligonizzazione
+  - confronto MPI puro contro ibrido a parità di core, con una spiegazione del risultato
+- [ ] Facoltativo: accumulo D8 parallelo (M8.3) e rettangolo attivo della propagazione (M8.5), solo se le misure dicono che servono
+- [ ] Review con la catena del §5 (riga 8)
+
+**Checkpoint M8:**
+- [ ] flusso completo dal vivo: segnalazione `LANDSLIDE` dall'app → verifica del gestore → job `DONE` → sentiero con rischio `HIGH` nella risposta di `/landslide-risk/trails`
+- [ ] `ctest` e `./mvnw verify` verdi, job `simulation` verde in CI
+- [ ] nessun file di dati (DEM, GeoTIFF) tracciato da git
+
+**Fuori da M8:** pioggia prevista da un servizio meteo (lo scenario resta un parametro); mappa geologica e parametri del suolo per classe; lo strato di rischio nell'app (milestone da aggiungere al piano mobile quando le rotte sono stabili).
+
+---
+
 ## 4. Ordine di esecuzione e dipendenze
 
 > Ordine pianificato all'inizio. Quello reale è stato: feature (M1.3, M2, M3, M4, M5.2) prima dell'infrastruttura, poi M0.2 → M1.1 → M0.4 → M0.5 → M6 → verifiche dal vivo di M3/M4 → M5.3. Lezione: con `ddl-auto=validate` l'app non parte finché non esistono tutte le migrazioni, quindi M0.2 + M1.1 vanno fatti presto.
@@ -981,6 +1297,9 @@ M0.1 → M0.2 → M0.3 → M0.4 → M0.5
   → M3 → M4.1 → M4.2 → M4.3 → M4.4
   → M5.2 → M5.3
   → M6
+  → M7
+  → M8.1 → M8.2 → M8.3 → M8.4 → M8.5 → M8.6 → M8.8
+           └─ M8.7 (Java, in parallelo dopo V14: si prova con zone finte)
 ```
 Nota: `M5.1` (GlobalExceptionHandler) conviene farlo subito dopo M2, così ogni feature successiva nasce con gli errori già nel formato giusto. `AbstractIntegrationTest` (M6.1) puoi anticiparlo dopo M1 e scrivere gli IT insieme a ogni milestone. È la scelta consigliata.
 
@@ -1000,6 +1319,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 | 5 | API & errori | `ecc:java-reviewer,ecc:code-reviewer` |
 | 6 | Test | `ecc:java-reviewer,ecc:code-reviewer` |
 | 7 | App mobile (KMP) | `ecc:security-reviewer,ecc:java-reviewer` |
+| 8 | Rischio frane (C++ MPI/pthread) | `ecc:cpp-reviewer,ecc:database-reviewer,ecc:java-reviewer,ecc:security-reviewer` |
 
 ```bash
 /ecc:orchestrate custom "ecc:java-build-resolver,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-0] Review only, do not write feature code: pom.xml deps for Spring Boot 4.1 (flyway-database-postgresql, oauth2-resource-server, mapstruct processor paths, springdoc 3, testcontainers 2), docker-compose healthchecks + minio-init bucket, Dockerfile multi-stage layers; Acceptance: mvnw compile green; all compose services healthy; no secrets in repo"
@@ -1010,12 +1330,13 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-5] Review only: thin REST controllers with record DTOs and JSR-380, MapStruct mappers with GeometryMapper, If-Match/ETag on maintenance PATCH, GlobalExceptionHandler RFC 7807 mapping incl. AccessDenied from @PreAuthorize and lock failures, OpenAPI bearer scheme; Acceptance: every error is application/problem+json; no entity exposed in responses; 201 with Location"
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-6] Review only: AbstractIntegrationTest singleton PostGIS+Redis Testcontainers with @ServiceConnection, truncate cleanup without @Transactional, concurrency ITs with CountDownLatch for bookings/SOS/optimistic lock, spatial IT with lon/lat regression, ProblemDetail contract IT; Acceptance: mvnw verify green from clean; concurrency tests pass 5/5 repeats; no in-memory DB"
 /ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-7] Review only: stable OpenAPI contract for Kotlin client generation (explicit operationIds, required response fields, committed openapi.json), /users/me profile + account deletion with anonymization and cross-feature cleanup through services, CGNAT-friendly auth rate limit + per-account limit, gzip + conditional GET, FCM push via PushNotifier port with no PII in payload and retry through notified_at, mobile upload contract, prod profile behind TLS proxy with forward headers; Acceptance: generated client compiles without nullable-everything; deleted account cannot log in; push failure is retried; no secrets in repo"
+/ecc:orchestrate custom "ecc:cpp-reviewer,ecc:database-reviewer,ecc:java-reviewer,ecc:security-reviewer" "[Plan: docs/MASTER_PLAN.md#step-8] Review only: C++20 landslide simulation with MPI row-strip decomposition and halo exchange (MPI_THREAD_FUNNELED), pthread pool with barriers, counter-based RNG for reproducibility, GDAL windowed I/O and polygonize in EPSG:32633, SINMAP-style Monte Carlo factor of safety, cellular-automaton runout with mass conservation, libpqxx worker with FOR UPDATE SKIP LOCKED claim, lease and transactional result write, least-privilege DB role; Java landslide feature with BEFORE_COMMIT job enqueue, scheduled ingest computing trail exposure via ST_Intersects and geography length, public cached GET endpoints, 202 job endpoints; Acceptance: identical output for any process/thread count; mass conserved; job executed once under concurrent workers; worker role cannot read users; no data files in git"
 ```
 
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M7 sono completate (il checkpoint finale di M7 richiede l'app KMP); il prossimo lavoro è l'app. Per altre funzionalità:
+M0–M7 sono completate, compreso M7.2.2 (17/10); l'app KMP è a M9 in `../GeoSentinel-Mobile`. Prossimo lavoro del backend: M8. Per altre funzionalità:
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.

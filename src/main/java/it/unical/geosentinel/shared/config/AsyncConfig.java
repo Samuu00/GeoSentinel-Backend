@@ -27,6 +27,22 @@ public class AsyncConfig {
         return executor;
     }
 
+    // Reset della password: un solo thread, i codici partono nell'ordine delle richieste (volume minimo: 3 richieste
+    // all'ora per email). Separato da sosNotificationExecutor, così un SMTP lento non ritarda le notifiche SOS
+    @Bean(name = "passwordResetMailExecutor")
+    public ThreadPoolTaskExecutor passwordResetMailExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(1);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("pwreset-mail-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.setTaskDecorator(new MdcTaskDecorator());
+        return executor;
+    }
+
     private static class MdcTaskDecorator implements TaskDecorator {
         @Override
         public Runnable decorate(Runnable runnable) {

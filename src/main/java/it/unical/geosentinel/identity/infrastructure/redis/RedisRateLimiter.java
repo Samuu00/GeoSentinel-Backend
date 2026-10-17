@@ -66,6 +66,17 @@ public class RedisRateLimiter {
         }
     }
 
+    // Cancella il bucket: alla prossima richiesta lo script lo ricrea pieno. Best effort: con Redis giù il bucket
+    // si svuota comunque da solo al ritmo della policy
+    public void reset(String key) {
+        Objects.requireNonNull(key, "Rate limit key cannot be null");
+        try {
+            redisTemplate.delete(key);
+        } catch (Exception e) {
+            log.warn("Redis error while resetting rate limit key '{}'", key, e);
+        }
+    }
+
     // Redis non disponibile: fail-open di default (niente denial of service per un guasto del limiter),
     // fail-closed per le policy che proteggono dal brute force
     private static RateLimitDecision unavailable(RateLimitPolicy policy) {

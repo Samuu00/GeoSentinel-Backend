@@ -6,6 +6,12 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 ## [Non rilasciato]
 
 ### Aggiunto
+- Reset della password con codice via email (V13): `POST /auth/password-reset/request` (`requestPasswordReset`,
+  sempre 204, anche per un'email sconosciuta; 3 richieste all'ora per email → 429) e `/confirm`
+  (`confirmPasswordReset`, 204; 422 `invalid-reset-code` per codice sbagliato, scaduto, già usato o dopo 5 errori).
+  Codice di 16 caratteri (Crockford, `XXXXXXXX-XXXXXXXX`), valido 15 minuti, salvato solo come hash BCrypt; la
+  conferma chiude tutte le sessioni e non ne apre una nuova. Email spenta di default (`MAIL_ENABLED`), Mailpit nel
+  compose per lo sviluppo. Il client va rigenerato. `PasswordResetIT`.
 - Rifugi descritti (V11): `RefugeResponse` con `description`, `altitudeM`, `season`, `phone` (facoltativi) e `amenities`
   (sempre presente, elenco fisso `RefugeAmenity` nell'ordine dell'enum, tabella `refuge_amenities`); gli stessi campi,
   facoltativi, in `CreateRefugeRequest`. Il client va rigenerato. Seed: i due rifugi descritti (nuovo Rifugio Cupone).
