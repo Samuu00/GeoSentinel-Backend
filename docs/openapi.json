@@ -118,7 +118,7 @@
                 }
               }
             },
-            "description" : "Google email not verified, birth date missing or under the minimum age, or account already linked to another Google account"
+            "description" : "Birth date missing for a new account (birth-date-required), under the minimum age (age-requirement-not-met), Google email not verified or account already linked to another Google account (business-rule)"
           },
           "429" : {
             "content" : {
@@ -6925,7 +6925,7 @@
           "type" : {
             "type" : "string",
             "format" : "uri",
-            "description" : "https://geosentinel.dev/problems/<slug>, stable slugs: account-managed, age-requirement-not-met, alert-already-taken, business-rule, capacity-exceeded, concurrent-modification, conflict, forbidden, idempotency-key-reused, identity-provider-unavailable, internal-error, invalid-reset-code, media-payload-too-large, media-quota-exceeded, media-unsupported-type, not-found, precondition-required, rate-limit-exceeded, resource-busy, storage-unavailable, unauthorized, validation-error. Clients must map the slug, never the detail text, and tolerate unknown slugs",
+            "description" : "https://geosentinel.dev/problems/<slug>, stable slugs: account-managed, age-requirement-not-met, alert-already-taken, birth-date-required, business-rule, capacity-exceeded, concurrent-modification, conflict, forbidden, idempotency-key-reused, identity-provider-unavailable, internal-error, invalid-reset-code, media-payload-too-large, media-quota-exceeded, media-unsupported-type, not-found, precondition-required, rate-limit-exceeded, resource-busy, storage-unavailable, unauthorized, validation-error. Clients must map the slug, never the detail text, and tolerate unknown slugs",
             "example" : "https://geosentinel.dev/problems/validation-error"
           }
         },

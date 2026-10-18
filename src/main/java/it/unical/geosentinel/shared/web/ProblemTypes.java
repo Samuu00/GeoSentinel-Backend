@@ -27,6 +27,7 @@ public final class ProblemTypes {
     public static final URI AGE_REQUIREMENT_NOT_MET = URI.create(BASE_URL + "age-requirement-not-met");
     public static final URI INVALID_RESET_CODE = URI.create(BASE_URL + "invalid-reset-code");
     public static final URI IDENTITY_PROVIDER_UNAVAILABLE = URI.create(BASE_URL + "identity-provider-unavailable");
+    public static final URI BIRTH_DATE_REQUIRED = URI.create(BASE_URL + "birth-date-required");
 
     private ProblemTypes() {
     }

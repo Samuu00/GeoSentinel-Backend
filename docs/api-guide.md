@@ -30,6 +30,8 @@ richiede un aggiornamento dell'app.
 |---|---|---|
 | Registrazione | `POST /auth/register` | `email`, `password` (da 12 caratteri a 72 byte UTF-8), `displayName`, `birthDate`. Crea sempre un `HIKER`. Sotto i 14 anni → 422 `age-requirement-not-met` |
 | Login | `POST /auth/login` | Restituisce `accessToken` (JWT, 15 minuti) e `refreshToken` (opaco) |
+| Login con Google | `POST /auth/google` | `idToken` dal SDK Google, `birthDate` solo al primo accesso: senza → 422 `birth-date-required`, si chiede la data e si ripete con lo stesso token. 200 account esistente, 201 nuovo. Email Google non verificata o account già collegato a un altro Google → 422 `business-rule`; personale → 409 `account-managed`; chiavi Google irraggiungibili → 503 `identity-provider-unavailable` ([ADR-0024](adr/0024-login-google.md)) |
+| Password dimenticata | `POST /auth/password-reset/request`, poi `/confirm` | La prima risponde sempre 204 (anche per un'email sconosciuta; 3 all'ora per email → 429) e manda un codice di 16 caratteri valido 15 minuti. La seconda (`email`, `code`, `newPassword`) → 204 e tutte le sessioni chiuse, si torna al login; codice sbagliato, scaduto o usato → 422 `invalid-reset-code` (5 errori lo consumano) |
 | Richieste | header `Authorization: Bearer <accessToken>` | Mandarlo sempre, anche sulle GET pubbliche: il rate limit conta per utente invece che per IP |
 | Rinnovo | `POST /auth/refresh` | Restituisce una coppia nuova; il refresh token vecchio non vale più |
 | Logout | `DELETE /devices/{token}` e poi `POST /auth/logout` | Il primo toglie il dispositivo dalle push, il secondo revoca la sessione |
@@ -107,12 +109,15 @@ inglese e possono cambiare. Gli errori di validazione aggiungono `errors[]`, con
 | `business-rule` | 422 | Regola di dominio violata (email già registrata, date non valide, transizione di stato vietata, password attuale errata) |
 | `idempotency-key-reused` | 422 | Stessa `Idempotency-Key` con un body diverso |
 | `age-requirement-not-met` | 422 | Età sotto la soglia in registrazione |
+| `birth-date-required` | 422 | Primo accesso con Google senza `birthDate` |
+| `invalid-reset-code` | 422 | Codice di reset sbagliato, scaduto, già usato o con i tentativi finiti |
 | `media-quota-exceeded` | 422 | Quota di 1 GB superata |
 | `media-unsupported-type` | 415 | Tipo diverso da JPEG, PNG, WebP |
 | `media-payload-too-large` | 413 | File oltre 10 MB |
 | `precondition-required` | 428 | Manca `Idempotency-Key` o `If-Match` dove è obbligatorio |
 | `rate-limit-exceeded` | 429 | Troppe richieste: aspettare `Retry-After` |
 | `storage-unavailable` | 503 | Object storage irraggiungibile: riprovare dopo `Retry-After` |
+| `identity-provider-unavailable` | 503 | Chiavi pubbliche di Google irraggiungibili: riprovare dopo `Retry-After` |
 | `internal-error` | 500 | Errore inatteso (segnalarlo con il `traceId`) |
 
 ## Retry e idempotenza

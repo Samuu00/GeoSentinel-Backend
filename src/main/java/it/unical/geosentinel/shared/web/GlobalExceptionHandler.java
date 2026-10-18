@@ -250,6 +250,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 "Registration is not available for this age", new HttpHeaders(), request);
     }
 
+    // Primo accesso con Google: l'app chiede la data di nascita e ripete la richiesta con lo stesso ID token
+    @ExceptionHandler(BirthDateRequiredException.class)
+    public ResponseEntity<Object> handleBirthDateRequired(BirthDateRequiredException ex, WebRequest request) {
+        return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.BIRTH_DATE_REQUIRED, "Birth date required",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
     // Un solo messaggio per tutti i motivi (sbagliato, scaduto, già usato, tentativi finiti): non si distingue quale
     @ExceptionHandler(InvalidResetCodeException.class)
     public ResponseEntity<Object> handleInvalidResetCode(InvalidResetCodeException ex, WebRequest request) {

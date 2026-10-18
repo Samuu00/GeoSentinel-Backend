@@ -58,7 +58,10 @@ class GoogleLoginIT extends AbstractIntegrationTest {
         String email = UUID.randomUUID() + "@gmail.com";
         googleSays("sub-2", email, true);
 
-        assertThat(googleLogin("null").status()).isEqualTo(422);
+        HttpResult result = googleLogin("null");
+        assertThat(result.status()).isEqualTo(422);
+        // slug proprio: l'app sa che deve chiedere la data e ripetere la richiesta
+        assertThat(json(result.body()).get("type").asString()).endsWith("/birth-date-required");
         assertThat(count("SELECT count(*) FROM users WHERE email = ?", email)).isZero();
     }
 

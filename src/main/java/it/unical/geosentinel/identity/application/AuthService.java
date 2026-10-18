@@ -8,6 +8,7 @@ import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRep
 import it.unical.geosentinel.identity.infrastructure.persistence.UserIdentityRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
 import it.unical.geosentinel.shared.domain.exception.AgeRequirementNotMetException;
+import it.unical.geosentinel.shared.domain.exception.BirthDateRequiredException;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
 import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
@@ -302,7 +303,7 @@ public class AuthService {
 
         // 3. Account nuovo: le stesse regole della registrazione, età compresa
         if (birthDate == null) {
-            throw new BusinessRuleViolationException("Birth date is required to create an account");
+            throw new BirthDateRequiredException("Birth date is required to create an account");
         }
         requireMinAge(birthDate);
         User user = User.createHikerWithoutPassword(email, displayNameOf(google));

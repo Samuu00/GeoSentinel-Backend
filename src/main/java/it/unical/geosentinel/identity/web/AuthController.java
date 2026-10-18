@@ -72,7 +72,7 @@ public class AuthController {
             @ApiResponse(responseCode = "201", description = "Sign-in successful, new account created"),
             @ApiResponse(responseCode = "401", description = "Invalid Google ID token"),
             @ApiResponse(responseCode = "409", description = "Staff accounts cannot be linked to Google"),
-            @ApiResponse(responseCode = "422", description = "Google email not verified, birth date missing or under the minimum age, or account already linked to another Google account"),
+            @ApiResponse(responseCode = "422", description = "Birth date missing for a new account (birth-date-required), under the minimum age (age-requirement-not-met), Google email not verified or account already linked to another Google account (business-rule)"),
             @ApiResponse(responseCode = "429", description = "Rate limit exceeded"),
             @ApiResponse(responseCode = "503", description = "Google public keys unavailable")
     })
