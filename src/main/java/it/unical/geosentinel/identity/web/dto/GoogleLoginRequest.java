@@ -13,5 +13,9 @@ public record GoogleLoginRequest(
         String idToken,
 
         @Past(message = "Birth date must be in the past")
-        LocalDate birthDate
+        LocalDate birthDate,
+
+        // Facoltativo: obbligatorio solo se l'account collegato ha la verifica in due passaggi
+        @Size(max = 32, message = "MFA code is too long")
+        String mfaCode
 ) {}

@@ -26,4 +26,4 @@ frane (IFFI) utile per la validazione.
 - Senza geologia locale la mappa è approssimata: nessuna azione automatica sui sentieri, decide il `PARK_MANAGER`.
   L'app deve dire che non sostituisce il PAI né i bollettini della Protezione Civile.
 - I parametri stanno in `simulation/config/soil-params.json` e si calibrano sull'AUC; classi del suolo da una mappa
-  geologica e pioggia prevista da un servizio meteo restano fuori da M8.
+  geologica e pioggia prevista da un servizio meteo restano fuori da M10.

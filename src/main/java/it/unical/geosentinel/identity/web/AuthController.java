@@ -58,7 +58,7 @@ public class AuthController {
             @ApiResponse(responseCode = "429", description = "Rate limit exceeded")
     })
     public ResponseEntity<TokenResponse> login(@Valid @RequestBody LoginRequest request) {
-        AuthTokens tokens = authService.login(request.email(), request.password());
+        AuthTokens tokens = authService.login(request.email(), request.password(), request.mfaCode());
         return ResponseEntity.ok(TokenResponse.from(tokens));
     }
 
@@ -78,7 +78,7 @@ public class AuthController {
     })
     public ResponseEntity<TokenResponse> loginWithGoogle(@Valid @RequestBody GoogleLoginRequest request) {
         GoogleIdentity identity = googleIdentityVerifier.verify(request.idToken());
-        GoogleSignIn result = authService.loginWithGoogle(identity, request.birthDate());
+        GoogleSignIn result = authService.loginWithGoogle(identity, request.birthDate(), request.mfaCode());
         HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
         return ResponseEntity.status(status).body(TokenResponse.from(result.tokens()));
     }

@@ -11,9 +11,10 @@
 > - rotte `GET /hazards/mine`, `/hazards/nearby`, `/hazards/pending`; rifugi descritti e foto `REFUGE` (`V11__refuge_details`); crediti delle foto esterne (`V12__media_credit`); capacità del rifugio al massimo 1000;
 > - dati veri della Calabria da OpenStreetMap e Wikimedia Commons (`tools/osm-import`).
 >
-> - reset della password con codice via email (M7.2.2, `V13__password_reset_tokens`), completato e verificato il 17/10, da committare;
-> - login con Google tramite ID token nativo (M7.2.3, ADR-0024, `V14__google_identity`), revisionato e corretto il 18/10, da committare.
-> **Pianificata (17/10): M8, rischio frane** con un calcolo parallelo in C++ (MPI + pthread) e la feature `landslide` (ADR-0022, ADR-0023).
+> - reset della password con codice via email (M7.2.2, `V13__password_reset_tokens`), verificato il 17/10; dal 18/10 anche con email vere da Gmail;
+> - login con Google tramite ID token nativo (M7.2.3, ADR-0024, `V14__google_identity`), revisionato e corretto il 18/10; slug `birth-date-required` per l'app; client OAuth Web, Android e iOS creati, integrato nell'app (Android e iOS).
+> - **M8, verifica in due passaggi** (TOTP, ADR-0025, `V15__mfa`): scritta dall'utente, revisionata e corretta il 19/10; `./mvnw verify` verde (76 unit + 179 IT).
+> **Pianificate (18/10), nell'ordine:** M9, foto profilo (media con target `USER`, V16); M10, rischio frane con un calcolo parallelo in C++ (MPI + pthread) e la feature `landslide` (V17, ADR-0022, ADR-0023), pianificata il 17/10 come M8 e spostata dopo le prime due.
 > M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
 ---
@@ -57,8 +58,8 @@ GeoSentinel-Backend/
 ├── pom.xml
 ├── CONTRIBUTING.md, SECURITY.md, CHANGELOG.md
 ├── docker-compose.prod.yml + deploy/Caddyfile   # produzione (M7.6)
-├── simulation/            # C++20 + MPI + pthread: landslide-sim, landslide-worker (M8, CMake, Dockerfile proprio)
-├── tools/                 # osm-import (dati della Calabria), dem-prep (DEM per M8)
+├── simulation/            # C++20 + MPI + pthread: landslide-sim, landslide-worker (M10, CMake, Dockerfile proprio)
+├── tools/                 # osm-import (dati della Calabria), dem-prep (DEM per M10)
 ├── docs/
 │   ├── README.md          # indice della documentazione
 │   ├── MASTER_PLAN.md
@@ -174,7 +175,7 @@ GeoSentinel-Backend/
     │   │   │   │   └── push/         FcmPushNotifier (push.enabled=true), LoggingPushNotifier (default)
     │   │   │   └── web/           DeviceController (/api/v1/devices), dto/ DeviceDtos
     │   │   │
-    │   │   └── landslide/                            # rischio frane (M8, pianificata)
+    │   │   └── landslide/                            # rischio frane (M10, pianificata)
     │   │       ├── domain/        SimulationJob, SimulationType, SimulationStatus, ZoneKind, RiskLevel
     │   │       ├── application/   LandslideRiskService, LandslideResultIngestJob, dto/LandslideCommands
     │   │       ├── infrastructure/  persistence/ (job, rischio per sentiero), event/HazardVerifiedListener
@@ -928,6 +929,13 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 
 Limiti chiusi subito dopo (17/10, su richiesta): richiesta asincrona (tempo uguale con o senza account, BCrypt fuori dal thread HTTP), executor dedicato con `traceId`, limite sui login azzerato dal reset.
 
+**SMTP vero (18/10, su richiesta):** `MAIL_SMTP_AUTH` e `MAIL_STARTTLS` (spenti di default, Mailpit invariato) →
+`mail.smtp.auth`, `starttls.enable` e `starttls.required`: con un server vero lo STARTTLS è obbligatorio, così un
+intermediario non può togliere il TLS e leggere le credenziali. Provato con Gmail (`smtp.gmail.com:587`, password per le
+app, mittente = l'account): codice arrivato nella casella. Configurazione in `.env.example`; per tornare a Mailpit si
+tolgono le righe `MAIL_*`. Gmail va bene per le prove (circa 500 email al giorno); per la pubblicazione serve un servizio
+apposta con un dominio proprio.
+
 **Limite noto:** se l'SMTP fallisce, l'utente non riceve il codice e non lo sa (risposta già 204); lo ritenta dall'app, entro il limite di 3 all'ora. Nessuna coda di reinvio: un codice vecchio non ha valore.
 
 #### M7.2.3 — Login con Google (ID token nativo)
@@ -956,7 +964,9 @@ Limiti chiusi subito dopo (17/10, su richiesta): richiesta asincrona (tempo ugua
 - [x] `GoogleIdTokenVerifierTest` (10): entrambi gli issuer, issuer estraneo, audience di un'altra app, client ID vuoto, `exp` ed email mancanti, `email_verified` assente, 503 contro 401
 - [x] `GoogleLoginIT` (11): account creato senza password (201) poi 200 senza data; 422 senza `birthDate` e nessuna riga; email non verificata mai creata né collegata; collegamento di un HIKER e password che smette di valere; personale 409; seconda identità rifiutata; 10 primi accessi concorrenti → un account, `@RepeatedTest(5)`
 - [x] `MigrationIT` con V14; `docs/openapi.json` rigenerato; `./mvnw clean verify` verde: 61 unit + 163 IT
-- [ ] dal vivo con l'app KMP: client OAuth Android (SHA-1), iOS (bundle id) e Web (audience dell'ID token su Android) nella Google Cloud Console, `GOOGLE_CLIENT_IDS` nel `.env`
+- [x] client OAuth Web, Android (SHA-1 del debug) e iOS nella Google Cloud Console, Web e iOS in `GOOGLE_CLIENT_IDS` (18/10)
+- [x] integrato nell'app KMP (18/10): Credential Manager su Android, SDK GoogleSignIn su iOS (vedi "Dopo M9" del suo piano)
+- [ ] dal vivo: primo accesso con un account Google vero (201, data di nascita), poi 200; su iPhone il bundle id riscritto da xtool deve combaciare con il client iOS
 
 **Bug corretti nella review (18/10):** non compilava (`GoogleProperties.jwtSetUri` contro `jwkSetUri()`, import di `RemoteKeySourceException` dal package sbagliato, costruttore di `AuthService` nei test); presa dell'account con email non verificata nel caso "account nuovo"; seconda identità Google sullo stesso account; issuer senza schema → 500; doppio primo accesso → 500; token senza `exp` accettato; email oltre 254 caratteri → 500; il dominio importava `application.UserProfile`.
 
@@ -1081,13 +1091,129 @@ Limiti chiusi subito dopo (17/10, su richiesta): richiesta asincrona (tempo ugua
 
 ---
 
-### Milestone 8 — Rischio frane: calcolo parallelo in C++ (MPI + pthread)
+### Milestone 8 — Verifica in due passaggi (TOTP)
 
-> Pianificata il 17/10. Decisioni in ADR-0022 (architettura) e ADR-0023 (modello). Il codice lo scrivi tu, come sempre.
+> Pianificata il 18/10, prima del calcolo delle frane (spostato a M10). Decisioni in **ADR-0025**. Il codice lo scrivi tu.
+> **Completata il 19/10:** scritta dall'utente, poi revisionata e corretta da Claude su richiesta (vedi "Review del 19/10" in fondo alla milestone).
+
+**Obiettivo:** chi vuole protegge l'account con un secondo fattore: un codice a 6 cifre da un'app di autenticazione (Google Authenticator, Aegis, Password di iOS…), più 10 codici di recupero per il telefono perso.
+
+**Scelte (da ADR-0025):**
+- **TOTP (RFC 6238), non SMS né email.** Niente costi né provider; l'SMS si intercetta (SIM swap); l'email è già il canale del reset (M7.2.2), quindi come secondo fattore non aggiungerebbe nulla. Parametri standard, gli unici che tutte le app leggono: HMAC-SHA1, 6 cifre, passo di 30 s, tolleranza ±1 passo
+- **Implementazione con `javax.crypto.Mac`, nessuna libreria:** l'algoritmo sono una decina di righe e i vettori di prova dell'RFC (appendice B) lo verificano. Serve un encoder Base32 (RFC 4648, solo encoding, per l'URI `otpauth://`): prima di scriverlo, controlla con `dependency:tree` se `commons-codec` arriva già (es. da Firebase) e usa quello
+- **Facoltativa per tutti i ruoli, personale compreso** (deciso il 18/10)
+- **Login senza stato:** niente "token di sfida" né tabella delle sfide. Password giusta e 2FA attiva ma codice assente → 401 `mfa-required`; l'app chiede il codice e **rimanda la stessa richiesta** con `mfaCode`. Un solo campo per TOTP e codice di recupero (6 cifre → TOTP, altrimenti recupero)
+- **Vale su ogni accesso all'account**, anche `POST /auth/google`: altrimenti chi controlla l'account Google della vittima salterebbe il secondo fattore. Il refresh non lo chiede (la sessione è già verificata)
+
+**Dati — `V15__mfa.sql`:**
+| Tabella | Contenuto |
+|---|---|
+| `user_mfa` | `user_id uuid PK` FK `users(id)`, `secret_enc bytea NOT NULL` (segreto cifrato: va riletto per calcolare il codice, quindi niente hash), `enabled_at timestamptz NULL` (NULL = configurazione iniziata e non confermata), `last_used_step bigint NULL` (anti-replay), `created_at` |
+| `mfa_recovery_codes` | `id`, `user_id` FK con indice, `code_hash varchar(64) NOT NULL` (SHA-256: il codice ha ~80 bit, BCrypt qui costerebbe 10 confronti lenti a ogni tentativo), `used_at timestamptz NULL`, `created_at`; `UNIQUE (user_id, code_hash)` |
+
+**Contratti:**
+```java
+// identity/domain
+final class Totp {                                   // funzioni pure, testate con i vettori dell'RFC
+    static int codeAt(byte[] secret, long step);    // HOTP con troncamento dinamico, 6 cifre
+    static long stepAt(Instant t);                  // epochSecond / 30
+}
+// identity/application
+public class MfaService {
+    MfaSetupView startSetup(UUID userId);                         // segreto nuovo (160 bit), riga con enabled_at NULL → (secret Base32, otpauthUri)
+    List<String> enable(UUID userId, String code);                // conferma con un TOTP valido → 10 codici di recupero in chiaro, una volta sola
+    void disable(UUID userId, String code);                       // TOTP o codice di recupero
+    List<String> regenerateRecoveryCodes(UUID userId, String code); // solo TOTP; i vecchi codici smettono di valere
+    void verifyLogin(User user, String mfaCode);                  // chiamato da AuthService: lancia MfaRequiredException / InvalidMfaCodeException
+    boolean isEnabled(UUID userId);
+    void deleteAllOf(UUID userId);                                // cancellazione dell'account (regola di M7.2)
+}
+final class MfaSecretCipher { byte[] encrypt(byte[] plain); byte[] decrypt(byte[] enc); } // AES-256-GCM, IV casuale di 12 byte in testa
+```
+- [x] **Chiave di cifratura** `MFA_ENCRYPTION_KEY` (32 byte in base64) nel `.env` e in `.env.example`, letta come `geosentinel.mfa.encryption-key` e controllata all'avvio come `JwtProperties` (fail-fast sui byte). Diversa da `JWT_SECRET`. Rotazione della chiave: fuori da M8 (limite noto)
+- [x] **Verifica di un codice**, sempre con il lock sull'utente (`findByIdForUpdate`, ordine di ADR-0021) e il `Clock` bean:
+  - TOTP accettato se combacia in uno dei passi `now-1 … now+1` **e** il passo è > `last_used_step`, che poi si aggiorna: lo stesso codice non vale due volte (replay), nemmeno in due login paralleli
+  - confronto in tempo costante (`MessageDigest.isEqual` sui byte del codice)
+  - codice di recupero: generato e normalizzato con `PasswordResetCode` (stesso alfabeto di Crockford, già nel codebase), marcato `used_at` alla prima verifica
+- [x] **Limiti:** chi arriva al codice conosce già la password, quindi il limite del login (10 ogni 15 min, ~960 tentativi al giorno) non basta: con 3 codici validi su 10⁶ (±1 passo) darebbe ~1 probabilità su 350 al giorno. Limite proprio per account sui codici sbagliati (login, `disable`, `recovery-codes`): **5 all'ora** (~1 su 2800 al giorno), stessa implementazione di `RedisLoginAttemptLimiter` con prefisso `rl:mfa:` e policy propria, fail-closed → 429 + `Retry-After`. Il 401 `mfa-required` (codice assente) non conta come errore. Deciso il 18/10, al posto di un limite ancora più stretto che bloccherebbe anche l'utente vero
+- [x] **Avviso per email** al terzo codice sbagliato **del login** dentro la finestra del limite: chi arriva al codice ha già la password giusta, quindi l'utente va avvisato ("qualcuno ha inserito la tua password: cambiala"). Al massimo un'email per finestra (chiave Redis `mfa:alert:<userId>` con TTL di un'ora, `SET NX`), inviata dopo il commit con l'executor e il mailer di M7.2.2 (porta `PasswordResetMailer` estesa con un secondo metodo, o una porta `AccountSecurityMailer` se il nome stona). Nessun dato del tentativo nell'email (né IP né orario preciso). Gli errori su `disable` e `recovery-codes` non mandano email: lì l'utente è già loggato
+- [x] **Login** (`AuthService.login`, ordine attuale invariato fino al BCrypt): password giusta → `mfaService.verifyLogin(user, request.mfaCode())` → sessione. Il 401 `mfa-required` arriva solo a chi conosce già la password: è il comportamento standard, va scritto nella guida
+- [x] **Login Google** (`AuthService.loginWithGoogle`): stessa verifica al passo 4 (identità già collegata) e al passo 5 (collegamento di un account esistente) di M7.2.3, **prima** di collegare o emettere la sessione. Un account nuovo non ha 2FA
+- [x] **Reset della password (M7.2.2):** invariato. Non crea sessioni, quindi non aggira il secondo fattore: dopo il reset il login chiede ancora il codice
+- [x] **Rotte** (regole di M7.1: `operationId`, `REQUIRED`, `bearerAuth`):
+  | Metodo | Rotta | Body → risposta | operationId |
+  |---|---|---|---|
+  | POST | `/api/v1/users/me/mfa/setup` | — → 200 `MfaSetupResponse(secret, otpauthUri)`; 409 `mfa-already-enabled` se è già attiva | `startMfaSetup` |
+  | POST | `/api/v1/users/me/mfa/enable` | `{code}` → 200 `RecoveryCodesResponse(codes)`; 422 `invalid-mfa-code` | `enableMfa` |
+  | POST | `/api/v1/users/me/mfa/disable` | `{code}` → 204 | `disableMfa` |
+  | POST | `/api/v1/users/me/mfa/recovery-codes` | `{code}` → 200 `RecoveryCodesResponse` | `regenerateRecoveryCodes` |
+  - `LoginRequest` e `GoogleLoginRequest` con `mfaCode` facoltativo (`@Size(max = 32)`: mai input grezzo lungo verso il parsing)
+  - `otpauthUri` = `otpauth://totp/GeoSentinel:<email>?secret=…&issuer=GeoSentinel&digits=6&period=30` (email URL-encoded); `secret` anche in chiaro per l'inserimento a mano
+  - nuovi slug in `ProblemTypes`: `mfa-required` (401), `invalid-mfa-code` (401 al login, 422 sulle rotte `/mfa`), `mfa-already-enabled` (409); eccezioni in `shared/domain/exception`
+  - `UserProfileResponse.mfaEnabled` (`REQUIRED`)
+- [x] **Risposte mai in cache e mai nei log:** segreto, URI e codici di recupero viaggiano solo nel body (`no-store` è già il default fuori dal catalogo, M7.3); nessun log con quei valori
+- [x] Cancellazione dell'account: `MfaService.deleteAllOf` in `UserAccountService.deleteAccount`
+- [x] **Telefono e codici di recupero persi insieme** (deciso il 18/10): un `ADMIN` azzera la 2FA dell'utente, dopo aver verificato l'identità **fuori dall'app** (di persona o per telefono: è una procedura, non codice). La scorciatoia "il reset della password via email azzera anche la 2FA" è scartata: ridurrebbe la 2FA a un secondo fattore che vale quanto la casella email
+  - `POST /api/v1/admin/mfa-resets` (`resetUserMfa`), body `{ email }`, solo `ADMIN` (`@PreAuthorize`), → 204; email sconosciuta o senza 2FA → 404 (l'ADMIN può saperlo)
+  - `MfaService.adminReset(UUID adminId, String email)`: lock sull'utente, cancella `user_mfa` e i codici, **chiude tutte le sessioni** (refresh token revocati + `revokeAllIssuedUntil(userId, now)`, regola di M7.7), email all'utente ("la verifica in due passaggi è stata disattivata da un amministratore"). Un `ADMIN` non azzera la propria (422 `business-rule`, come ogni regola di dominio nel codebase): serve un secondo `ADMIN`
+  - log `INFO` con l'id dell'ADMIN e dell'utente (mai l'email): è l'unica traccia di chi ha agito
+- [x] `docs/openapi.json` rigenerato, `api-guide.md` (flusso del login con `mfa-required`, nuovi slug, reset da ADMIN), `CHANGELOG.md`, ADR-0025
+
+**Checkpoint:**
+- [x] `TotpTest`: i vettori SHA-1 dell'RFC 6238 (appendice B, troncati a 6 cifre), passo ai bordi dei 30 s
+- [x] `MfaSecretCipherTest`: andata e ritorno; un byte cambiato nel testo cifrato → errore (GCM), mai il segreto sbagliato
+- [x] `MfaIT`: setup → enable con un codice calcolato nel test (`Totp.codeAt` con il `Clock` dei test) → login senza codice 401 `mfa-required`, con codice 200; **stesso codice una seconda volta → 401** (replay); codice del passo precedente accettato, di due passi prima no; codice di recupero valido una volta sola; 6 codici sbagliati → 429 (anche con la password giusta); al terzo errore del login una sola email (mailer finto), anche dopo altri errori nella stessa ora; reset da `ADMIN` → login senza codice, sessioni precedenti 401, email partita; reset da `HIKER` → 403; reset di sé stesso → 422; login Google su un account con 2FA → `mfa-required`; `disable` → login di nuovo senza codice; setup ripetuto senza enable sostituisce il segreto; righe cancellate con l'account
+- [x] `MigrationIT` con V15; `./mvnw clean verify` verde
+
+**Limiti noti accettati:** l'attivazione non chiude le altre sessioni aperte (chi teme un furto cambia la password, che le revoca tutte, M7.7); rotazione di `MFA_ENCRYPTION_KEY` non prevista; il reset da `ADMIN` si fida della verifica d'identità fatta fuori dall'app; l'attivazione non chiede la password (gli account solo Google non ne hanno una: la attenua l'email); il segreto cifrato non è legato all'utente (nessun AAD: servirebbe un accesso in scrittura al DB, che basta già a cambiare la password).
+
+**Review del 19/10 (corretta da Claude su richiesta):**
+- **bloccante:** in `application-test.properties` la chiave era tra `<…>` (base64 non valido): nessun IT partiva. Ora è una chiave finta di 32 byte a zero (bassa entropia, gitleaks non la segnala);
+- **avviso perso sul login Google:** `loginWithGoogle` senza `noRollbackFor` annullava la transazione al codice sbagliato e l'evento `AFTER_COMMIT` non partiva. Ora ha `noRollbackFor = InvalidMfaCodeException.class`, come `login`;
+- **contatore degli avvisi:** `INCR` ed `EXPIRE` erano due comandi. Un guasto tra i due lasciava la chiave senza TTL e nessun avviso più per quell'utente. Ora sono uno script Lua atomico;
+- **aggiunto:** email all'attivazione e alla disattivazione (`MfaStatusChanged`, `MfaAlertMailer.sendStatusChanged`). Chi ruba un access token può attivare la 2FA e chiudere fuori il titolare: così lui lo sa subito;
+- import inutili tolti da `MfaController`; `Totp.codeAt` e `stepAt` pubblici per gli IT; test unitari di `AuthService` e `MigrationIT` aggiornati; `.env.example` spiega come generare la chiave;
+- test: `TotpTest` (vettori dell'RFC, finestra, Base32), `MfaSecretCipherTest` (manomissione, chiave diversa), `MfaIT` (16 test, tra cui 8 login paralleli con lo stesso codice → una sola sessione, `@RepeatedTest(5)`, e l'avviso dal login Google). `docs/openapi.json` rigenerato. `./mvnw verify` verde: 76 unit + 179 IT.
+
+---
+
+### Milestone 9 — Foto profilo
+
+> Pianificata il 18/10. Riusa la feature `media` (M3): nessuna tabella nuova, nessun nuovo percorso di upload. Il codice lo scrivi tu.
+
+**Obiettivo:** l'utente mette, cambia o toglie una foto profilo dall'app.
+
+**Scelte:**
+- **La foto è un `MediaFile` allegato all'utente** (`entityType = USER`, `entityId = id dell'utente`): upload, confirm, magic bytes, quarantena, quota e pulizia restano quelli di M3. Niente colonna `avatar_media_id` in `users`: la foto corrente è l'**ultimo** media `READY` di tipo `USER` dell'utente, e al confirm di una nuova le precedenti si cancellano (riga e oggetto). Una sola fonte di verità
+- **Visibile solo al proprietario.** Oggi nessuna schermata mostra un utente agli altri, quindi non serve moderazione né una regola di visibilità nuova. Mostrarla ad altri (es. all'operatore che gestisce un SOS) è un'estensione da decidere a parte: cambia la privacy
+- **Ritaglio e ridimensionamento nell'app** (quadrato, lato ≤ 512 px, JPEG senza EXIF, A13 del piano mobile): il backend non elabora immagini
+
+**Dati — `V16__media_user_target.sql`:** solo il vincolo, come in V11: `DROP CONSTRAINT chk_media_files_entity_type` e di nuovo con `('TRAIL', 'HAZARD_REPORT', 'REFUGE', 'USER')`.
+
+- [ ] `MediaTargetType.USER`
+- [ ] `MediaService.initiateUpload`: la `@PreAuthorize` oggi ammette senza `PARK_MANAGER` solo `null` e `HAZARD_REPORT`: aggiungere `USER`, altrimenti un HIKER riceve 403
+- [ ] `checkTarget`: `case USER` → `entityId` deve essere `ownerId`, altrimenti 404 (non si carica la foto di un altro)
+- [ ] `isTargetVisible`: `USER` → `false` esplicito (il proprietario passa già da `isOwnedBy`). **Trappola:** oggi un tipo non gestito cade nel ramo delle segnalazioni (`hazardReportService.getHazard`); meglio uno `switch` completo, così il compilatore segnala il prossimo tipo dimenticato
+- [ ] **Sostituzione:** in `confirmUpload`, se il file diventa `READY` ed è di tipo `USER`, cancella gli altri media `USER` dello stesso utente: prima le righe (flush), poi gli oggetti, come `deleteAllOf`. Due confirm paralleli: il lock per utente della quota (`lockOwner`) li mette in fila, l'ultimo vince
+- [ ] `MediaService.currentAvatarOf(UUID userId)` → `Optional<UUID>`; `UserAccountService` lo usa per `UserProfileResponse.avatarMediaId` (nullable: senza `REQUIRED`). La dipendenza `identity → media` esiste già (`deleteAllOf`)
+- [ ] **Rimozione:** `DELETE /api/v1/media/{id}` esistente (il proprietario può già cancellare). Nessuna rotta nuova
+- [ ] Download: `GET /api/v1/media/{id}/download` esistente (URL firmato, 5 min). L'app mette in cache l'immagine per `mediaId` (cambia a ogni nuova foto), non per URL
+- [ ] Cancellazione dell'account: già coperta da `MediaService.deleteAllOf`
+- [ ] `docs/openapi.json` rigenerato (enum `USER` nelle risposte: **l'app va aggiornata insieme**, regola di M7.1), `api-guide.md` (foto profilo = upload con target `USER`), `CHANGELOG.md`
+
+**Checkpoint:**
+- [ ] `AvatarIT` (MinIO vero, come `MediaUploadIT`): HIKER carica la sua foto → `READY`, `/users/me` ha `avatarMediaId`; seconda foto → la prima non esiste più (riga e oggetto); target `USER` con l'id di un altro → 404; un altro utente non la legge né la scarica (404); `DELETE` → `avatarMediaId` null; account cancellato → nessun oggetto rimasto
+- [ ] `MigrationIT` con V16; `./mvnw clean verify` verde
+
+---
+
+### Milestone 10 — Rischio frane: calcolo parallelo in C++ (MPI + pthread)
+
+> Pianificata il 17/10, spostata da M8 a M10 il 18/10 (prima 2FA e foto profilo). Decisioni in ADR-0022 (architettura) e ADR-0023 (modello). Il codice lo scrivi tu, come sempre.
 
 **Obiettivo:** stimare **dove una frana è probabile** (suscettibilità, con uno scenario di pioggia) e **dove arriverebbe** (propagazione), poi capire **quali sentieri attraversa**. Il calcolo pesante è un programma C++ parallelo (MPI tra processi, pthread dentro ogni processo); il backend Java mette in coda i calcoli, legge i risultati e li espone all'app.
 
-**Perché qui ha senso il calcolo parallelo** (stime su un PC a 12 core, da misurare in M8.8):
+**Perché qui ha senso il calcolo parallelo** (stime su un PC a 12 core, da misurare in M10.8):
 - suscettibilità su tutta la Calabria a 30 m: circa 16,7 milioni di celle × 1000 campioni Monte Carlo ≈ 1,7·10¹⁰ valutazioni del fattore di sicurezza. Qualche minuto su un core, decine di secondi su 12;
 - propagazione su una finestra di 5 × 5 km a 10 m: 250 000 celle × migliaia di passi dell'automa cellulare.
 
@@ -1111,23 +1237,23 @@ PARK_MANAGER verifica una segnalazione LANDSLIDE        ADMIN lancia una suscett
 - **Niente porta in `application`:** Java non chiama il worker, scrive una riga. Una porta qui sarebbe un'interfaccia senza un secondo sistema da sostituire (D2).
 - **Il worker non sa cosa sia un sentiero:** produce poligoni. L'intersezione con i sentieri la fa PostGIS, lato Java.
 
-**Ordine:** M8.1 → M8.2 → M8.3 → M8.4 → M8.5 → M8.6 → M8.8, con **M8.7 (lato Java) in parallelo** da subito dopo aver fissato le tabelle (V15): si prova con zone finte inserite in SQL, senza il C++.
+**Ordine:** M10.1 → M10.2 → M10.3 → M10.4 → M10.5 → M10.6 → M10.8, con **M10.7 (lato Java) in parallelo** da subito dopo aver fissato le tabelle (V17): si prova con zone finte inserite in SQL, senza il C++.
 
-#### M8.1 — Dati: DEM, inventario frane, parametri
+#### M10.1 — Dati: DEM, inventario frane, parametri
 **Obiettivo:** dati di ingresso riproducibili da uno script, mai committati (pesano centinaia di MB).
 - [ ] `tools/dem-prep/` (accanto a `tools/osm-import`): script che scarica, ritaglia sulla Calabria, riproietta in **EPSG:32633** (UTM 33N, metri) e scrive GeoTIFF in `${SIM_DATA_DIR}` (volume Docker, fuori dal repo, in `.gitignore` e `.dockerignore`)
   - **DEM 30 m** (Copernicus GLO-30, ESA/UE) per la suscettibilità di tutta la regione. Bucket pubblico AWS `copernicus-dem-30m` (tile COG 1°×1°, circa 10 tra N37–N40 ed E015–E017), letto da GDAL con `/vsis3/` + `AWS_NO_SIGN_REQUEST=YES`, senza account. Sorgente in EPSG:4326. Portale: `dataspace.copernicus.eu`
   - **DEM 10 m** (TINITALY 1.1, INGV, CC BY 4.0) per la propagazione, letto a finestre. Download a tile da `tinitaly.pi.ingv.it`. Sorgente in **EPSG:32632** (UTM 32N, non 33N): va riproiettato anche lui
   - **Confine della Calabria** (ISTAT, limiti amministrativi, CC BY 4.0) per il ritaglio: `gdalwarp -cutline ... -crop_to_cutline -dstnodata -9999` (il nodata copre anche il mare)
-  - ricampionamento `bilinear` (mai `nearest`: la quota a gradini dà pendenze a scalini); output `-co TILED=YES -co COMPRESS=DEFLATE -co PREDICTOR=3` (tile per le finestre di M8.5)
+  - ricampionamento `bilinear` (mai `nearest`: la quota a gradini dà pendenze a scalini); output `-co TILED=YES -co COMPRESS=DEFLATE -co PREDICTOR=3` (tile per le finestre di M10.5)
   - lo script gira in un container con un'immagine GDAL a versione fissata: con un'altra versione il checksum del checkpoint cambia
   - dimensioni attese, ritagliate sul confine: circa 17 M celle a 30 m (~70 MB float32), circa 150 M a 10 m (~600 MB)
   - licenze e attribuzioni da verificare al download e da scrivere in `tools/dem-prep/README.md` (come i crediti delle foto, V12)
 - **Limite noto:** GLO-30 è un **DSM** (misura la chioma degli alberi, non il suolo): in Sila e in Aspromonte la pendenza è alterata. Alternativa: **FABDEM** (Copernicus senza alberi ed edifici, CC BY-NC-SA, solo uso non commerciale: va bene per il progetto universitario). Scelta da fissare in ADR-0023
 - I due DEM hanno riferimenti verticali diversi (EGM2008 e quota ortometrica italiana): non è un problema, non si mescolano mai (uno per la suscettibilità, l'altro per la propagazione)
-- [ ] Inventario delle frane IFFI (ISPRA, CC BY 4.0, open data per regione da `idrogeo.isprambiente.it`) per la Calabria, solo per la validazione (M8.8). Non entra nel calcolo
-- [ ] `simulation/config/soil-params.json`: intervalli dei parametri (ADR-0023), un'unica classe di suolo per partire. Valori iniziali da letteratura (tabelle del manuale SINMAP, Pack et al.), da calibrare in M8.8. Per la Calabria non esistono dati geotecnici locali (coesione, attrito, spessore): nessuna fonte di dati del suolo entra in M8
-- Fonti per i parametri per classe (fuori da M8, vedi sotto): **SoilGrids** (ISRIC, 250 m, CC BY 4.0, `soilgrids.org`: tessitura, densità, profondità della roccia, senza account); **ESDAC** (JRC, proprietà idrauliche a 250 m, modulo di richiesta); **Carta Geologica d'Italia** (ISPRA: 1:100.000 su tutta la regione, CARG 1:50.000 solo in parte); carta dei suoli regionale ARSSA/ARSAC 1:250.000 (disponibilità da verificare); **Corine Land Cover 2018** (bosco → coesione delle radici). Nessuna dà direttamente C e φ: si incrocia la classe con le tabelle della letteratura
+- [ ] Inventario delle frane IFFI (ISPRA, CC BY 4.0, open data per regione da `idrogeo.isprambiente.it`) per la Calabria, solo per la validazione (M10.8). Non entra nel calcolo
+- [ ] `simulation/config/soil-params.json`: intervalli dei parametri (ADR-0023), un'unica classe di suolo per partire. Valori iniziali da letteratura (tabelle del manuale SINMAP, Pack et al.), da calibrare in M10.8. Per la Calabria non esistono dati geotecnici locali (coesione, attrito, spessore): nessuna fonte di dati del suolo entra in M10
+- Fonti per i parametri per classe (fuori da M10, vedi sotto): **SoilGrids** (ISRIC, 250 m, CC BY 4.0, `soilgrids.org`: tessitura, densità, profondità della roccia, senza account); **ESDAC** (JRC, proprietà idrauliche a 250 m, modulo di richiesta); **Carta Geologica d'Italia** (ISPRA: 1:100.000 su tutta la regione, CARG 1:50.000 solo in parte); carta dei suoli regionale ARSSA/ARSAC 1:250.000 (disponibilità da verificare); **Corine Land Cover 2018** (bosco → coesione delle radici). Nessuna dà direttamente C e φ: si incrocia la classe con le tabelle della letteratura
 - **Vincolo:** il calcolo lavora in metri (32633); il passaggio a EPSG:4326 lo fa **PostGIS** (`ST_Transform`) all'inserimento, mai il C++. Così l'ordine lon/lat (D10) resta in un solo punto e si evita la trappola dell'ordine degli assi di GDAL 3 per EPSG:4326.
 
 **Checkpoint:**
@@ -1135,7 +1261,7 @@ PARK_MANAGER verifica una segnalazione LANDSLIDE        ADMIN lancia una suscett
 - [ ] `gdalinfo` sui file: EPSG:32633, risoluzione 30 m e 10 m, nodata definito
 - [ ] `ST_Transform(ST_SetSRID(ST_MakePoint(x, y), 32633), 4326)` di un punto noto (es. un rifugio del seed) torna alle sue coordinate entro 1 m
 
-#### M8.2 — Progetto C++: struttura, build, decomposizione del dominio
+#### M10.2 — Progetto C++: struttura, build, decomposizione del dominio
 **Obiettivo:** scheletro compilabile e testato, con la decomposizione e lo scambio dei bordi già verificati prima di metterci un modello sopra.
 
 Struttura (nuova cartella del repo backend, progetto CMake indipendente da Maven):
@@ -1176,11 +1302,11 @@ Contratti:
 - [ ] test della decomposizione: unione dei range = tutte le righe, nessuna sovrapposizione, anche con più rank che righe
 - [ ] lettura e riscrittura di un GeoTIFF con `-np 4`: file identico all'originale (byte per byte sui dati, georeferenziazione uguale)
 
-#### M8.3 — Preprocessing del terreno: pendenza e area drenata
+#### M10.3 — Preprocessing del terreno: pendenza e area drenata
 **Obiettivo:** gli strati che servono al modello, calcolati una volta per DEM e salvati come GeoTIFF in `${SIM_DATA_DIR}/derived/`.
 - [ ] **Pendenza** θ con il metodo di Horn (stencil 3×3): parallela, MPI (halo di 1 riga) + pthread (blocchi di righe). Celle nodata e bordo del dominio → nodata
 - [ ] **Riempimento delle depressioni** (priority-flood) e **direzioni di deflusso D8**: sequenziali
-- [ ] **Area drenata specifica** `a` (area a monte / larghezza della cella, in metri): accumulo D8 in ordine topologico, **sequenziale**. L'accumulo dipende da tutto il bacino a monte e non si decompone a strisce in modo semplice: farlo in parallelo è un'estensione facoltativa (M8.8), non un requisito
+- [ ] **Area drenata specifica** `a` (area a monte / larghezza della cella, in metri): accumulo D8 in ordine topologico, **sequenziale**. L'accumulo dipende da tutto il bacino a monte e non si decompone a strisce in modo semplice: farlo in parallelo è un'estensione facoltativa (M10.8), non un requisito
 - [ ] Sottocomando `landslide-sim prepare --dem <file> --out <dir>`
 
 **Checkpoint:**
@@ -1188,7 +1314,7 @@ Contratti:
 - [ ] test su un cono rovesciato sintetico: tutta l'area drena verso il centro e l'accumulo al centro = numero di celle valide
 - [ ] su un DEM vero, pendenza confrontata con `gdaldem slope -alg Horn`: differenza massima < 0,01°
 
-#### M8.4 — Suscettibilità: Monte Carlo del fattore di sicurezza (MPI + pthread)
+#### M10.4 — Suscettibilità: Monte Carlo del fattore di sicurezza (MPI + pthread)
 **Obiettivo:** per ogni cella, la probabilità che il versante ceda con uno scenario di pioggia dato, `P(FS < 1)`.
 
 Modello (pendio indefinito + idrologia stazionaria, come SINMAP; ADR-0023):
@@ -1196,13 +1322,13 @@ Modello (pendio indefinito + idrologia stazionaria, come SINMAP; ADR-0023):
 w  = min(1, R·a / (T·sin θ))                       # saturazione relativa
 FS = (C + cos θ · (1 − w·r) · tan φ) / sin θ        # r = ρw/ρs ≈ 0,5
 ```
-- `θ` e `a` da M8.3; `R` (ricarica, m/giorno) dallo scenario: `R = pioggia_mm_24h / 1000 · infiltrazione`
+- `θ` e `a` da M10.3; `R` (ricarica, m/giorno) dallo scenario: `R = pioggia_mm_24h / 1000 · infiltrazione`
 - `C` (coesione adimensionale), `φ` (angolo d'attrito) e `T` (trasmissività) **campionati** negli intervalli di `soil-params.json` con `Rng(seed, cella, campione)`
 - `P = (campioni con FS < 1) / N`; celle piatte (θ < 1°) → `P = 0`
 
 Contratti:
 - [ ] `landslide-sim susceptibility --derived <dir> --rain-mm <x> --samples <N> --seed <s> --out <dir>` → `probability.tif` (float32) + `zones.geojson` (EPSG:32633)
-- [ ] Parallelismo: strisce MPI, blocchi di righe ai pthread; nessuno scambio di halo (ogni cella è indipendente), solo `Gatherv` finale. Il tempo di calcolo deve dominare quello di I/O e poligonizzazione: da misurare (M8.8)
+- [ ] Parallelismo: strisce MPI, blocchi di righe ai pthread; nessuno scambio di halo (ogni cella è indipendente), solo `Gatherv` finale. Il tempo di calcolo deve dominare quello di I/O e poligonizzazione: da misurare (M10.8)
 - [ ] Classi: `MEDIUM` se `0,1 ≤ P < 0,5`, `HIGH` se `P ≥ 0,5` (soglie in `soil-params.json`). Poligoni con `GDALPolygonize` sulle classi, semplificati a 10 m, scartati sotto 2 celle. `LOW` non si scrive (sarebbe quasi tutta la regione)
 - [ ] Ogni feature GeoJSON ha `kind` (`SUSCEPTIBILITY_MEDIUM`/`SUSCEPTIBILITY_HIGH`) e `max_value` (P massima nel poligono)
 
@@ -1212,7 +1338,7 @@ Contratti:
 - [ ] più pioggia → P mai minore in nessuna cella (test su due scenari)
 - [ ] piano inclinato sintetico: P cresce con la pendenza, celle sotto 1° a zero
 
-#### M8.5 — Propagazione: automa cellulare della colata (MPI + pthread)
+#### M10.5 — Propagazione: automa cellulare della colata (MPI + pthread)
 **Obiettivo:** a partire da un punto d'innesco (una frana verificata, o un "e se" del gestore), l'area che la colata invade.
 
 Modello (semplificazione ispirata a SCIDDICA-T, ADR-0023): celle quadrate, vicinato di von Neumann (4 vicini), sottostati `z` (quota del DEM) e `h` (spessore della colata); a ogni passo i deflussi verso i vicini si calcolano con l'**algoritmo di minimizzazione delle differenze** sulla quantità `z + h`, al netto di uno spessore di **aderenza** `p_adh` che resta nella cella, e si scalano con un fattore di rilassamento `p_r`.
@@ -1233,7 +1359,7 @@ Modello (semplificazione ispirata a SCIDDICA-T, ADR-0023): celle quadrate, vicin
 - [ ] piano inclinato: la colata scende lungo la pendenza massima e non risale; superficie piana: si allarga in modo simmetrico
 - [ ] test di regressione D10 sul punto d'innesco: un innesco a est di un crinale noto finisce nel versante est
 
-#### M8.6 — Worker: coda dei job, ciclo di vita, scrittura dei risultati
+#### M10.6 — Worker: coda dei job, ciclo di vita, scrittura dei risultati
 **Obiettivo:** il processo che collega la coda nel database al calcolo MPI.
 
 - [ ] `landslide-worker` (C++, libpqxx, **non MPI**): ciclo che prende un job, lancia `mpirun -np ${SIM_PROCESSES} landslide-sim ... --threads ${SIM_THREADS}` e aspetta. Separato dal calcolo così `landslide-sim` si testa senza database, e nessun rank MPI resta in attesa a vuoto tra un job e l'altro (OpenMPI consuma CPU mentre aspetta)
@@ -1251,8 +1377,8 @@ Modello (semplificazione ispirata a SCIDDICA-T, ADR-0023): celle quadrate, vicin
 - [ ] **Lease:** un thread del worker (con la sua connessione) allunga `lease_until` ogni minuto finché il calcolo gira. Worker morto → il lease scade → un altro worker riprende il job
 - [ ] **Chiusura, in una transazione:** `DELETE` delle zone del job (un retry non duplica) → `INSERT` delle zone con `ST_Multi(ST_Transform(ST_GeomFromWKB($wkb, 32633), 4326))` → `UPDATE ... SET status = 'DONE', finished_at, runtime_ms, processes, threads WHERE id = $1 AND worker_id = $me`. Se l'`UPDATE` tocca 0 righe (lease perso) → rollback
 - [ ] **Errore:** `FAILED` se `attempts >= 3`, altrimenti di nuovo `PENDING`; in `error` un messaggio breve (mai stringhe di connessione o stack)
-- [ ] **Permessi minimi:** ruolo `geosentinel_sim` creato da V15 senza login né password; `GRANT SELECT` e `UPDATE` (solo sulle colonne di stato) su `simulation_jobs`, `INSERT`/`DELETE` su `landslide_zones`, nient'altro (non legge `users`, `sos_alerts`, …)
-- [ ] Password del ruolo dal `.env` (`SIM_DB_PASSWORD`, aggiunta a `.env.example`): servizio `landslide-db-init` nel compose (come `minio-init`) che aspetta che V15 esista e poi fa `ALTER ROLE geosentinel_sim LOGIN PASSWORD ...`. **Trappola:** `psql -c` non sostituisce le variabili `:'pw'`, servono `-v pw=...` con il comando da stdin (heredoc), altrimenti la password va in chiaro nella riga di comando o la query si rompe
+- [ ] **Permessi minimi:** ruolo `geosentinel_sim` creato da V17 senza login né password; `GRANT SELECT` e `UPDATE` (solo sulle colonne di stato) su `simulation_jobs`, `INSERT`/`DELETE` su `landslide_zones`, nient'altro (non legge `users`, `sos_alerts`, …)
+- [ ] Password del ruolo dal `.env` (`SIM_DB_PASSWORD`, aggiunta a `.env.example`): servizio `landslide-db-init` nel compose (come `minio-init`) che aspetta che V17 esista e poi fa `ALTER ROLE geosentinel_sim LOGIN PASSWORD ...`. **Trappola:** `psql -c` non sostituisce le variabili `:'pw'`, servono `-v pw=...` con il comando da stdin (heredoc), altrimenti la password va in chiaro nella riga di comando o la query si rompe
 - [ ] Compose: servizio `landslide-worker` sotto `profiles: ["sim"]`, `shm_size: 1gb`, volume `${SIM_DATA_DIR}` in sola lettura (output in una cartella temporanea del container), `depends_on` postgres healthy + `landslide-db-init` completato
 
 **Checkpoint:**
@@ -1261,16 +1387,16 @@ Modello (semplificazione ispirata a SCIDDICA-T, ADR-0023): celle quadrate, vicin
 - [ ] con le credenziali di `geosentinel_sim`: `SELECT * FROM users` → permesso negato
 - [ ] `docker compose --profile sim up -d`: un job di suscettibilità inserito a mano diventa `DONE` con zone in 4326 che cadono in Calabria
 
-#### M8.7 — Backend Java: feature `landslide`
+#### M10.7 — Backend Java: feature `landslide`
 **Obiettivo:** mettere in coda i calcoli, trasformare le zone in rischio per sentiero, esporlo all'app.
 
-`V15__landslide.sql` (V13 è il reset della password, M7.2.2; V14 il login Google, ADR-0024):
+`V17__landslide.sql` (V13 reset della password, V14 login Google, V15 verifica in due passaggi (M8), V16 foto profilo (M9)):
 | Tabella | Contenuto |
 |---|---|
 | `simulation_jobs` | id uuid PK, type CHECK `SUSCEPTIBILITY/RUNOUT`, status CHECK `PENDING/RUNNING/DONE/FAILED`, `source_hazard_id` FK `hazard_reports(id)` NULL, `requested_by` FK `users(id)` NULL, **parametri in colonne tipizzate** (`rain_mm_24h`, `samples`, `seed`, `trigger_location geometry(Point,4326)`, `radius_m`, `h0_m`; niente `jsonb`: con Jackson 3 il mapping JSON di Hibernate va verificato, e le colonne si validano con `CHECK`), `attempts int NOT NULL DEFAULT 0`, `lease_until`, `worker_id varchar(64)`, `started_at`, `finished_at`, `error varchar(500)`, `runtime_ms`, `processes`, `threads`, `processed_at timestamptz NULL` (ingestione Java), audit cols. `CHECK` sui parametri obbligatori per tipo; `UNIQUE (source_hazard_id) WHERE type = 'RUNOUT'` (una propagazione per segnalazione, anche con due verifiche concorrenti); indici parziali `(created_at) WHERE status = 'PENDING'` e `(finished_at) WHERE status = 'DONE' AND processed_at IS NULL` |
 | `landslide_zones` | id uuid `DEFAULT gen_random_uuid()` (unica tabella con default: le righe le scrive il worker, non Hibernate; `gen_random_uuid()` è nel core da PG 13, niente `pgcrypto`), `job_id` FK con indice, kind CHECK `SUSCEPTIBILITY_MEDIUM/SUSCEPTIBILITY_HIGH/RUNOUT`, `max_value double precision`, `geom geometry(MultiPolygon,4326) NOT NULL` + GiST |
 | `trail_landslide_risk` | PK `(job_id, trail_id)`, `trail_id` FK con indice, level CHECK `MEDIUM/HIGH`, `exposed_length_m double precision NOT NULL`, `exposed_path geometry(MultiLineString,4326) NOT NULL`, `computed_at` |
-| ruolo | `geosentinel_sim` `NOLOGIN` (blocco `DO` con `IF NOT EXISTS`: i ruoli valgono per tutto il cluster) + i `GRANT` di M8.6 |
+| ruolo | `geosentinel_sim` `NOLOGIN` (blocco `DO` con `IF NOT EXISTS`: i ruoli valgono per tutto il cluster) + i `GRANT` di M10.6 |
 
 Struttura (come le altre feature):
 ```
@@ -1315,21 +1441,21 @@ landslide/
 - [ ] `MigrationIT` esteso: il ruolo `geosentinel_sim` non può leggere `users`
 - [ ] `./mvnw verify` verde
 
-#### M8.8 — Validazione, prestazioni, review
+#### M10.8 — Validazione, prestazioni, review
 - [ ] **Validazione** su IFFI: curva ROC della mappa `P` contro le frane censite in Calabria, AUC calcolata e scritta in `docs/landslide-validation.md` con i parametri usati. Soglia minima: meglio del caso (AUC > 0,5); l'obiettivo è documentare, non dichiarare un modello certificato. Calibrazione degli intervalli di `soil-params.json` se l'AUC migliora
 - [ ] **Prestazioni** in `docs/landslide-performance.md`, sul PC a 12 core:
   - strong scaling della suscettibilità e della propagazione: (P × T) = 1×1, 2×1, 4×1, 8×1, 12×1, 1×12, 2×6, 3×4
   - speedup ed efficienza, frazione seriale stimata (Amdahl) e quanto pesano I/O, `Gatherv` e poligonizzazione
   - confronto MPI puro contro ibrido a parità di core, con una spiegazione del risultato
-- [ ] Facoltativo: accumulo D8 parallelo (M8.3) e rettangolo attivo della propagazione (M8.5), solo se le misure dicono che servono
+- [ ] Facoltativo: accumulo D8 parallelo (M10.3) e rettangolo attivo della propagazione (M10.5), solo se le misure dicono che servono
 - [ ] Review con la catena del §5 (riga 8)
 
-**Checkpoint M8:**
+**Checkpoint M10:**
 - [ ] flusso completo dal vivo: segnalazione `LANDSLIDE` dall'app → verifica del gestore → job `DONE` → sentiero con rischio `HIGH` nella risposta di `/landslide-risk/trails`
 - [ ] `ctest` e `./mvnw verify` verdi, job `simulation` verde in CI
 - [ ] nessun file di dati (DEM, GeoTIFF) tracciato da git
 
-**Fuori da M8:** pioggia prevista da un servizio meteo (lo scenario resta un parametro); mappa geologica e parametri del suolo per classe (fonti in M8.1, il primo passo è SoilGrids); lo strato di rischio nell'app (milestone da aggiungere al piano mobile quando le rotte sono stabili).
+**Fuori da M10:** pioggia prevista da un servizio meteo (lo scenario resta un parametro); mappa geologica e parametri del suolo per classe (fonti in M10.1, il primo passo è SoilGrids); lo strato di rischio nell'app (milestone da aggiungere al piano mobile quando le rotte sono stabili).
 
 ---
 
@@ -1346,8 +1472,9 @@ M0.1 → M0.2 → M0.3 → M0.4 → M0.5
   → M5.2 → M5.3
   → M6
   → M7
-  → M8.1 → M8.2 → M8.3 → M8.4 → M8.5 → M8.6 → M8.8
-           └─ M8.7 (Java, in parallelo dopo V15: si prova con zone finte)
+  → M8 (2FA, V15) → M9 (foto profilo, V16)
+  → M10.1 → M10.2 → M10.3 → M10.4 → M10.5 → M10.6 → M10.8
+           └─ M10.7 (Java, in parallelo dopo V17: si prova con zone finte)
 ```
 Nota: `M5.1` (GlobalExceptionHandler) conviene farlo subito dopo M2, così ogni feature successiva nasce con gli errori già nel formato giusto. `AbstractIntegrationTest` (M6.1) puoi anticiparlo dopo M1 e scrivere gli IT insieme a ogni milestone. È la scelta consigliata.
 
@@ -1367,7 +1494,9 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 | 5 | API & errori | `ecc:java-reviewer,ecc:code-reviewer` |
 | 6 | Test | `ecc:java-reviewer,ecc:code-reviewer` |
 | 7 | App mobile (KMP) | `ecc:security-reviewer,ecc:java-reviewer` |
-| 8 | Rischio frane (C++ MPI/pthread) | `ecc:cpp-reviewer,ecc:database-reviewer,ecc:java-reviewer,ecc:security-reviewer` |
+| 8 | Verifica in due passaggi | `ecc:security-reviewer,ecc:java-reviewer` |
+| 9 | Foto profilo | `ecc:security-reviewer,ecc:java-reviewer` |
+| 10 | Rischio frane (C++ MPI/pthread) | `ecc:cpp-reviewer,ecc:database-reviewer,ecc:java-reviewer,ecc:security-reviewer` |
 
 ```bash
 /ecc:orchestrate custom "ecc:java-build-resolver,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-0] Review only, do not write feature code: pom.xml deps for Spring Boot 4.1 (flyway-database-postgresql, oauth2-resource-server, mapstruct processor paths, springdoc 3, testcontainers 2), docker-compose healthchecks + minio-init bucket, Dockerfile multi-stage layers; Acceptance: mvnw compile green; all compose services healthy; no secrets in repo"
@@ -1378,13 +1507,15 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-5] Review only: thin REST controllers with record DTOs and JSR-380, MapStruct mappers with GeometryMapper, If-Match/ETag on maintenance PATCH, GlobalExceptionHandler RFC 7807 mapping incl. AccessDenied from @PreAuthorize and lock failures, OpenAPI bearer scheme; Acceptance: every error is application/problem+json; no entity exposed in responses; 201 with Location"
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-6] Review only: AbstractIntegrationTest singleton PostGIS+Redis Testcontainers with @ServiceConnection, truncate cleanup without @Transactional, concurrency ITs with CountDownLatch for bookings/SOS/optimistic lock, spatial IT with lon/lat regression, ProblemDetail contract IT; Acceptance: mvnw verify green from clean; concurrency tests pass 5/5 repeats; no in-memory DB"
 /ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-7] Review only: stable OpenAPI contract for Kotlin client generation (explicit operationIds, required response fields, committed openapi.json), /users/me profile + account deletion with anonymization and cross-feature cleanup through services, CGNAT-friendly auth rate limit + per-account limit, gzip + conditional GET, FCM push via PushNotifier port with no PII in payload and retry through notified_at, mobile upload contract, prod profile behind TLS proxy with forward headers; Acceptance: generated client compiles without nullable-everything; deleted account cannot log in; push failure is retried; no secrets in repo"
-/ecc:orchestrate custom "ecc:cpp-reviewer,ecc:database-reviewer,ecc:java-reviewer,ecc:security-reviewer" "[Plan: docs/MASTER_PLAN.md#step-8] Review only: C++20 landslide simulation with MPI row-strip decomposition and halo exchange (MPI_THREAD_FUNNELED), pthread pool with barriers, counter-based RNG for reproducibility, GDAL windowed I/O and polygonize in EPSG:32633, SINMAP-style Monte Carlo factor of safety, cellular-automaton runout with mass conservation, libpqxx worker with FOR UPDATE SKIP LOCKED claim, lease and transactional result write, least-privilege DB role; Java landslide feature with BEFORE_COMMIT job enqueue, scheduled ingest computing trail exposure via ST_Intersects and geography length, public cached GET endpoints, 202 job endpoints; Acceptance: identical output for any process/thread count; mass conserved; job executed once under concurrent workers; worker role cannot read users; no data files in git"
+/ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-8] Review only: TOTP RFC 6238 with javax.crypto (SHA-1, 6 digits, 30 s, ±1 step), AES-256-GCM encrypted secret with fail-fast key, replay protection via last_used_step under user row lock, constant-time compare, SHA-256 hashed single-use recovery codes, stateless login returning 401 mfa-required, MFA enforced on Google login and account linking, dedicated per-account limiter on wrong codes, single email alert per window after 3 wrong login codes, ADMIN-only MFA reset that revokes all sessions and cannot target self, no secrets in logs or caches, cleanup on account deletion; Acceptance: RFC test vectors pass; same code rejected twice; Google login cannot bypass MFA; brute force throttled; password reset alone never disables MFA"
+/ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-9] Review only: profile photo as MediaFile with USER target reusing presigned POST upload and confirm, owner-only visibility with exhaustive switch over MediaTargetType, @PreAuthorize allowing USER for hikers, previous avatars deleted on confirm (rows then objects) under the per-user lock, avatarMediaId in /users/me, cleanup on account deletion; Acceptance: other users get 404 on avatar; only one READY avatar per user; no orphan objects"
+/ecc:orchestrate custom "ecc:cpp-reviewer,ecc:database-reviewer,ecc:java-reviewer,ecc:security-reviewer" "[Plan: docs/MASTER_PLAN.md#step-10] Review only: C++20 landslide simulation with MPI row-strip decomposition and halo exchange (MPI_THREAD_FUNNELED), pthread pool with barriers, counter-based RNG for reproducibility, GDAL windowed I/O and polygonize in EPSG:32633, SINMAP-style Monte Carlo factor of safety, cellular-automaton runout with mass conservation, libpqxx worker with FOR UPDATE SKIP LOCKED claim, lease and transactional result write, least-privilege DB role; Java landslide feature with BEFORE_COMMIT job enqueue, scheduled ingest computing trail exposure via ST_Intersects and geography length, public cached GET endpoints, 202 job endpoints; Acceptance: identical output for any process/thread count; mass conserved; job executed once under concurrent workers; worker role cannot read users; no data files in git"
 ```
 
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M7 sono completate, compreso M7.2.2 (17/10); l'app KMP è a M9 in `../GeoSentinel-Mobile`. Prossimo lavoro del backend: M8. Per altre funzionalità:
+M0–M8 sono completate (M8, la 2FA, il 19/10); l'app KMP è a M9 in `../GeoSentinel-Mobile` e deve ancora integrare la 2FA (client da rigenerare). Prossimo lavoro del backend: M9 (foto profilo), poi M10 (frane). Ognuna ha la sua parte nell'app (M10 e M11 del piano mobile). Per altre funzionalità:
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.

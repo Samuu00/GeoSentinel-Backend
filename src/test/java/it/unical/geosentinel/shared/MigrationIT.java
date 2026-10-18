@@ -17,7 +17,7 @@ class MigrationIT extends AbstractIntegrationTest {
                 "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank", String.class);
 
         // il seed (db/seed) vive solo nel profilo local: qui non ci sono migrazioni repeatable
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15");
     }
 
     @Test

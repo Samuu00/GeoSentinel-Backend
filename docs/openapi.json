@@ -15,6 +15,18 @@
     "description" : "Endpoints for finding and registering points of interest",
     "name" : "Points of Interest"
   }, {
+    "description" : "Two-factor reset after an identity check made outside the app",
+    "name" : "Administration"
+  }, {
+    "description" : "Endpoints for raising emergency alerts, tracking live hiker location, and dispatching rescue teams",
+    "name" : "SOS Alerts"
+  }, {
+    "description" : "Endpoints for trail exploration, geospatial discovery and management",
+    "name" : "Trails"
+  }, {
+    "description" : "Endpoints for managing rescue teams and discovering available units",
+    "name" : "Rescue Teams"
+  }, {
     "description" : "Endpoints for user registration, authentication, token refresh and revocation",
     "name" : "Authentication"
   }, {
@@ -27,11 +39,8 @@
     "description" : "Current user's profile, password change and account deletion",
     "name" : "User Profile"
   }, {
-    "description" : "Endpoints for raising emergency alerts, tracking live hiker location, and dispatching rescue teams",
-    "name" : "SOS Alerts"
-  }, {
-    "description" : "Endpoints for trail exploration, geospatial discovery and management",
-    "name" : "Trails"
+    "description" : "Setup, confirmation, disabling and recovery codes of the TOTP second factor",
+    "name" : "Two-factor authentication"
   }, {
     "description" : "Endpoints for discovering mountain refuges, checking bed availability, and management",
     "name" : "Refuges"
@@ -41,11 +50,93 @@
   }, {
     "description" : "Endpoints for environmental and trail hazards reporting and management",
     "name" : "Hazard Reports"
-  }, {
-    "description" : "Endpoints for managing rescue teams and discovering available units",
-    "name" : "Rescue Teams"
   } ],
   "paths" : {
+    "/api/v1/admin/mfa-resets" : {
+      "post" : {
+        "operationId" : "resetUserMfa",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/AdminMfaResetRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Invalid request (validation-error)"
+          },
+          "401" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Missing, invalid, expired or revoked access token (unauthorized)"
+          },
+          "403" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Role not allowed (forbidden)"
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Conflict: concurrent modification, lock timeout or state conflict"
+          },
+          "429" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Rate limit exceeded, see Retry-After (rate-limit-exceeded)"
+          },
+          "500" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Unexpected error (internal-error)"
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        } ],
+        "summary" : "Disable two-factor for a user who lost the device and the recovery codes; closes all their sessions",
+        "tags" : [ "Administration" ]
+      }
+    },
     "/api/v1/auth/google" : {
       "post" : {
         "operationId" : "loginWithGoogle",
@@ -6143,6 +6234,357 @@
         "tags" : [ "User Profile" ]
       }
     },
+    "/api/v1/users/me/mfa/disable" : {
+      "post" : {
+        "operationId" : "disableMfa",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/MfaCodeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Invalid request (validation-error)"
+          },
+          "401" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Missing, invalid, expired or revoked access token (unauthorized)"
+          },
+          "403" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Role not allowed (forbidden)"
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Conflict: concurrent modification, lock timeout or state conflict"
+          },
+          "429" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Rate limit exceeded, see Retry-After (rate-limit-exceeded)"
+          },
+          "500" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Unexpected error (internal-error)"
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        } ],
+        "summary" : "Disable two-factor with a TOTP code or a recovery code",
+        "tags" : [ "Two-factor authentication" ]
+      }
+    },
+    "/api/v1/users/me/mfa/enable" : {
+      "post" : {
+        "operationId" : "enableMfa",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/MfaCodeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RecoveryCodesResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Invalid request (validation-error)"
+          },
+          "401" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Missing, invalid, expired or revoked access token (unauthorized)"
+          },
+          "403" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Role not allowed (forbidden)"
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Conflict: concurrent modification, lock timeout or state conflict"
+          },
+          "429" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Rate limit exceeded, see Retry-After (rate-limit-exceeded)"
+          },
+          "500" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Unexpected error (internal-error)"
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        } ],
+        "summary" : "Confirm two-factor setup with a TOTP code: returns the recovery codes once",
+        "tags" : [ "Two-factor authentication" ]
+      }
+    },
+    "/api/v1/users/me/mfa/recovery-codes" : {
+      "post" : {
+        "operationId" : "regenerateRecoveryCodes",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/MfaCodeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RecoveryCodesResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Invalid request (validation-error)"
+          },
+          "401" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Missing, invalid, expired or revoked access token (unauthorized)"
+          },
+          "403" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Role not allowed (forbidden)"
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Conflict: concurrent modification, lock timeout or state conflict"
+          },
+          "429" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Rate limit exceeded, see Retry-After (rate-limit-exceeded)"
+          },
+          "500" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Unexpected error (internal-error)"
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        } ],
+        "summary" : "Regenerate the recovery codes with a TOTP code",
+        "tags" : [ "Two-factor authentication" ]
+      }
+    },
+    "/api/v1/users/me/mfa/setup" : {
+      "post" : {
+        "operationId" : "startMfaSetup",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MfaSetupResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Invalid request (validation-error)"
+          },
+          "401" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Missing, invalid, expired or revoked access token (unauthorized)"
+          },
+          "403" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Role not allowed (forbidden)"
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Conflict: concurrent modification, lock timeout or state conflict"
+          },
+          "429" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Rate limit exceeded, see Retry-After (rate-limit-exceeded)"
+          },
+          "500" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Unexpected error (internal-error)"
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        } ],
+        "summary" : "Start two-factor setup: returns the secret and the otpauth URI (409 if already enabled)",
+        "tags" : [ "Two-factor authentication" ]
+      }
+    },
     "/api/v1/users/me/password" : {
       "post" : {
         "operationId" : "changeMyPassword",
@@ -6238,6 +6680,18 @@
   },
   "components" : {
     "schemas" : {
+      "AdminMfaResetRequest" : {
+        "type" : "object",
+        "properties" : {
+          "email" : {
+            "type" : "string",
+            "format" : "email",
+            "maxLength" : 254,
+            "minLength" : 0
+          }
+        },
+        "required" : [ "email" ]
+      },
       "AssignTicketRequest" : {
         "type" : "object",
         "properties" : {
@@ -6595,6 +7049,11 @@
             "type" : "string",
             "maxLength" : 4096,
             "minLength" : 0
+          },
+          "mfaCode" : {
+            "type" : "string",
+            "maxLength" : 32,
+            "minLength" : 0
           }
         },
         "required" : [ "idToken" ]
@@ -6672,6 +7131,11 @@
             "format" : "email",
             "minLength" : 1
           },
+          "mfaCode" : {
+            "type" : "string",
+            "maxLength" : 32,
+            "minLength" : 0
+          },
           "password" : {
             "type" : "string",
             "minLength" : 1
@@ -6720,6 +7184,29 @@
           }
         },
         "required" : [ "contentType", "createdAt", "id", "originalFilename", "sizeBytes", "status" ]
+      },
+      "MfaCodeRequest" : {
+        "type" : "object",
+        "properties" : {
+          "code" : {
+            "type" : "string",
+            "maxLength" : 32,
+            "minLength" : 0
+          }
+        },
+        "required" : [ "code" ]
+      },
+      "MfaSetupResponse" : {
+        "type" : "object",
+        "properties" : {
+          "otpauthUri" : {
+            "type" : "string"
+          },
+          "secret" : {
+            "type" : "string"
+          }
+        },
+        "required" : [ "otpauthUri", "secret" ]
       },
       "PageMetadata" : {
         "type" : "object",
@@ -6925,7 +7412,7 @@
           "type" : {
             "type" : "string",
             "format" : "uri",
-            "description" : "https://geosentinel.dev/problems/<slug>, stable slugs: account-managed, age-requirement-not-met, alert-already-taken, birth-date-required, business-rule, capacity-exceeded, concurrent-modification, conflict, forbidden, idempotency-key-reused, identity-provider-unavailable, internal-error, invalid-reset-code, media-payload-too-large, media-quota-exceeded, media-unsupported-type, not-found, precondition-required, rate-limit-exceeded, resource-busy, storage-unavailable, unauthorized, validation-error. Clients must map the slug, never the detail text, and tolerate unknown slugs",
+            "description" : "https://geosentinel.dev/problems/<slug>, stable slugs: account-managed, age-requirement-not-met, alert-already-taken, birth-date-required, business-rule, capacity-exceeded, concurrent-modification, conflict, forbidden, idempotency-key-reused, identity-provider-unavailable, internal-error, invalid-mfa-code, invalid-reset-code, media-payload-too-large, media-quota-exceeded, media-unsupported-type, mfa-already-enabled, mfa-required, not-found, precondition-required, rate-limit-exceeded, resource-busy, storage-unavailable, unauthorized, validation-error. Clients must map the slug, never the detail text, and tolerate unknown slugs",
             "example" : "https://geosentinel.dev/problems/validation-error"
           }
         },
@@ -6944,6 +7431,18 @@
           }
         },
         "required" : [ "location" ]
+      },
+      "RecoveryCodesResponse" : {
+        "type" : "object",
+        "properties" : {
+          "codes" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        },
+        "required" : [ "codes" ]
       },
       "RefreshRequest" : {
         "type" : "object",
@@ -7384,12 +7883,15 @@
             "type" : "string",
             "format" : "uuid"
           },
+          "mfaEnabled" : {
+            "type" : "boolean"
+          },
           "role" : {
             "type" : "string",
             "enum" : [ "HIKER", "PARK_MANAGER", "RESCUE_OPERATOR", "ADMIN" ]
           }
         },
-        "required" : [ "createdAt", "displayName", "email", "hasPassword", "id", "role" ]
+        "required" : [ "createdAt", "displayName", "email", "hasPassword", "id", "mfaEnabled", "role" ]
       }
     },
     "securitySchemes" : {

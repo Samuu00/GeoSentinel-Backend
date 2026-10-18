@@ -6,6 +6,26 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 ## [Non rilasciato]
 
 ### Aggiunto
+- Verifica in due passaggi con TOTP (M8, ADR-0025, V15), facoltativa per ogni ruolo:
+  - rotte `POST /users/me/mfa/setup` (`startMfaSetup`), `/enable` (`enableMfa`, restituisce 10 codici di recupero una
+    volta sola), `/disable` (`disableMfa`) e `/recovery-codes` (`regenerateRecoveryCodes`);
+  - `mfaCode` facoltativo in `POST /auth/login` e `POST /auth/google`. Con la 2FA attiva e il codice assente la
+    risposta è 401 `mfa-required`; con un codice sbagliato o già usato, 401 `invalid-mfa-code` (422 sulle rotte `/mfa`);
+  - `UserProfileResponse.mfaEnabled`, slug nuovo `mfa-already-enabled` (409);
+  - reset da `ADMIN` (`POST /admin/mfa-resets`, `resetUserMfa`) dopo una verifica d'identità fuori dall'app: chiude
+    tutte le sessioni dell'utente e non vale sulla propria 2FA;
+  - protezioni:
+    - segreto cifrato con AES-256-GCM (`MFA_ENCRYPTION_KEY` obbligatoria, controllata all'avvio);
+    - anti-replay sotto lock sull'utente;
+    - codici di recupero salvati come SHA-256 e validi una volta;
+    - 5 codici sbagliati all'ora per account → 429;
+    - email al terzo codice sbagliato del login, all'attivazione, alla disattivazione e al reset da ADMIN.
+
+  Il client va rigenerato. Test: `TotpTest` (vettori dell'RFC 6238), `MfaSecretCipherTest`, `MfaIT` (16 test).
+- Email del reset da un SMTP vero (es. Gmail): `MAIL_SMTP_AUTH` e `MAIL_STARTTLS`, spenti di default; con STARTTLS
+  acceso è anche obbligatorio (niente credenziali in chiaro se il TLS non parte). Istruzioni in `.env.example`.
+- 422 `birth-date-required` su `POST /auth/google` quando manca `birthDate` per un account nuovo (prima era
+  `business-rule`, indistinguibile da email non verificata e identità già collegata): l'app chiede la data e ripete.
 - Login con Google (ADR-0024, V14): `POST /auth/google` (`loginWithGoogle`) con l'ID token nativo dell'app; 201 per
   un account nuovo (serve `birthDate`), 200 per uno esistente. Solo email verificate da Google; un `HIKER` con la
   stessa email viene collegato (password azzerata, sessioni chiuse), il personale no (409 `account-managed`); 503

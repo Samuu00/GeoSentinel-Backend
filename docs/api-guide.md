@@ -29,7 +29,7 @@ richiede un aggiornamento dell'app.
 | Passo | Operazione | Note |
 |---|---|---|
 | Registrazione | `POST /auth/register` | `email`, `password` (da 12 caratteri a 72 byte UTF-8), `displayName`, `birthDate`. Crea sempre un `HIKER`. Sotto i 14 anni → 422 `age-requirement-not-met` |
-| Login | `POST /auth/login` | Restituisce `accessToken` (JWT, 15 minuti) e `refreshToken` (opaco) |
+| Login | `POST /auth/login` | Restituisce `accessToken` (JWT, 15 minuti) e `refreshToken` (opaco). Con la verifica in due passaggi attiva serve anche `mfaCode`: vedi [sotto](#verifica-in-due-passaggi) |
 | Login con Google | `POST /auth/google` | `idToken` dal SDK Google, `birthDate` solo al primo accesso: senza → 422 `birth-date-required`, si chiede la data e si ripete con lo stesso token. 200 account esistente, 201 nuovo. Email Google non verificata o account già collegato a un altro Google → 422 `business-rule`; personale → 409 `account-managed`; chiavi Google irraggiungibili → 503 `identity-provider-unavailable` ([ADR-0024](adr/0024-login-google.md)) |
 | Password dimenticata | `POST /auth/password-reset/request`, poi `/confirm` | La prima risponde sempre 204 (anche per un'email sconosciuta; 3 all'ora per email → 429) e manda un codice di 16 caratteri valido 15 minuti. La seconda (`email`, `code`, `newPassword`) → 204 e tutte le sessioni chiuse, si torna al login; codice sbagliato, scaduto o usato → 422 `invalid-reset-code` (5 errori lo consumano) |
 | Richieste | header `Authorization: Bearer <accessToken>` | Mandarlo sempre, anche sulle GET pubbliche: il rate limit conta per utente invece che per IP |
@@ -49,6 +49,38 @@ I token vanno salvati cifrati (Android Keystore, iOS Keychain).
 
 Il cambio password (`POST /users/me/password`, che restituisce token nuovi) e la cancellazione dell'account
 (`DELETE /users/me`) invalidano anche gli access token degli altri dispositivi.
+
+### Verifica in due passaggi
+
+Facoltativa per ogni ruolo, con un'app di autenticazione (TOTP: 6 cifre, 30 s). Decisioni in
+[ADR-0025](adr/0025-verifica-in-due-passaggi.md).
+
+| Passo | Operazione | Note |
+|---|---|---|
+| Configurazione | `POST /users/me/mfa/setup` | → `secret` (Base32, per l'inserimento a mano) e `otpauthUri` (da mostrare come QR o da aprire nell'app di autenticazione). Ripeterla prima della conferma cambia il segreto; con la 2FA già attiva → 409 `mfa-already-enabled` |
+| Conferma | `POST /users/me/mfa/enable` `{code}` | Un TOTP valido → `codes`: 10 codici di recupero, **mostrati una volta sola** (l'app li fa salvare all'utente). Codice sbagliato → 422 `invalid-mfa-code` |
+| Disattivazione | `POST /users/me/mfa/disable` `{code}` | TOTP o codice di recupero → 204 |
+| Nuovi codici di recupero | `POST /users/me/mfa/recovery-codes` `{code}` | Solo TOTP → 10 codici nuovi; i vecchi smettono di valere |
+| Stato | `GET /users/me` | `mfaEnabled` |
+
+**Login con la 2FA attiva** (vale anche per `POST /auth/google`):
+1. l'app manda email e password come sempre;
+2. se la password è giusta e la 2FA è attiva, la risposta è 401 `mfa-required`. Arriva solo a chi conosce la
+   password: una password sbagliata dà sempre il 401 di credenziali;
+3. l'app chiede il codice e **rimanda la stessa richiesta** con `mfaCode`: il TOTP a 6 cifre oppure un codice di
+   recupero (`XXXXXXXX-XXXXXXXX`; maiuscole, minuscole e trattino sono indifferenti);
+4. codice sbagliato, già usato o scaduto → 401 `invalid-mfa-code`, si chiede di nuovo.
+
+Ogni codice vale una volta sola: se il login va a buon fine ma la risposta si perde, l'app aspetta il codice
+successivo, non ripete lo stesso. Il refresh non chiede il codice.
+
+Limiti: 5 codici sbagliati all'ora per account (login, `disable`, `recovery-codes`) → 429 con `Retry-After`, anche con
+il codice giusto. Al terzo codice sbagliato del login il titolare riceve un'email; ne riceve una anche quando la 2FA
+viene attivata o disattivata.
+
+**Telefono e codici di recupero persi:** l'utente contatta il supporto. Un `ADMIN`, dopo aver verificato l'identità
+fuori dall'app, chiama `POST /admin/mfa-resets` `{email}` → 204: la 2FA è cancellata, tutte le sessioni dell'utente
+sono chiuse e gli arriva un'email. Email sconosciuta o senza 2FA → 404; un `ADMIN` non può azzerare la propria → 422.
 
 ### Ruoli
 
@@ -70,6 +102,7 @@ Il cambio password (`POST /users/me/password`, che restituisce token nuovi) e la
 | Squadre | `POST /rescue-teams`; `GET /{id}`, `/available-nearby` | creazione `ADMIN`, lettura `RESCUE_OPERATOR` |
 | Media | `POST /media/upload-requests`, `/{id}/confirm`; `GET /{id}`, `/{id}/download-url`, `/attached`, `/my`; `DELETE /{id}` | vedi [upload](#upload-delle-foto) |
 | Profilo | `GET`, `PATCH`, `DELETE /users/me`; `POST /users/me/password` | autenticato; la cancellazione solo per `HIKER` |
+| Verifica in due passaggi | `POST /users/me/mfa/setup`, `/enable`, `/disable`, `/recovery-codes`; `POST /admin/mfa-resets` | autenticato; il reset solo `ADMIN` |
 | Dispositivi | `POST /devices`; `DELETE /devices/{token}` | autenticato |
 
 Una risorsa che non si può vedere risponde 404, non 403, così l'API non rivela che esiste. Vale per
@@ -98,6 +131,8 @@ inglese e possono cambiare. Gli errori di validazione aggiungono `errors[]`, con
 |---|---|---|
 | `validation-error` | 400 | Body o parametri non validi (`errors[]`); anche UUID o numeri malformati negli header |
 | `unauthorized` | 401 | Token assente, scaduto o revocato: fare refresh e riprovare una volta |
+| `mfa-required` | 401 | Login con password (o Google) giusta e 2FA attiva, senza `mfaCode`: chiedere il codice e ripetere |
+| `invalid-mfa-code` | 401 / 422 | Codice della 2FA sbagliato, già usato o fuori tempo: 401 al login, 422 sulle rotte `/users/me/mfa` |
 | `forbidden` | 403 | Ruolo insufficiente |
 | `not-found` | 404 | Risorsa inesistente o non visibile |
 | `conflict` | 409 | Vincolo di unicità violato da richieste concorrenti |
@@ -106,6 +141,7 @@ inglese e possono cambiare. Gli errori di validazione aggiungono `errors[]`, con
 | `concurrent-modification` | 409 | `If-Match` con una versione vecchia: rileggere e riprovare |
 | `resource-busy` | 409 | Lock non ottenuto entro 3 s: riprovare dopo `Retry-After` |
 | `account-managed` | 409 | Cancellazione self-service di un account del personale |
+| `mfa-already-enabled` | 409 | Configurazione della 2FA quando è già attiva |
 | `business-rule` | 422 | Regola di dominio violata (email già registrata, date non valide, transizione di stato vietata, password attuale errata) |
 | `idempotency-key-reused` | 422 | Stessa `Idempotency-Key` con un body diverso |
 | `age-requirement-not-met` | 422 | Età sotto la soglia in registrazione |

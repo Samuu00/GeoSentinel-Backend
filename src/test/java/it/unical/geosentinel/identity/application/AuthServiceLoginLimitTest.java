@@ -36,14 +36,14 @@ class AuthServiceLoginLimitTest {
     private final LoginAttemptLimiter limiter = mock(LoginAttemptLimiter.class);
     private final AuthService service = new AuthService(
             mock(UserIdentityRepository.class), users, mock(RefreshTokenRepository.class), passwordEncoder, mock(TokenBlacklist.class),
-            limiter, mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC),
+            limiter, mock(MfaService.class), mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC),
             Duration.ofDays(7), Duration.ofDays(30), Duration.ofSeconds(60), 14);
 
     @Test
     void rejectedAttemptSkipsLookupAndBcrypt() {
         when(limiter.tryAcquire(anyString())).thenReturn(Optional.of(Duration.ofSeconds(90)));
 
-        assertThatThrownBy(() -> service.login("mario@example.com", "password-qualsiasi"))
+        assertThatThrownBy(() -> service.login("mario@example.com", "password-qualsiasi", null))
                 .isInstanceOf(RateLimitExceededException.class)
                 .extracting(e -> ((RateLimitExceededException) e).getRetryAfter())
                 .isEqualTo(Duration.ofSeconds(90));
@@ -56,8 +56,8 @@ class AuthServiceLoginLimitTest {
     void keyIsHashOfNormalizedEmail() {
         when(limiter.tryAcquire(anyString())).thenReturn(Optional.of(Duration.ofSeconds(1)));
 
-        assertThatThrownBy(() -> service.login("Mario@Example.COM", "x")).isInstanceOf(RateLimitExceededException.class);
-        assertThatThrownBy(() -> service.login("mario@example.com", "x")).isInstanceOf(RateLimitExceededException.class);
+        assertThatThrownBy(() -> service.login("Mario@Example.COM", "x", null)).isInstanceOf(RateLimitExceededException.class);
+        assertThatThrownBy(() -> service.login("mario@example.com", "x", null)).isInstanceOf(RateLimitExceededException.class);
 
         ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
         verify(limiter, times(2)).tryAcquire(keys.capture());
@@ -70,7 +70,7 @@ class AuthServiceLoginLimitTest {
         when(limiter.tryAcquire(anyString())).thenReturn(Optional.empty());
         when(users.findByEmail("mario@example.com")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.login("mario@example.com", "sbagliata"))
+        assertThatThrownBy(() -> service.login("mario@example.com", "sbagliata", null))
                 .isInstanceOf(BadCredentialsException.class);
         // tempo costante: BCrypt gira anche per un account inesistente
         verify(passwordEncoder).matches(any(), any());

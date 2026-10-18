@@ -35,6 +35,7 @@ public class UserAccountService {
     private final SosService sosService;
     private final MediaService mediaService;
     private final DeviceService deviceService;
+    private final MfaService mfaService;
     private final PasswordEncoder passwordEncoder;
     private final Clock clock;
 
@@ -48,6 +49,7 @@ public class UserAccountService {
             SosService sosService,
             MediaService mediaService,
             DeviceService deviceService,
+            MfaService mfaService,
             PasswordEncoder passwordEncoder,
             Clock clock
     ) {
@@ -60,20 +62,21 @@ public class UserAccountService {
         this.sosService = sosService;
         this.mediaService = mediaService;
         this.deviceService = deviceService;
+        this.mfaService = mfaService;
         this.passwordEncoder = passwordEncoder;
         this.clock = clock;
     }
 
     @Transactional(readOnly = true)
     public UserProfile getProfile(UUID userId) {
-        return UserProfile.from(activeUser(userId));
+        return UserProfile.from(activeUser(userId), mfaService.isEnabled(userId));
     }
 
     @Transactional
     public UserProfile updateDisplayName(UUID userId, String displayName) {
         User user = activeUser(userId);
         user.updateProfile(displayName);
-        return UserProfile.from(user);
+        return UserProfile.from(user, mfaService.isEnabled(userId));
     }
 
     // Solo HIKER: gli account del personale li chiude l'organizzazione (rifugi, ticket e missioni in carico) -> 409.
@@ -98,6 +101,7 @@ public class UserAccountService {
         // Le identità esterne vanno tolte insieme all'account: altrimenti lo stesso Google riaprirebbe l'account cancellato
         userIdentityRepository.deleteAllOf(userId);
         passwordResetTokens.deleteAllOf(userId);
+        mfaService.deleteAllOf(userId);
         // hash vero di un valore casuale mai restituito: nessuna password può più coincidere
         user.markDeleted(now, passwordEncoder.encode(UUID.randomUUID().toString()));
         // @Version: una seconda cancellazione concorrente fallisce qui (409), prima di Redis e dello storage

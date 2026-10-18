@@ -264,6 +264,33 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 "The reset code is invalid or expired", new HttpHeaders(), request);
     }
 
+    // Password giusta, codice assente: il client chiede il codice e rimanda la stessa richiesta
+    @ExceptionHandler(MfaRequiredException.class)
+    public ResponseEntity<Object> handleMfaRequired(MfaRequiredException ex, WebRequest request) {
+        return problem(ex, HttpStatus.UNAUTHORIZED, ProblemTypes.MFA_REQUIRED, "Two-factor code required",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
+    // Login: il client non è ancora autenticato, quindi 401 (più specifico di InvalidMfaCodeException)
+    @ExceptionHandler(InvalidLoginMfaCodeException.class)
+    public ResponseEntity<Object> handleInvalidLoginMfaCode(InvalidLoginMfaCodeException ex, WebRequest request) {
+        return problem(ex, HttpStatus.UNAUTHORIZED, ProblemTypes.INVALID_MFA_CODE, "Invalid two-factor code",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
+    // Rotte /mfa (utente già autenticato): 422
+    @ExceptionHandler(InvalidMfaCodeException.class)
+    public ResponseEntity<Object> handleInvalidMfaCode(InvalidMfaCodeException ex, WebRequest request) {
+        return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.INVALID_MFA_CODE, "Invalid two-factor code",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
+    @ExceptionHandler(MfaAlreadyEnabledException.class)
+    public ResponseEntity<Object> handleMfaAlreadyEnabled(MfaAlreadyEnabledException ex, WebRequest request) {
+        return problem(ex, HttpStatus.CONFLICT, ProblemTypes.MFA_ALREADY_ENABLED, "Two-factor already enabled",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
     // ---- metodi di supporto ----------------------------------------------------------------------------------------------
 
     private ResponseEntity<Object> problem(Exception ex, HttpStatus status, URI type, String title, String detail,

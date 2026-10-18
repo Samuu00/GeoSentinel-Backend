@@ -12,6 +12,7 @@ import it.unical.geosentinel.shared.domain.exception.BirthDateRequiredException;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
 import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
+import it.unical.geosentinel.shared.domain.exception.InvalidMfaCodeException;
 import it.unical.geosentinel.identity.domain.IdentityProvider;
 import it.unical.geosentinel.identity.domain.UserIdentity;
 import it.unical.geosentinel.identity.application.port.GoogleIdentity;
@@ -51,6 +52,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final TokenBlacklist tokenBlacklist;
     private final LoginAttemptLimiter loginAttemptLimiter;
+    private final MfaService mfaService;
     private final JwtIssuer jwtIssuer;
     private final Clock clock;
     private final Duration refreshTtl;
@@ -71,6 +73,7 @@ public class AuthService {
             PasswordEncoder passwordEncoder,
             TokenBlacklist tokenBlacklist,
             LoginAttemptLimiter loginAttemptLimiter,
+            MfaService mfaService,
             JwtIssuer jwtIssuer,
             Clock clock,
             // @Value e non JwtProperties: application non dipende da infrastructure
@@ -86,6 +89,7 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
         this.tokenBlacklist = tokenBlacklist;
         this.loginAttemptLimiter = loginAttemptLimiter;
+        this.mfaService = mfaService;
         this.jwtIssuer = jwtIssuer;
         this.clock = clock;
         this.refreshTtl = refreshTtl;
@@ -146,8 +150,9 @@ public class AuthService {
     // Controllato per primo: stesso comportamento per account esistenti e non (niente enumerazione) e nessun costo BCrypt.
     // Chiave = hash dell'email, mai in chiaro su Redis. Limite accettato: chi attacca può rallentare il login di una
     // vittima tempestandone l'email; il token bucket lo attenua (un tentativo ricaricato ogni 90 s, nessun blocco fisso).
-    @Transactional
-    public AuthTokens login(String email, String rawPassword) {
+    // noRollbackFor: l'errore del codice MFA deve restare committato (contatore ed evento d'avviso)
+    @Transactional(noRollbackFor = InvalidMfaCodeException.class)
+    public AuthTokens login(String email, String rawPassword, String mfaCode) {
         String normalizedEmail = User.normalizeEmail(email);
         loginAttemptLimiter.tryAcquire(sha256Hex(normalizedEmail)).ifPresent(retryAfter -> {
             throw new RateLimitExceededException(retryAfter);
@@ -160,6 +165,8 @@ public class AuthService {
         if (user.isEmpty() || storedHash == null || !passwordMatches || !user.get().isEnabled()) {
             throw new BadCredentialsException("Invalid credentials");
         }
+        // Solo dopo la password: un 401 mfa-required arriva solo a chi la conosce già
+        mfaService.verifyLogin(user.get(), mfaCode);
         return createAuthSession(user.get(), null);
     }
 
@@ -253,9 +260,11 @@ public class AuthService {
         return AuthTokens.bearer(accessToken.tokenValue(), accessToken.expiresAt(), rawRefreshToken);
     }
 
-    // ADR-0024. Ordine dei lock come in changePassword: prima l'utente, poi i suoi token
-    @Transactional
-    public GoogleSignIn loginWithGoogle(GoogleIdentity google, LocalDate birthDate) {
+    // ADR-0024. Ordine dei lock come in changePassword: prima l'utente, poi i suoi token.
+    // noRollbackFor come in login: con il rollback l'email d'avviso (AFTER_COMMIT) non partirebbe mai.
+    // Sicuro: la verifica MFA viene prima di ogni scrittura
+    @Transactional(noRollbackFor = InvalidMfaCodeException.class)
+    public GoogleSignIn loginWithGoogle(GoogleIdentity google, LocalDate birthDate, String mfaCode) {
         // Limite per account sul sub Google, come per l'email nel login con password: stesso credential stuffing, altro canale
         loginAttemptLimiter.tryAcquire(sha256Hex("google:" + google.subject())).ifPresent(retryAfter -> {
             throw new RateLimitExceededException(retryAfter);
@@ -275,6 +284,7 @@ public class AuthService {
         Optional<UserIdentity> linked = userIdentityRepository.findByProviderAndSubject(IdentityProvider.GOOGLE, google.subject());
         if (linked.isPresent()) {
             User user = lockEnabled(linked.get().getUser().getId());
+            mfaService.verifyLogin(user, mfaCode);
             return new GoogleSignIn(createAuthSession(user, null), false);
         }
 
@@ -289,6 +299,10 @@ public class AuthService {
             if (!user.isEnabled()) {
                 throw new BadCredentialsException("Invalid credentials");
             }
+
+            // Prima di collegare: chi controlla l'account Google della vittima non salta il secondo fattore
+            mfaService.verifyLogin(user, mfaCode);
+
             // Già collegato a un altro account Google (stessa email, sub diverso): non si aggiunge una seconda identità
             if (userIdentityRepository.existsByUser_IdAndProvider(user.getId(), IdentityProvider.GOOGLE)) {
                 throw new BusinessRuleViolationException("Email already linked to another Google account");

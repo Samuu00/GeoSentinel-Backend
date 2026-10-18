@@ -5,7 +5,7 @@
 
 ## Contesto
 
-Si vuole stimare dove una frana è probabile e dove arriverebbe, per capire quali sentieri sono a rischio (M8). Il calcolo
+Si vuole stimare dove una frana è probabile e dove arriverebbe, per capire quali sentieri sono a rischio (M10). Il calcolo
 (Monte Carlo su milioni di celle, automa cellulare su centinaia di migliaia di celle per migliaia di passi) è CPU-bound e
 si parallelizza bene, a differenza del resto del backend, che è I/O-bound. Il backend Java gestisce anche l'SOS: un
 crash o un calcolo lento non devono toccarlo.

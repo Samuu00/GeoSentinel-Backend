@@ -7,9 +7,11 @@ import java.time.Instant;
 import java.util.UUID;
 
 // Il profilo non sta nel JWT (solo sub e roles): l'app lo legge da GET /users/me
-public record UserProfile(UUID id, String email, String displayName, Role role, Instant createdAt, boolean hasPassword) {
-    public static UserProfile from(User user) {
+public record UserProfile(UUID id, String email, String displayName, Role role, Instant createdAt,
+                          boolean hasPassword, boolean mfaEnabled) {
+
+    public static UserProfile from(User user, boolean mfaEnabled) {
         return new UserProfile(user.getId(), user.getEmail(), user.getDisplayName(), user.getRole(),
-                user.getCreatedAt(), user.hasPassword());
+                user.getCreatedAt(), user.hasPassword(), mfaEnabled);
     }
 }
