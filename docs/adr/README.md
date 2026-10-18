@@ -29,3 +29,4 @@ del vecchio (`Sostituito da ADR-XXXX`). Il modello è in [`template.md`](templat
 | [0021](0021-limiti-per-utente-sos-e-prenotazioni.md) | Limiti per utente sulle push SOS e sulle prenotazioni | 2026-10-06 | Accettato |
 | [0022](0022-calcolo-frane-worker-cpp.md) | Calcolo del rischio frane in un worker C++ (MPI + pthread) con il database come contratto | 2026-10-17 | Proposto |
 | [0023](0023-modello-frane.md) | Modello delle frane: pendio indefinito con Monte Carlo e automa cellulare | 2026-10-17 | Proposto |
+| [0024](0024-login-google.md) | Login con Google tramite ID token nativo | 2026-10-17 | Accettato |

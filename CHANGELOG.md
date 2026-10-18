@@ -6,6 +6,11 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 ## [Non rilasciato]
 
 ### Aggiunto
+- Login con Google (ADR-0024, V14): `POST /auth/google` (`loginWithGoogle`) con l'ID token nativo dell'app; 201 per
+  un account nuovo (serve `birthDate`), 200 per uno esistente. Solo email verificate da Google; un `HIKER` con la
+  stessa email viene collegato (password azzerata, sessioni chiuse), il personale no (409 `account-managed`); 503
+  `identity-provider-unavailable` se le chiavi di Google non si scaricano. `UserProfileResponse.hasPassword`. Il client
+  va rigenerato. `GoogleIdTokenVerifierTest`, `GoogleLoginIT`.
 - Reset della password con codice via email (V13): `POST /auth/password-reset/request` (`requestPasswordReset`,
   sempre 204, anche per un'email sconosciuta; 3 richieste all'ora per email → 429) e `/confirm`
   (`confirmPasswordReset`, 204; 422 `invalid-reset-code` per codice sbagliato, scaduto, già usato o dopo 5 errori).

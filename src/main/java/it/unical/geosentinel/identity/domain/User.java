@@ -49,19 +49,29 @@ public class User extends AuditableEntity {
 
     private User(String email, String passwordHash, String displayName, Role role) {
         this.email = normalizeEmail(email);
-        this.passwordHash = Objects.requireNonNull(passwordHash, "passwordHash cannot be null");
+        this.passwordHash = passwordHash;
         this.displayName = Objects.requireNonNull(displayName, "displayName cannot be null");
         this.role = Objects.requireNonNull(role, "role cannot be null");
         this.enabled = true;
     }
 
     public static User createHiker(String email, String passwordHash, String displayName) {
-        return new User(email, passwordHash, displayName, Role.HIKER);
+        return new User(email, Objects.requireNonNull(passwordHash, "passwordHash cannot be null"), displayName, Role.HIKER);
+    }
+
+    // Account nato dal login Google: nessuna password finché non ne imposta una con il reset via codice
+    public static User createHikerWithoutPassword(String email, String displayName) {
+        return new User(email, null, displayName, Role.HIKER);
     }
 
     public static User create(String email, String passwordHash, String displayName, Role role) {
-        return new User(email, passwordHash, displayName, role);
+        return new User(email, Objects.requireNonNull(passwordHash, "passwordHash cannot be null"), displayName, role);
     }
+
+    // Usato al collegamento di Google a un account esistente: la password vecchia non vale più
+    public void clearPassword() { this.passwordHash = null; }
+
+    public boolean hasPassword() { return passwordHash != null; }
 
     // Anonimizzazione, non DELETE fisico: le FK (segnalazioni, prenotazioni, SOS) restano valide.
     // L'email libera quella originale per una nuova registrazione; unusablePasswordHash è l'hash di un valore casuale

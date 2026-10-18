@@ -5,11 +5,17 @@ import it.unical.geosentinel.identity.application.port.TokenBlacklist;
 import it.unical.geosentinel.identity.domain.RefreshToken;
 import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
+import it.unical.geosentinel.identity.infrastructure.persistence.UserIdentityRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
 import it.unical.geosentinel.shared.domain.exception.AgeRequirementNotMetException;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
 import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
 import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
+import it.unical.geosentinel.identity.domain.IdentityProvider;
+import it.unical.geosentinel.identity.domain.UserIdentity;
+import it.unical.geosentinel.identity.application.port.GoogleIdentity;
+import it.unical.geosentinel.identity.domain.Role;
+import it.unical.geosentinel.shared.domain.exception.AccountManagedException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -35,6 +41,9 @@ import java.util.UUID;
 @Service
 public class AuthService {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    // Namespace dell'advisory lock a due chiavi sull'email del login Google (MediaService usa 7001)
+    private static final int GOOGLE_EMAIL_LOCK_NAMESPACE = 7002;
+    private final UserIdentityRepository userIdentityRepository;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -55,6 +64,7 @@ public class AuthService {
     public interface JwtIssuer { IssuedAccessToken issueAccessToken(User user); }
 
     public AuthService(
+            UserIdentityRepository userIdentityRepository,
             UserRepository userRepository,
             RefreshTokenRepository refreshTokenRepository,
             PasswordEncoder passwordEncoder,
@@ -69,6 +79,7 @@ public class AuthService {
             // GDPR art. 8: 14 in Italia, da 13 a 16 negli altri Stati UE
             @Value("${geosentinel.registration.min-age}") int minAge
     ) {
+        this.userIdentityRepository = userIdentityRepository;
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.passwordEncoder = passwordEncoder;
@@ -88,9 +99,7 @@ public class AuthService {
     // scopre se un'email è registrata
     @Transactional
     public AuthTokens register(RegisterCommand cmd) {
-        if (Period.between(cmd.birthDate(), LocalDate.now(clock)).getYears() < minAge) {
-            throw new AgeRequirementNotMetException("Registration is not available for this age");
-        }
+        requireMinAge(cmd.birthDate());
 
         String email = User.normalizeEmail(cmd.email());
         if (userRepository.existsByEmail(email)) {
@@ -111,6 +120,10 @@ public class AuthService {
         User user = userRepository.findByIdForUpdate(userId)
                 .filter(User::isEnabled)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+
+        if(!user.hasPassword()){
+            throw new BusinessRuleViolationException("Account has no password: use the password reset");
+        }
         // Stesso limite per account del login: con un access token rubato (15 min) non si indovina la password
         loginAttemptLimiter.tryAcquire(sha256Hex(user.getEmail())).ifPresent(retryAfter -> {
             throw new RateLimitExceededException(retryAfter);
@@ -140,11 +153,10 @@ public class AuthService {
         });
 
         Optional<User> user = userRepository.findByEmail(normalizedEmail);
-        // matches() gira anche se l'utente non esiste: stesso costo, stesso errore
-        boolean passwordMatches = passwordEncoder.matches(rawPassword,
-                user.map(User::getPasswordHash).orElse(dummyPasswordHash));
-
-        if (user.isEmpty() || !passwordMatches || !user.get().isEnabled()) {
+        //Account senza password, hash null.
+        String storedHash = user.map(User::getPasswordHash).orElse(null);
+        boolean passwordMatches = passwordEncoder.matches(rawPassword, storedHash != null ? storedHash : dummyPasswordHash);
+        if (user.isEmpty() || storedHash == null || !passwordMatches || !user.get().isEnabled()) {
             throw new BadCredentialsException("Invalid credentials");
         }
         return createAuthSession(user.get(), null);
@@ -238,6 +250,88 @@ public class AuthService {
         }
 
         return AuthTokens.bearer(accessToken.tokenValue(), accessToken.expiresAt(), rawRefreshToken);
+    }
+
+    // ADR-0024. Ordine dei lock come in changePassword: prima l'utente, poi i suoi token
+    @Transactional
+    public GoogleSignIn loginWithGoogle(GoogleIdentity google, LocalDate birthDate) {
+        // Limite per account sul sub Google, come per l'email nel login con password: stesso credential stuffing, altro canale
+        loginAttemptLimiter.tryAcquire(sha256Hex("google:" + google.subject())).ifPresent(retryAfter -> {
+            throw new RateLimitExceededException(retryAfter);
+        });
+
+        // Un'email non verificata non apre né crea nulla: un account Google con l'email di un altro (non verificata)
+        // creerebbe un account con quell'email e, quando la vittima entra con il suo Google, l'identità
+        // dell'attaccante resterebbe collegata all'account della vittima
+        if (!google.emailVerified()) {
+            throw new BusinessRuleViolationException("Google account email is not verified");
+        }
+        Instant now = clock.instant();
+        String email = User.normalizeEmail(google.email());
+        userIdentityRepository.lockEmail(GOOGLE_EMAIL_LOCK_NAMESPACE, email);
+
+        // 1. Account già collegato: si entra come sempre
+        Optional<UserIdentity> linked = userIdentityRepository.findByProviderAndSubject(IdentityProvider.GOOGLE, google.subject());
+        if (linked.isPresent()) {
+            User user = lockEnabled(linked.get().getUser().getId());
+            return new GoogleSignIn(createAuthSession(user, null), false);
+        }
+
+        // 2. Email già usata da un account: si collega (la registrazione non verifica l'email, Google sì)
+        Optional<User> existing = userRepository.findByEmail(email)
+                .flatMap(found -> userRepository.findByIdForUpdate(found.getId()));
+        if (existing.isPresent()) {
+            User user = existing.get();
+            if (user.getRole() != Role.HIKER) {
+                throw new AccountManagedException("Staff accounts cannot be linked to Google");
+            }
+            if (!user.isEnabled()) {
+                throw new BadCredentialsException("Invalid credentials");
+            }
+            // Già collegato a un altro account Google (stessa email, sub diverso): non si aggiunge una seconda identità
+            if (userIdentityRepository.existsByUser_IdAndProvider(user.getId(), IdentityProvider.GOOGLE)) {
+                throw new BusinessRuleViolationException("Email already linked to another Google account");
+            }
+            // Password azzerata e sessioni chiuse: chi aveva registrato l'email non entra più con la sua password
+            user.clearPassword();
+            userIdentityRepository.save(new UserIdentity(user, IdentityProvider.GOOGLE, google.subject(), email, now));
+            refreshTokenRepository.revokeAllOfUser(user.getId(), now);
+            tokenBlacklist.revokeAllIssuedUntil(user.getId(), now.minusSeconds(1));
+            return new GoogleSignIn(createAuthSession(user, null), false);
+        }
+
+        // 3. Account nuovo: le stesse regole della registrazione, età compresa
+        if (birthDate == null) {
+            throw new BusinessRuleViolationException("Birth date is required to create an account");
+        }
+        requireMinAge(birthDate);
+        User user = User.createHikerWithoutPassword(email, displayNameOf(google));
+        user.confirmAge(now);
+        User saved = userRepository.save(user);
+        userIdentityRepository.save(new UserIdentity(saved, IdentityProvider.GOOGLE, google.subject(), email, now));
+        return new GoogleSignIn(createAuthSession(saved, null), true);
+    }
+
+    private User lockEnabled(UUID userId) {
+        return userRepository.findByIdForUpdate(userId)
+                .filter(User::isEnabled)
+                .orElseThrow(() -> new BadCredentialsException("Invalid credentials"));
+    }
+
+    // Età prima di ogni lettura o scrittura: di chi è sotto la soglia non resta nessun dato
+    private void requireMinAge(LocalDate birthDate) {
+        if (Period.between(birthDate, LocalDate.now(clock)).getYears() < minAge) {
+            throw new AgeRequirementNotMetException("Registration is not available for this age");
+        }
+    }
+
+    // Il nome di Google può mancare o non rispettare i limiti del profilo (2-100 caratteri)
+    private static String displayNameOf(GoogleIdentity google) {
+        String name = google.displayName() == null ? "" : google.displayName().strip();
+        if (name.length() < 2) {
+            return "Escursionista";
+        }
+        return name.length() > 100 ? name.substring(0, 100) : name;
     }
 
     private static Instant min(Instant a, Instant b) {

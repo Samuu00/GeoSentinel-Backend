@@ -1,18 +1,7 @@
 package it.unical.geosentinel.shared.web;
 
+import it.unical.geosentinel.shared.domain.exception.*;
 import jakarta.validation.ConstraintViolationException;
-import it.unical.geosentinel.shared.domain.exception.AccountManagedException;
-import it.unical.geosentinel.shared.domain.exception.AgeRequirementNotMetException;
-import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
-import it.unical.geosentinel.shared.domain.exception.AlertAlreadyTakenException;
-import it.unical.geosentinel.shared.domain.exception.CapacityExceededException;
-import it.unical.geosentinel.shared.domain.exception.IdempotencyKeyReusedException;
-import it.unical.geosentinel.shared.domain.exception.MediaRejectedException;
-import it.unical.geosentinel.shared.domain.exception.OptimisticConflictException;
-import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
-import it.unical.geosentinel.shared.domain.exception.ResourceNotFoundException;
-import it.unical.geosentinel.shared.domain.exception.StorageUnavailableException;
-import it.unical.geosentinel.shared.domain.exception.InvalidResetCodeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -164,6 +153,15 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         headers.set(HttpHeaders.RETRY_AFTER, "5");
         return problem(ex, HttpStatus.SERVICE_UNAVAILABLE, ProblemTypes.STORAGE_UNAVAILABLE, "Storage unavailable",
                 "The file storage is temporarily unavailable. Retry shortly.", headers, request);
+    }
+
+    @ExceptionHandler(IdentityProviderUnavailableException.class)
+    public ResponseEntity<Object> handleIdentityProviderUnavailable(IdentityProviderUnavailableException ex, WebRequest request) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.RETRY_AFTER, "5");
+        return problem(ex, HttpStatus.SERVICE_UNAVAILABLE, ProblemTypes.IDENTITY_PROVIDER_UNAVAILABLE,
+                "Identity provider unavailable",
+                "The sign-in provider is temporarily unavailable. Retry shortly.", headers, request);
     }
 
     @ExceptionHandler(IdempotencyKeyReusedException.class)

@@ -5,14 +5,14 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import it.unical.geosentinel.identity.application.GoogleSignIn;
+import it.unical.geosentinel.identity.application.port.GoogleIdentity;
+import it.unical.geosentinel.identity.application.port.GoogleIdentityVerifier;
+import it.unical.geosentinel.identity.web.dto.*;
 import jakarta.validation.Valid;
 import it.unical.geosentinel.identity.application.AuthService;
 import it.unical.geosentinel.identity.application.AuthTokens;
 import it.unical.geosentinel.identity.application.RegisterCommand;
-import it.unical.geosentinel.identity.web.dto.LoginRequest;
-import it.unical.geosentinel.identity.web.dto.RefreshRequest;
-import it.unical.geosentinel.identity.web.dto.RegisterRequest;
-import it.unical.geosentinel.identity.web.dto.TokenResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -27,9 +27,11 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Authentication", description = "Endpoints for user registration, authentication, token refresh and revocation")
 public class AuthController {
     private final AuthService authService;
+    private final GoogleIdentityVerifier googleIdentityVerifier;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, GoogleIdentityVerifier googleIdentityVerifier) {
         this.authService = authService;
+        this.googleIdentityVerifier = googleIdentityVerifier;
     }
 
     @PostMapping("/register")
@@ -58,6 +60,27 @@ public class AuthController {
     public ResponseEntity<TokenResponse> login(@Valid @RequestBody LoginRequest request) {
         AuthTokens tokens = authService.login(request.email(), request.password());
         return ResponseEntity.ok(TokenResponse.from(tokens));
+    }
+
+    @PostMapping("/google")
+    @Operation(
+            operationId = "loginWithGoogle",
+            summary = "Sign in with a Google ID token; creates the hiker account on first login (ADR-0024)"
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Sign-in successful, existing account"),
+            @ApiResponse(responseCode = "201", description = "Sign-in successful, new account created"),
+            @ApiResponse(responseCode = "401", description = "Invalid Google ID token"),
+            @ApiResponse(responseCode = "409", description = "Staff accounts cannot be linked to Google"),
+            @ApiResponse(responseCode = "422", description = "Google email not verified, birth date missing or under the minimum age, or account already linked to another Google account"),
+            @ApiResponse(responseCode = "429", description = "Rate limit exceeded"),
+            @ApiResponse(responseCode = "503", description = "Google public keys unavailable")
+    })
+    public ResponseEntity<TokenResponse> loginWithGoogle(@Valid @RequestBody GoogleLoginRequest request) {
+        GoogleIdentity identity = googleIdentityVerifier.verify(request.idToken());
+        GoogleSignIn result = authService.loginWithGoogle(identity, request.birthDate());
+        HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
+        return ResponseEntity.status(status).body(TokenResponse.from(result.tokens()));
     }
 
     @PostMapping("/refresh")

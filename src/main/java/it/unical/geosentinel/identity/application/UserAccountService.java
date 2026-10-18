@@ -6,6 +6,7 @@ import it.unical.geosentinel.identity.domain.Role;
 import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.PasswordResetTokenRepository;
+import it.unical.geosentinel.identity.infrastructure.persistence.UserIdentityRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
 import it.unical.geosentinel.media.application.MediaService;
 import it.unical.geosentinel.notification.application.DeviceService;
@@ -26,6 +27,7 @@ import java.util.UUID;
 @Service
 public class UserAccountService {
     private final UserRepository userRepository;
+    private final UserIdentityRepository userIdentityRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordResetTokenRepository passwordResetTokens;
     private final TokenBlacklist tokenBlacklist;
@@ -38,6 +40,7 @@ public class UserAccountService {
 
     public UserAccountService(
             UserRepository userRepository,
+            UserIdentityRepository userIdentityRepository,
             RefreshTokenRepository refreshTokenRepository,
             PasswordResetTokenRepository passwordResetTokens,
             TokenBlacklist tokenBlacklist,
@@ -49,6 +52,7 @@ public class UserAccountService {
             Clock clock
     ) {
         this.userRepository = userRepository;
+        this.userIdentityRepository = userIdentityRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.passwordResetTokens = passwordResetTokens;
         this.tokenBlacklist = tokenBlacklist;
@@ -91,6 +95,8 @@ public class UserAccountService {
         refugeBookingService.cancelAllFutureOf(userId);
         sosService.cancelActiveOf(userId);
         deviceService.deleteAllOf(userId);
+        // Le identità esterne vanno tolte insieme all'account: altrimenti lo stesso Google riaprirebbe l'account cancellato
+        userIdentityRepository.deleteAllOf(userId);
         passwordResetTokens.deleteAllOf(userId);
         // hash vero di un valore casuale mai restituito: nessuna password può più coincidere
         user.markDeleted(now, passwordEncoder.encode(UUID.randomUUID().toString()));

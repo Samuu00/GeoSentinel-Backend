@@ -11,7 +11,8 @@
 > - rotte `GET /hazards/mine`, `/hazards/nearby`, `/hazards/pending`; rifugi descritti e foto `REFUGE` (`V11__refuge_details`); crediti delle foto esterne (`V12__media_credit`); capacità del rifugio al massimo 1000;
 > - dati veri della Calabria da OpenStreetMap e Wikimedia Commons (`tools/osm-import`).
 >
-> - reset della password con codice via email (M7.2.2, `V13__password_reset_tokens`), completato e verificato il 17/10, da committare.
+> - reset della password con codice via email (M7.2.2, `V13__password_reset_tokens`), completato e verificato il 17/10, da committare;
+> - login con Google tramite ID token nativo (M7.2.3, ADR-0024, `V14__google_identity`), revisionato e corretto il 18/10, da committare.
 > **Pianificata (17/10): M8, rischio frane** con un calcolo parallelo in C++ (MPI + pthread) e la feature `landslide` (ADR-0022, ADR-0023).
 > M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
@@ -104,23 +105,25 @@ GeoSentinel-Backend/
     │   │   │           └── GeometryMapper.java       # MapStruct: JTS <-> DTO
     │   │   │
     │   │   ├── identity/                             # utenti, auth, sicurezza
-    │   │   │   ├── domain/        User, Role, RefreshToken
+    │   │   │   ├── domain/        User, Role, RefreshToken, UserIdentity + IdentityProvider (M7.2.3)
     │   │   │   ├── application/   AuthService (anche changePassword), UserQueryService (letture per le altre feature),
     │   │   │   │                  UserAccountService + UserProfile (M7.2), RefreshTokenCleanupJob,
     │   │   │   │                  PasswordResetService, PasswordResetMailListener, PasswordResetRequested,
-    │   │   │   │                  PasswordResetCleanupJob (M7.2.2),
+    │   │   │   │                  PasswordResetCleanupJob (M7.2.2), GoogleSignIn (M7.2.3),
     │   │   │   │                  port/TokenBlacklist, port/LoginAttemptLimiter, port/PasswordResetLimiter,
-    │   │   │   │                  port/PasswordResetMailer
+    │   │   │   │                  port/PasswordResetMailer, port/GoogleIdentityVerifier + GoogleIdentity (M7.2.3)
     │   │   │   ├── infrastructure/
-    │   │   │   │   ├── persistence/  UserRepository, RefreshTokenRepository, PasswordResetTokenRepository
+    │   │   │   │   ├── persistence/  UserRepository, RefreshTokenRepository, PasswordResetTokenRepository,
+    │   │   │   │   │                 UserIdentityRepository (M7.2.3)
     │   │   │   │   ├── redis/        RedisTokenBlacklist, RedisRateLimiter, RedisLoginAttemptLimiter,
     │   │   │   │   │                 RedisPasswordResetLimiter, RateLimitPolicy, RateLimitDecision
     │   │   │   │   ├── mail/         SmtpPasswordResetMailer, LoggingPasswordResetMailer (M7.2.2)
+    │   │   │   │   ├── google/       GoogleConfig, GoogleIdTokenVerifier, GoogleProperties (M7.2.3)
     │   │   │   │   └── security/     SecurityConfig, JwtTokenService, JtiBlacklistValidator,
     │   │   │   │                     RateLimitFilter, ProblemAuthenticationEntryPoint,
     │   │   │   │                     ProblemAccessDeniedHandler, JwtProperties, CurrentUser
     │   │   │   └── web/           AuthController, UserController (/users/me, M7.2),
-    │   │   │                      PasswordResetController (M7.2.2), dto/* (UserDtos, PasswordReset*Request)
+    │   │   │                      PasswordResetController (M7.2.2), dto/* (UserDtos, PasswordReset*Request, GoogleLoginRequest)
     │   │   │
     │   │   ├── trail/                                # sentieri, POI, segnalazioni pericoli
     │   │   │   ├── domain/        Trail, TrailStatus, Difficulty, Poi, PoiType,
@@ -412,6 +415,7 @@ Firme chiave (solo contratti):
 | `POST /api/v1/auth/register`, `/login`, `/refresh` | permitAll |
 | `POST /api/v1/auth/logout` | `authenticated()`: senza access token non si può mettere il `jti` in blacklist |
 | `POST /api/v1/auth/password-reset/request`, `/confirm` (M7.2.2) | permitAll, `Authorization` ignorato come su login (`TOKENLESS_AUTH_PATHS`) |
+| `POST /api/v1/auth/google` (M7.2.3) | permitAll, in `TOKENLESS_AUTH_PATHS`, bucket `rl:auth:` del login |
 | `/api/v1/users/me/**` (M7.2) | `authenticated()`; `DELETE` solo HIKER, il personale riceve 409 `account-managed` (controllo nel service) |
 | `GET /api/v1/trails/**`, `GET /api/v1/pois/**` | permitAll (informazioni di sicurezza pubbliche) |
 | `/v3/api-docs/**`, `/swagger-ui/**`, `/actuator/health` | permitAll (docs solo in `local`) |
@@ -672,6 +676,7 @@ Stato: in `GlobalExceptionHandler` sono gestite tutte le righe, comprese le ecce
 | `AccountManagedException` (`DELETE /users/me` del personale, M7.2) | 409 | `account-managed` |
 | `AgeRequirementNotMetException` (registrazione sotto `geosentinel.registration.min-age`, M7.2.1) | 422 | `age-requirement-not-met` (detail generico, senza la soglia) |
 | `InvalidResetCodeException` (codice sbagliato, scaduto, già usato o tentativi finiti, M7.2.2) | 422 | `invalid-reset-code` (un solo detail per tutti i motivi) |
+| `IdentityProviderUnavailableException` (chiavi pubbliche di Google non scaricabili, M7.2.3) | 503 + `Retry-After: 5` | `identity-provider-unavailable` |
 | `Exception` (fallback) | 500 | `internal-error`, detail generico, log con `traceId`, **mai** stack trace |
 
 **Trappola:** le eccezioni di `@PreAuthorize` sono lanciate dentro l'invocazione del controller e quindi **arrivano** all'advice. Senza un handler dedicato le prende il fallback `Exception` → 500 invece di 403.
@@ -710,6 +715,7 @@ Endpoint:
 | `POST /api/v1/auth/register` (M7.2.1) | public | `birthDate` obbligatoria; sotto i 14 anni → 422 `age-requirement-not-met` |
 | `POST /api/v1/auth/password-reset/request` (M7.2.2) | public | sempre 204, anche per un'email sconosciuta; 3 richieste all'ora per email → 429 |
 | `POST /api/v1/auth/password-reset/confirm` (M7.2.2) | public | 204, tutte le sessioni chiuse; codice non valido → 422 `invalid-reset-code` |
+| `POST /api/v1/auth/google` (M7.2.3) | public | `{idToken, birthDate?}`; 201 account nuovo, 200 esistente; 401 token non valido; 422 email non verificata, età, account già collegato a un altro Google; 409 personale; 503 Google irraggiungibile |
 | `PATCH /api/v1/refuges/{id}/capacity` | PARK_MANAGER **gestore del rifugio**, o ADMIN | capacità; un altro PARK_MANAGER → 403 |
 | `POST /api/v1/maintenance-tickets` (`trailId` / `refugeId` / `hazardReportId` nel body, esattamente uno) | PARK_MANAGER | 201 + `Location` + `ETag` |
 | `GET /api/v1/maintenance-tickets/{id}` · `?status&priority&assignedTo` (paginato, `PagedModel`) | PARK_MANAGER | `ETag` sul singolo |
@@ -923,6 +929,38 @@ Limiti chiusi subito dopo (17/10, su richiesta): richiesta asincrona (tempo ugua
 
 **Limite noto:** se l'SMTP fallisce, l'utente non riceve il codice e non lo sa (risposta già 204); lo ritenta dall'app, entro il limite di 3 all'ora. Nessuna coda di reinvio: un codice vecchio non ha valore.
 
+#### M7.2.3 — Login con Google (ID token nativo)
+> Aggiunta il 17/10, decisione in ADR-0024. Scritta dall'utente, revisionata e corretta da Claude su richiesta il 18/10.
+
+**Obiettivo:** entrare dall'app con l'account Google, senza browser e senza segreti Google nel backend.
+
+- [x] **Flusso:** l'app ottiene l'ID token dal SDK (Credential Manager su Android, GoogleSignIn su iOS) e lo manda a **`POST /api/v1/auth/google`** (`loginWithGoogle`), body `{ idToken, birthDate? }`, risposta `TokenResponse`
+- [x] **Verifica** (`GoogleIdTokenVerifier`, porta `GoogleIdentityVerifier`): `NimbusJwtDecoder` sulle chiavi di `https://www.googleapis.com/oauth2/v3/certs` (RS256, `exp`/`nbf` con 60 s di tolleranza, timeout di default di Spring Security), poi:
+  - `iss` letto come stringa, `https://accounts.google.com` o `accounts.google.com` (`Jwt.getIssuer()` converte in URL e lancia sulla forma senza schema → 500);
+  - `aud` tra i client ID di `GOOGLE_CLIENT_IDS` (vuota = ogni token rifiutato); `exp` obbligatorio; `sub` ed `email` presenti, email ≤ 254 caratteri;
+  - chiavi non scaricabili (`RemoteKeySourceException` nella catena) → 503, ogni altro errore → 401;
+  - il verificatore è un bean della porta, non un `JwtDecoder`: un secondo decoder romperebbe il resource server.
+- [x] **`AuthService.loginWithGoogle`**, in quest'ordine:
+  1. limite per account sul `sub` (`LoginAttemptLimiter`, chiave `sha256("google:" + sub)`);
+  2. **email non verificata → 422, nulla creato né collegato** (altrimenti un Google con l'email non verificata della vittima crea l'account e resta collegato quando la vittima entra con il suo Google);
+  3. advisory lock transazionale sull'email normalizzata (`UserIdentityRepository.lockEmail`, namespace 7002; 7001 è la quota dei media): primi accessi concorrenti in fila, nessun 500 dal vincolo `UNIQUE`;
+  4. identità già collegata → sessione (utente bloccato con `findByIdForUpdate`, disabilitato → 401);
+  5. email di un account esistente: personale → 409 `account-managed`; disabilitato → 401; già collegato a un altro Google → 422; altrimenti collegamento, `password_hash` azzerato, refresh token revocati e `revokeAllIssuedUntil(userId, now - 1 s)` (M7.7), nuova sessione;
+  6. account nuovo: `birthDate` obbligatoria (422 se manca), stessa età minima di M7.2.1, `User.createHikerWithoutPassword`, nome da Google (2–100 caratteri, altrimenti "Escursionista") → 201.
+- [x] `V14__google_identity.sql`: `users.password_hash` nullable; `user_identities` (`id`, `user_id` FK `ON DELETE CASCADE` con indice, `provider` con `CHECK`, `subject`, `email`, `linked_at`, `UNIQUE (provider, subject)`)
+- [x] **Password assente:** il login con password fa comunque BCrypt sull'hash fittizio (stesso tempo, 401); `changePassword` → 422 (si passa dal reset via codice, M7.2.2); `UserProfileResponse.hasPassword` per l'app
+- [x] Cancellazione dell'account: `UserIdentityRepository.deleteAllOf` (regola di M7.2; l'utente è anonimizzato, il `CASCADE` non scatta)
+
+**Checkpoint:**
+- [x] `GoogleIdTokenVerifierTest` (10): entrambi gli issuer, issuer estraneo, audience di un'altra app, client ID vuoto, `exp` ed email mancanti, `email_verified` assente, 503 contro 401
+- [x] `GoogleLoginIT` (11): account creato senza password (201) poi 200 senza data; 422 senza `birthDate` e nessuna riga; email non verificata mai creata né collegata; collegamento di un HIKER e password che smette di valere; personale 409; seconda identità rifiutata; 10 primi accessi concorrenti → un account, `@RepeatedTest(5)`
+- [x] `MigrationIT` con V14; `docs/openapi.json` rigenerato; `./mvnw clean verify` verde: 61 unit + 163 IT
+- [ ] dal vivo con l'app KMP: client OAuth Android (SHA-1), iOS (bundle id) e Web (audience dell'ID token su Android) nella Google Cloud Console, `GOOGLE_CLIENT_IDS` nel `.env`
+
+**Bug corretti nella review (18/10):** non compilava (`GoogleProperties.jwtSetUri` contro `jwkSetUri()`, import di `RemoteKeySourceException` dal package sbagliato, costruttore di `AuthService` nei test); presa dell'account con email non verificata nel caso "account nuovo"; seconda identità Google sullo stesso account; issuer senza schema → 500; doppio primo accesso → 500; token senza `exp` accettato; email oltre 254 caratteri → 500; il dominio importava `application.UserProfile`.
+
+**Non coperto (ADR-0024):** nonce, Apple e altri provider, collegamento volontario da un account già aperto.
+
 #### M7.3 — Rete mobile: rate limit, compressione, timeout
 - [x] **Rate limit su `/auth/**` adatto al CGNAT**, con tre policy configurabili invece di costanti (`@ConfigurationProperties` `geosentinel.rate-limit.*`, così `RateLimitIT` imposta i suoi valori), ognuna con il proprio prefisso di bucket:
   - `login-per-minute` = 30 per IP su login e register (fail-closed): il brute force lo ferma il limite **per account** (`RedisLoginAttemptLimiter`, 10 / 15 min), l'IP è solo un tetto contro gli abusi
@@ -1070,7 +1108,7 @@ PARK_MANAGER verifica una segnalazione LANDSLIDE        ADMIN lancia una suscett
 - **Niente porta in `application`:** Java non chiama il worker, scrive una riga. Una porta qui sarebbe un'interfaccia senza un secondo sistema da sostituire (D2).
 - **Il worker non sa cosa sia un sentiero:** produce poligoni. L'intersezione con i sentieri la fa PostGIS, lato Java.
 
-**Ordine:** M8.1 → M8.2 → M8.3 → M8.4 → M8.5 → M8.6 → M8.8, con **M8.7 (lato Java) in parallelo** da subito dopo aver fissato le tabelle (V14): si prova con zone finte inserite in SQL, senza il C++.
+**Ordine:** M8.1 → M8.2 → M8.3 → M8.4 → M8.5 → M8.6 → M8.8, con **M8.7 (lato Java) in parallelo** da subito dopo aver fissato le tabelle (V15): si prova con zone finte inserite in SQL, senza il C++.
 
 #### M8.1 — Dati: DEM, inventario frane, parametri
 **Obiettivo:** dati di ingresso riproducibili da uno script, mai committati (pesano centinaia di MB).
@@ -1203,8 +1241,8 @@ Modello (semplificazione ispirata a SCIDDICA-T, ADR-0023): celle quadrate, vicin
 - [ ] **Lease:** un thread del worker (con la sua connessione) allunga `lease_until` ogni minuto finché il calcolo gira. Worker morto → il lease scade → un altro worker riprende il job
 - [ ] **Chiusura, in una transazione:** `DELETE` delle zone del job (un retry non duplica) → `INSERT` delle zone con `ST_Multi(ST_Transform(ST_GeomFromWKB($wkb, 32633), 4326))` → `UPDATE ... SET status = 'DONE', finished_at, runtime_ms, processes, threads WHERE id = $1 AND worker_id = $me`. Se l'`UPDATE` tocca 0 righe (lease perso) → rollback
 - [ ] **Errore:** `FAILED` se `attempts >= 3`, altrimenti di nuovo `PENDING`; in `error` un messaggio breve (mai stringhe di connessione o stack)
-- [ ] **Permessi minimi:** ruolo `geosentinel_sim` creato da V14 senza login né password; `GRANT SELECT` e `UPDATE` (solo sulle colonne di stato) su `simulation_jobs`, `INSERT`/`DELETE` su `landslide_zones`, nient'altro (non legge `users`, `sos_alerts`, …)
-- [ ] Password del ruolo dal `.env` (`SIM_DB_PASSWORD`, aggiunta a `.env.example`): servizio `landslide-db-init` nel compose (come `minio-init`) che aspetta che V14 esista e poi fa `ALTER ROLE geosentinel_sim LOGIN PASSWORD ...`. **Trappola:** `psql -c` non sostituisce le variabili `:'pw'`, servono `-v pw=...` con il comando da stdin (heredoc), altrimenti la password va in chiaro nella riga di comando o la query si rompe
+- [ ] **Permessi minimi:** ruolo `geosentinel_sim` creato da V15 senza login né password; `GRANT SELECT` e `UPDATE` (solo sulle colonne di stato) su `simulation_jobs`, `INSERT`/`DELETE` su `landslide_zones`, nient'altro (non legge `users`, `sos_alerts`, …)
+- [ ] Password del ruolo dal `.env` (`SIM_DB_PASSWORD`, aggiunta a `.env.example`): servizio `landslide-db-init` nel compose (come `minio-init`) che aspetta che V15 esista e poi fa `ALTER ROLE geosentinel_sim LOGIN PASSWORD ...`. **Trappola:** `psql -c` non sostituisce le variabili `:'pw'`, servono `-v pw=...` con il comando da stdin (heredoc), altrimenti la password va in chiaro nella riga di comando o la query si rompe
 - [ ] Compose: servizio `landslide-worker` sotto `profiles: ["sim"]`, `shm_size: 1gb`, volume `${SIM_DATA_DIR}` in sola lettura (output in una cartella temporanea del container), `depends_on` postgres healthy + `landslide-db-init` completato
 
 **Checkpoint:**
@@ -1216,7 +1254,7 @@ Modello (semplificazione ispirata a SCIDDICA-T, ADR-0023): celle quadrate, vicin
 #### M8.7 — Backend Java: feature `landslide`
 **Obiettivo:** mettere in coda i calcoli, trasformare le zone in rischio per sentiero, esporlo all'app.
 
-`V14__landslide.sql` (V13 è il reset della password, M7.2.2):
+`V15__landslide.sql` (V13 è il reset della password, M7.2.2; V14 il login Google, ADR-0024):
 | Tabella | Contenuto |
 |---|---|
 | `simulation_jobs` | id uuid PK, type CHECK `SUSCEPTIBILITY/RUNOUT`, status CHECK `PENDING/RUNNING/DONE/FAILED`, `source_hazard_id` FK `hazard_reports(id)` NULL, `requested_by` FK `users(id)` NULL, **parametri in colonne tipizzate** (`rain_mm_24h`, `samples`, `seed`, `trigger_location geometry(Point,4326)`, `radius_m`, `h0_m`; niente `jsonb`: con Jackson 3 il mapping JSON di Hibernate va verificato, e le colonne si validano con `CHECK`), `attempts int NOT NULL DEFAULT 0`, `lease_until`, `worker_id varchar(64)`, `started_at`, `finished_at`, `error varchar(500)`, `runtime_ms`, `processes`, `threads`, `processed_at timestamptz NULL` (ingestione Java), audit cols. `CHECK` sui parametri obbligatori per tipo; `UNIQUE (source_hazard_id) WHERE type = 'RUNOUT'` (una propagazione per segnalazione, anche con due verifiche concorrenti); indici parziali `(created_at) WHERE status = 'PENDING'` e `(finished_at) WHERE status = 'DONE' AND processed_at IS NULL` |
@@ -1299,7 +1337,7 @@ M0.1 → M0.2 → M0.3 → M0.4 → M0.5
   → M6
   → M7
   → M8.1 → M8.2 → M8.3 → M8.4 → M8.5 → M8.6 → M8.8
-           └─ M8.7 (Java, in parallelo dopo V14: si prova con zone finte)
+           └─ M8.7 (Java, in parallelo dopo V15: si prova con zone finte)
 ```
 Nota: `M5.1` (GlobalExceptionHandler) conviene farlo subito dopo M2, così ogni feature successiva nasce con gli errori già nel formato giusto. `AbstractIntegrationTest` (M6.1) puoi anticiparlo dopo M1 e scrivere gli IT insieme a ogni milestone. È la scelta consigliata.
 

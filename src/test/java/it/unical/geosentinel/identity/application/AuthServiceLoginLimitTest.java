@@ -3,6 +3,7 @@ package it.unical.geosentinel.identity.application;
 import it.unical.geosentinel.identity.application.port.LoginAttemptLimiter;
 import it.unical.geosentinel.identity.application.port.TokenBlacklist;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
+import it.unical.geosentinel.identity.infrastructure.persistence.UserIdentityRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
 import it.unical.geosentinel.shared.domain.exception.RateLimitExceededException;
 import org.junit.jupiter.api.Test;
@@ -34,7 +35,7 @@ class AuthServiceLoginLimitTest {
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final LoginAttemptLimiter limiter = mock(LoginAttemptLimiter.class);
     private final AuthService service = new AuthService(
-            users, mock(RefreshTokenRepository.class), passwordEncoder, mock(TokenBlacklist.class),
+            mock(UserIdentityRepository.class), users, mock(RefreshTokenRepository.class), passwordEncoder, mock(TokenBlacklist.class),
             limiter, mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC),
             Duration.ofDays(7), Duration.ofDays(30), Duration.ofSeconds(60), 14);
 

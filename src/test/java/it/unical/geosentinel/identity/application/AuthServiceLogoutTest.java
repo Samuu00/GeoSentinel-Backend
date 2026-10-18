@@ -5,6 +5,7 @@ import it.unical.geosentinel.identity.application.port.TokenBlacklist;
 import it.unical.geosentinel.identity.domain.RefreshToken;
 import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
+import it.unical.geosentinel.identity.infrastructure.persistence.UserIdentityRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -29,7 +30,7 @@ class AuthServiceLogoutTest {
 
     private final RefreshTokenRepository refreshTokens = mock(RefreshTokenRepository.class);
     private final AuthService service = new AuthService(
-            mock(UserRepository.class), refreshTokens, mock(PasswordEncoder.class), mock(TokenBlacklist.class),
+            mock(UserIdentityRepository.class), mock(UserRepository.class), refreshTokens, mock(PasswordEncoder.class), mock(TokenBlacklist.class),
             mock(LoginAttemptLimiter.class), mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofDays(7), Duration.ofDays(30), Duration.ofSeconds(60), 14);
 
     private final UUID ownerId = UUID.randomUUID();

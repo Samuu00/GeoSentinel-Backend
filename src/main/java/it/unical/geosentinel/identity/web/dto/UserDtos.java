@@ -18,10 +18,11 @@ public class UserDtos {
             @Schema(requiredMode = REQUIRED) String email,
             @Schema(requiredMode = REQUIRED) String displayName,
             @Schema(requiredMode = REQUIRED) Role role,
-            @Schema(requiredMode = REQUIRED) Instant createdAt
+            @Schema(requiredMode = REQUIRED) Instant createdAt,
+            @Schema(requiredMode = REQUIRED) boolean hasPassword
     ) {
         public static UserProfileResponse from(UserProfile profile) {
-            return new UserProfileResponse(profile.id(), profile.email(), profile.displayName(), profile.role(), profile.createdAt());
+            return new UserProfileResponse(profile.id(), profile.email(), profile.displayName(), profile.role(), profile.createdAt(), profile.hasPassword());
         }
     }
 
