@@ -677,6 +677,7 @@ Stato: in `GlobalExceptionHandler` sono gestite tutte le righe, comprese le ecce
 | `AgeRequirementNotMetException` (registrazione sotto `geosentinel.registration.min-age`, M7.2.1) | 422 | `age-requirement-not-met` (detail generico, senza la soglia) |
 | `InvalidResetCodeException` (codice sbagliato, scaduto, già usato o tentativi finiti, M7.2.2) | 422 | `invalid-reset-code` (un solo detail per tutti i motivi) |
 | `IdentityProviderUnavailableException` (chiavi pubbliche di Google non scaricabili, M7.2.3) | 503 + `Retry-After: 5` | `identity-provider-unavailable` |
+| `BirthDateRequiredException` (primo accesso Google senza `birthDate`, M7.2.3) | 422 | `birth-date-required` |
 | `Exception` (fallback) | 500 | `internal-error`, detail generico, log con `traceId`, **mai** stack trace |
 
 **Trappola:** le eccezioni di `@PreAuthorize` sono lanciate dentro l'invocazione del controller e quindi **arrivano** all'advice. Senza un handler dedicato le prende il fallback `Exception` → 500 invece di 403.
@@ -959,6 +960,8 @@ Limiti chiusi subito dopo (17/10, su richiesta): richiesta asincrona (tempo ugua
 
 **Bug corretti nella review (18/10):** non compilava (`GoogleProperties.jwtSetUri` contro `jwkSetUri()`, import di `RemoteKeySourceException` dal package sbagliato, costruttore di `AuthService` nei test); presa dell'account con email non verificata nel caso "account nuovo"; seconda identità Google sullo stesso account; issuer senza schema → 500; doppio primo accesso → 500; token senza `exp` accettato; email oltre 254 caratteri → 500; il dominio importava `application.UserProfile`.
 
+**Contratto corretto per l'app (18/10):** i tre 422 avevano tutti lo slug `business-rule`, quindi l'app non poteva capire quando chiedere la data di nascita senza leggere il `detail`. Ora la data mancante è 422 `birth-date-required` (`BirthDateRequiredException`, asserito in `GoogleLoginIT`); email non verificata e seconda identità restano `business-rule`. Guida all'API aggiornata (login Google, reset, slug `birth-date-required`, `invalid-reset-code`, `identity-provider-unavailable`), `docs/openapi.json` rigenerato.
+
 **Non coperto (ADR-0024):** nonce, Apple e altri provider, collegamento volontario da un account già aperto.
 
 #### M7.3 — Rete mobile: rate limit, compressione, timeout
@@ -1113,11 +1116,18 @@ PARK_MANAGER verifica una segnalazione LANDSLIDE        ADMIN lancia una suscett
 #### M8.1 — Dati: DEM, inventario frane, parametri
 **Obiettivo:** dati di ingresso riproducibili da uno script, mai committati (pesano centinaia di MB).
 - [ ] `tools/dem-prep/` (accanto a `tools/osm-import`): script che scarica, ritaglia sulla Calabria, riproietta in **EPSG:32633** (UTM 33N, metri) e scrive GeoTIFF in `${SIM_DATA_DIR}` (volume Docker, fuori dal repo, in `.gitignore` e `.dockerignore`)
-  - **DEM 30 m** (Copernicus GLO-30) per la suscettibilità di tutta la regione
-  - **DEM 10 m** (TINITALY, INGV) per la propagazione, letto a finestre
+  - **DEM 30 m** (Copernicus GLO-30, ESA/UE) per la suscettibilità di tutta la regione. Bucket pubblico AWS `copernicus-dem-30m` (tile COG 1°×1°, circa 10 tra N37–N40 ed E015–E017), letto da GDAL con `/vsis3/` + `AWS_NO_SIGN_REQUEST=YES`, senza account. Sorgente in EPSG:4326. Portale: `dataspace.copernicus.eu`
+  - **DEM 10 m** (TINITALY 1.1, INGV, CC BY 4.0) per la propagazione, letto a finestre. Download a tile da `tinitaly.pi.ingv.it`. Sorgente in **EPSG:32632** (UTM 32N, non 33N): va riproiettato anche lui
+  - **Confine della Calabria** (ISTAT, limiti amministrativi, CC BY 4.0) per il ritaglio: `gdalwarp -cutline ... -crop_to_cutline -dstnodata -9999` (il nodata copre anche il mare)
+  - ricampionamento `bilinear` (mai `nearest`: la quota a gradini dà pendenze a scalini); output `-co TILED=YES -co COMPRESS=DEFLATE -co PREDICTOR=3` (tile per le finestre di M8.5)
+  - lo script gira in un container con un'immagine GDAL a versione fissata: con un'altra versione il checksum del checkpoint cambia
+  - dimensioni attese, ritagliate sul confine: circa 17 M celle a 30 m (~70 MB float32), circa 150 M a 10 m (~600 MB)
   - licenze e attribuzioni da verificare al download e da scrivere in `tools/dem-prep/README.md` (come i crediti delle foto, V12)
-- [ ] Inventario delle frane IFFI (ISPRA) per la Calabria, solo per la validazione (M8.8). Non entra nel calcolo
-- [ ] `simulation/config/soil-params.json`: intervalli dei parametri (ADR-0023), un'unica classe di suolo per partire. Valori iniziali da letteratura (SINMAP), da calibrare in M8.8
+- **Limite noto:** GLO-30 è un **DSM** (misura la chioma degli alberi, non il suolo): in Sila e in Aspromonte la pendenza è alterata. Alternativa: **FABDEM** (Copernicus senza alberi ed edifici, CC BY-NC-SA, solo uso non commerciale: va bene per il progetto universitario). Scelta da fissare in ADR-0023
+- I due DEM hanno riferimenti verticali diversi (EGM2008 e quota ortometrica italiana): non è un problema, non si mescolano mai (uno per la suscettibilità, l'altro per la propagazione)
+- [ ] Inventario delle frane IFFI (ISPRA, CC BY 4.0, open data per regione da `idrogeo.isprambiente.it`) per la Calabria, solo per la validazione (M8.8). Non entra nel calcolo
+- [ ] `simulation/config/soil-params.json`: intervalli dei parametri (ADR-0023), un'unica classe di suolo per partire. Valori iniziali da letteratura (tabelle del manuale SINMAP, Pack et al.), da calibrare in M8.8. Per la Calabria non esistono dati geotecnici locali (coesione, attrito, spessore): nessuna fonte di dati del suolo entra in M8
+- Fonti per i parametri per classe (fuori da M8, vedi sotto): **SoilGrids** (ISRIC, 250 m, CC BY 4.0, `soilgrids.org`: tessitura, densità, profondità della roccia, senza account); **ESDAC** (JRC, proprietà idrauliche a 250 m, modulo di richiesta); **Carta Geologica d'Italia** (ISPRA: 1:100.000 su tutta la regione, CARG 1:50.000 solo in parte); carta dei suoli regionale ARSSA/ARSAC 1:250.000 (disponibilità da verificare); **Corine Land Cover 2018** (bosco → coesione delle radici). Nessuna dà direttamente C e φ: si incrocia la classe con le tabelle della letteratura
 - **Vincolo:** il calcolo lavora in metri (32633); il passaggio a EPSG:4326 lo fa **PostGIS** (`ST_Transform`) all'inserimento, mai il C++. Così l'ordine lon/lat (D10) resta in un solo punto e si evita la trappola dell'ordine degli assi di GDAL 3 per EPSG:4326.
 
 **Checkpoint:**
@@ -1319,7 +1329,7 @@ landslide/
 - [ ] `ctest` e `./mvnw verify` verdi, job `simulation` verde in CI
 - [ ] nessun file di dati (DEM, GeoTIFF) tracciato da git
 
-**Fuori da M8:** pioggia prevista da un servizio meteo (lo scenario resta un parametro); mappa geologica e parametri del suolo per classe; lo strato di rischio nell'app (milestone da aggiungere al piano mobile quando le rotte sono stabili).
+**Fuori da M8:** pioggia prevista da un servizio meteo (lo scenario resta un parametro); mappa geologica e parametri del suolo per classe (fonti in M8.1, il primo passo è SoilGrids); lo strato di rischio nell'app (milestone da aggiungere al piano mobile quando le rotte sono stabili).
 
 ---
 
