@@ -2747,7 +2747,7 @@
           "required" : true,
           "schema" : {
             "type" : "string",
-            "enum" : [ "TRAIL", "HAZARD_REPORT", "REFUGE" ]
+            "enum" : [ "TRAIL", "HAZARD_REPORT", "REFUGE", "USER" ]
           }
         }, {
           "in" : "query",
@@ -7108,7 +7108,7 @@
           },
           "entityType" : {
             "type" : "string",
-            "enum" : [ "TRAIL", "HAZARD_REPORT", "REFUGE" ]
+            "enum" : [ "TRAIL", "HAZARD_REPORT", "REFUGE", "USER" ]
           },
           "originalFilename" : {
             "type" : "string",
@@ -7165,7 +7165,7 @@
           },
           "entityType" : {
             "type" : "string",
-            "enum" : [ "TRAIL", "HAZARD_REPORT", "REFUGE" ]
+            "enum" : [ "TRAIL", "HAZARD_REPORT", "REFUGE", "USER" ]
           },
           "id" : {
             "type" : "string",
@@ -7866,6 +7866,10 @@
       "UserProfileResponse" : {
         "type" : "object",
         "properties" : {
+          "avatarMediaId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
           "createdAt" : {
             "type" : "string",
             "format" : "date-time"

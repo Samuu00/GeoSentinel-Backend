@@ -20,10 +20,13 @@ public class UserDtos {
             @Schema(requiredMode = REQUIRED) Role role,
             @Schema(requiredMode = REQUIRED) Instant createdAt,
             @Schema(requiredMode = REQUIRED) boolean hasPassword,
-            @Schema(requiredMode = REQUIRED) boolean mfaEnabled
+            @Schema(requiredMode = REQUIRED) boolean mfaEnabled,
+            // null se l'utente non ha una foto: campo nullable, quindi senza REQUIRED (regola M7.1)
+            UUID avatarMediaId
     ) {
         public static UserProfileResponse from(UserProfile profile) {
-            return new UserProfileResponse(profile.id(), profile.email(), profile.displayName(), profile.role(), profile.createdAt(), profile.hasPassword(), profile.mfaEnabled());
+            return new UserProfileResponse(profile.id(), profile.email(), profile.displayName(), profile.role(),
+                    profile.createdAt(), profile.hasPassword(), profile.mfaEnabled(), profile.avatarMediaId());
         }
     }
 

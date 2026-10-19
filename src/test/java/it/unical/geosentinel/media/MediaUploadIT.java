@@ -9,6 +9,7 @@ import io.minio.errors.ErrorResponseException;
 import it.unical.geosentinel.identity.domain.Role;
 import it.unical.geosentinel.support.AbstractIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -217,6 +218,99 @@ class MediaUploadIT extends AbstractIntegrationTest {
         JsonNode media = json(confirm(hiker, session).body());
         assertThat(media.get("status").asString()).isEqualTo("READY");
         assertThat(media.get("sizeBytes").asLong()).isEqualTo(JPEG.length);
+    }
+
+    // --- M9, foto profilo: media con target USER ---------------------------------------------------------------
+
+    @Test
+    void newAvatarReplacesThePreviousOneAndOnlyTheOwnerSeesIt() {
+        var hiker = createUser(Role.HIKER);
+        String token = tokenFor(hiker);
+
+        JsonNode first = uploadAvatar(token, hiker.getId());
+        assertThat(avatarOf(token)).isEqualTo(mediaId(first));
+
+        JsonNode second = uploadAvatar(token, hiker.getId());
+        assertThat(avatarOf(token)).isEqualTo(mediaId(second));
+        // la prima non esiste più: né la riga né l'oggetto
+        assertThat(call(HttpMethod.GET, "/api/v1/media/" + mediaId(first), token, null).status()).isEqualTo(404);
+        assertObjectGone(finalKey(first));
+
+        // un altro utente non la legge, non la scarica e non la trova tra gli allegati
+        String other = obtainToken(Role.HIKER);
+        assertThat(call(HttpMethod.GET, "/api/v1/media/" + mediaId(second), other, null).status()).isEqualTo(404);
+        assertThat(call(HttpMethod.GET, "/api/v1/media/" + mediaId(second) + "/download-url", other, null).status()).isEqualTo(404);
+        assertThat(call(HttpMethod.GET, "/api/v1/media/attached?entityType=USER&entityId=" + hiker.getId(), other, null).status())
+                .isEqualTo(404);
+        // il proprietario sì
+        assertThat(call(HttpMethod.GET, "/api/v1/media/" + mediaId(second) + "/download-url", token, null).status()).isEqualTo(200);
+    }
+
+    @Test
+    void avatarOfAnotherUserIsNotFound() {
+        UUID someoneElse = createUser(Role.HIKER).getId();
+        HttpResult result = call(HttpMethod.POST, "/api/v1/media/upload-requests", obtainToken(Role.HIKER), """
+                {"originalFilename":"me.jpg","contentType":"image/jpeg","sizeBytes":%d,"entityType":"USER","entityId":"%s"}
+                """.formatted(JPEG.length, someoneElse));
+        assertThat(result.status()).isEqualTo(404);
+    }
+
+    @Test
+    void deletedAvatarAndDeletedAccountLeaveNothingBehind() {
+        var hiker = createUser(Role.HIKER);
+        String token = tokenFor(hiker);
+
+        JsonNode removed = uploadAvatar(token, hiker.getId());
+        assertThat(call(HttpMethod.DELETE, "/api/v1/media/" + mediaId(removed), token, null).status()).isEqualTo(204);
+        assertThat(avatarOf(token)).isNull();
+        assertObjectGone(finalKey(removed));
+
+        JsonNode kept = uploadAvatar(token, hiker.getId());
+        assertThat(call(HttpMethod.DELETE, "/api/v1/users/me", token, null).status()).isEqualTo(204);
+        assertObjectGone(finalKey(kept));
+    }
+
+    // Due confirm in parallelo: il lock per utente li mette in fila, alla fine resta una sola foto
+    @RepeatedTest(3)
+    void concurrentConfirmsLeaveASingleAvatar() throws Exception {
+        var hiker = createUser(Role.HIKER);
+        String token = tokenFor(hiker);
+        JsonNode[] sessions = {
+                requestUpload(token, JPEG.length, "USER", hiker.getId()),
+                requestUpload(token, JPEG.length, "USER", hiker.getId())
+        };
+        for (JsonNode session : sessions) {
+            assertThat(postToStorage(session, Map.of(), JPEG).status()).isEqualTo(204);
+        }
+
+        assertThat(runConcurrently(2, i -> confirm(token, sessions[i]).status())).containsOnly(200);
+        Integer ready = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM media_files WHERE entity_type = 'USER' AND entity_id = ? AND status = 'READY'",
+                Integer.class, hiker.getId());
+        assertThat(ready).isEqualTo(1);
+        assertThat(avatarOf(token)).isIn(mediaId(sessions[0]), mediaId(sessions[1]));
+    }
+
+    private JsonNode uploadAvatar(String token, UUID userId) {
+        JsonNode session = requestUpload(token, JPEG.length, "USER", userId);
+        assertThat(postToStorage(session, Map.of(), JPEG).status()).isEqualTo(204);
+        assertThat(json(confirm(token, session).body()).get("status").asString()).isEqualTo("READY");
+        return session;
+    }
+
+    // null se l'utente non ha una foto
+    private String avatarOf(String token) {
+        JsonNode avatar = json(call(HttpMethod.GET, "/api/v1/users/me", token, null).body()).get("avatarMediaId");
+        return avatar == null || avatar.isNull() ? null : avatar.asString();
+    }
+
+    private static String finalKey(JsonNode session) {
+        return session.get("formFields").get("key").asString().substring(STAGING.length());
+    }
+
+    private void assertObjectGone(String key) {
+        assertThatThrownBy(() -> admin.statObject(StatObjectArgs.builder().bucket(BUCKET).object(key).build()))
+                .isInstanceOf(ErrorResponseException.class);
     }
 
     // ------------------------------------------------------------------------------------------------------------

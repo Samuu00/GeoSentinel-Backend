@@ -205,7 +205,8 @@ Le foto non passano dall'API: vanno direttamente allo storage. Tipi ammessi `ima
 `image/webp` (l'app converte HEIC in JPEG), al massimo 10 MB, quota di 1 GB per utente.
 
 1. `POST /media/upload-requests` con `originalFilename`, `contentType` e `sizeBytes` esatti e, facoltativi
-   ma insieme, `entityType` (`TRAIL` solo `PARK_MANAGER`, `HAZARD_REPORT` solo chi ha fatto la segnalazione)
+   ma insieme, `entityType` (`TRAIL` solo `PARK_MANAGER`, `REFUGE` solo il suo gestore, `HAZARD_REPORT` solo chi
+   ha fatto la segnalazione, `USER` solo per sé)
    ed `entityId`. Risposta 201: `mediaId`, `uploadUrl`, `formFields`, `expiresAt`.
 2. `POST` `multipart/form-data` verso `uploadUrl`, senza bearer token. Prima tutti i `formFields` così come
    sono (l'ordine non conta), poi la parte `file`, che deve essere l'ultima e avere lo stesso `Content-Type`. La richiesta deve
@@ -217,6 +218,12 @@ Le foto non passano dall'API: vanno direttamente allo storage. Tipi ammessi `ima
 
 Per scaricare: `GET /media/{id}/download-url` restituisce un URL firmato valido 5 minuti, con
 `Content-Disposition: attachment`.
+
+**Foto profilo:** stesso flusso con `entityType = USER` ed `entityId` = il proprio id (un altro id → 404).
+L'app ritaglia (quadrato, lato ≤ 512 px, JPEG senza EXIF). Dopo il confirm la foto precedente non esiste più;
+`GET /users/me` restituisce `avatarMediaId` (assente o null senza foto). L'app mette in cache l'immagine per
+`avatarMediaId`, non per URL (l'URL scade). Per toglierla: `DELETE /media/{avatarMediaId}`. La vede solo il
+proprietario.
 
 ## Notifiche push
 

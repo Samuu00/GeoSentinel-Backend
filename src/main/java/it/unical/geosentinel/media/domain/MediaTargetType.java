@@ -5,5 +5,7 @@ public enum MediaTargetType {
     TRAIL,
     HAZARD_REPORT,
     // foto di un rifugio (V11): le carica il suo gestore
-    REFUGE
+    REFUGE,
+    // foto profilo utente
+    USER
 }

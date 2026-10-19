@@ -69,14 +69,20 @@ public class UserAccountService {
 
     @Transactional(readOnly = true)
     public UserProfile getProfile(UUID userId) {
-        return UserProfile.from(activeUser(userId), mfaService.isEnabled(userId));
+        return profileOf(activeUser(userId));
     }
 
     @Transactional
     public UserProfile updateDisplayName(UUID userId, String displayName) {
         User user = activeUser(userId);
         user.updateProfile(displayName);
-        return UserProfile.from(user, mfaService.isEnabled(userId));
+        return profileOf(user);
+    }
+
+    // La foto profilo è un media di tipo USER: qui solo l'id, l'immagine si scarica con /media/{id}/download-url
+    private UserProfile profileOf(User user) {
+        UUID avatarId = mediaService.currentAvatarOf(user.getId()).orElse(null);
+        return UserProfile.from(user, mfaService.isEnabled(user.getId()), avatarId);
     }
 
     // Solo HIKER: gli account del personale li chiude l'organizzazione (rifugi, ticket e missioni in carico) -> 409.

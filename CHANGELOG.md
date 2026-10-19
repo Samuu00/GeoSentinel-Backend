@@ -6,6 +6,11 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 ## [Non rilasciato]
 
 ### Aggiunto
+- Foto profilo (M9, V16): un media con `entityType = USER` ed `entityId` = id dell'utente, caricato con il flusso
+  di upload esistente (ogni ruolo, solo per sé stessi: l'id di un altro → 404). Al confirm la nuova sostituisce la
+  precedente (riga e oggetto); `UserProfileResponse.avatarMediaId` (nullable) ne dà l'id. La vede solo il
+  proprietario; si toglie con `DELETE /media/{id}` e sparisce con la cancellazione dell'account. Valore nuovo `USER`
+  negli enum `entityType`: il client va rigenerato. Test in `MediaUploadIT`.
 - Verifica in due passaggi con TOTP (M8, ADR-0025, V15), facoltativa per ogni ruolo:
   - rotte `POST /users/me/mfa/setup` (`startMfaSetup`), `/enable` (`enableMfa`, restituisce 10 codici di recupero una
     volta sola), `/disable` (`disableMfa`) e `/recovery-codes` (`regenerateRecoveryCodes`);

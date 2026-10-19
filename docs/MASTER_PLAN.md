@@ -1177,7 +1177,7 @@ final class MfaSecretCipher { byte[] encrypt(byte[] plain); byte[] decrypt(byte[
 
 ---
 
-### Milestone 9 — Foto profilo
+### Milestone 9 — Foto profilo ✅ (19/10)
 
 > Pianificata il 18/10. Riusa la feature `media` (M3): nessuna tabella nuova, nessun nuovo percorso di upload. Il codice lo scrivi tu.
 
@@ -1190,20 +1190,20 @@ final class MfaSecretCipher { byte[] encrypt(byte[] plain); byte[] decrypt(byte[
 
 **Dati — `V16__media_user_target.sql`:** solo il vincolo, come in V11: `DROP CONSTRAINT chk_media_files_entity_type` e di nuovo con `('TRAIL', 'HAZARD_REPORT', 'REFUGE', 'USER')`.
 
-- [ ] `MediaTargetType.USER`
-- [ ] `MediaService.initiateUpload`: la `@PreAuthorize` oggi ammette senza `PARK_MANAGER` solo `null` e `HAZARD_REPORT`: aggiungere `USER`, altrimenti un HIKER riceve 403
-- [ ] `checkTarget`: `case USER` → `entityId` deve essere `ownerId`, altrimenti 404 (non si carica la foto di un altro)
-- [ ] `isTargetVisible`: `USER` → `false` esplicito (il proprietario passa già da `isOwnedBy`). **Trappola:** oggi un tipo non gestito cade nel ramo delle segnalazioni (`hazardReportService.getHazard`); meglio uno `switch` completo, così il compilatore segnala il prossimo tipo dimenticato
-- [ ] **Sostituzione:** in `confirmUpload`, se il file diventa `READY` ed è di tipo `USER`, cancella gli altri media `USER` dello stesso utente: prima le righe (flush), poi gli oggetti, come `deleteAllOf`. Due confirm paralleli: il lock per utente della quota (`lockOwner`) li mette in fila, l'ultimo vince
-- [ ] `MediaService.currentAvatarOf(UUID userId)` → `Optional<UUID>`; `UserAccountService` lo usa per `UserProfileResponse.avatarMediaId` (nullable: senza `REQUIRED`). La dipendenza `identity → media` esiste già (`deleteAllOf`)
-- [ ] **Rimozione:** `DELETE /api/v1/media/{id}` esistente (il proprietario può già cancellare). Nessuna rotta nuova
-- [ ] Download: `GET /api/v1/media/{id}/download` esistente (URL firmato, 5 min). L'app mette in cache l'immagine per `mediaId` (cambia a ogni nuova foto), non per URL
-- [ ] Cancellazione dell'account: già coperta da `MediaService.deleteAllOf`
-- [ ] `docs/openapi.json` rigenerato (enum `USER` nelle risposte: **l'app va aggiornata insieme**, regola di M7.1), `api-guide.md` (foto profilo = upload con target `USER`), `CHANGELOG.md`
+- [x] `MediaTargetType.USER`
+- [x] `MediaService.initiateUpload`: la `@PreAuthorize` oggi ammette senza `PARK_MANAGER` solo `null` e `HAZARD_REPORT`: aggiungere `USER`, altrimenti un HIKER riceve 403
+- [x] `checkTarget`: `case USER` → `entityId` deve essere `ownerId`, altrimenti 404 (non si carica la foto di un altro)
+- [x] `isTargetVisible`: `USER` → `false` esplicito (il proprietario passa già da `isOwnedBy`). **Trappola:** oggi un tipo non gestito cade nel ramo delle segnalazioni (`hazardReportService.getHazard`); meglio uno `switch` completo, così il compilatore segnala il prossimo tipo dimenticato
+- [x] **Sostituzione:** in `confirmUpload`, se il file diventa `READY` ed è di tipo `USER`, cancella gli altri media `USER` dello stesso utente: prima le righe (flush), poi gli oggetti, come `deleteAllOf`. Due confirm paralleli: il lock per utente della quota (`lockOwner`) li mette in fila, l'ultimo vince
+- [x] `MediaService.currentAvatarOf(UUID userId)` → `Optional<UUID>`; `UserAccountService` lo usa per `UserProfileResponse.avatarMediaId` (nullable: senza `REQUIRED`). La dipendenza `identity → media` esiste già (`deleteAllOf`)
+- [x] **Rimozione:** `DELETE /api/v1/media/{id}` esistente (il proprietario può già cancellare). Nessuna rotta nuova
+- [x] Download: `GET /api/v1/media/{id}/download-url` esistente (URL firmato, 5 min). L'app mette in cache l'immagine per `mediaId` (cambia a ogni nuova foto), non per URL
+- [x] Cancellazione dell'account: già coperta da `MediaService.deleteAllOf`
+- [x] `docs/openapi.json` rigenerato (enum `USER` nelle risposte: **l'app va aggiornata insieme**, regola di M7.1), `api-guide.md` (foto profilo = upload con target `USER`), `CHANGELOG.md`
 
 **Checkpoint:**
-- [ ] `AvatarIT` (MinIO vero, come `MediaUploadIT`): HIKER carica la sua foto → `READY`, `/users/me` ha `avatarMediaId`; seconda foto → la prima non esiste più (riga e oggetto); target `USER` con l'id di un altro → 404; un altro utente non la legge né la scarica (404); `DELETE` → `avatarMediaId` null; account cancellato → nessun oggetto rimasto
-- [ ] `MigrationIT` con V16; `./mvnw clean verify` verde
+- [x] in `MediaUploadIT` (MinIO vero, stesso contesto; più due confirm paralleli → una sola foto): HIKER carica la sua foto → `READY`, `/users/me` ha `avatarMediaId`; seconda foto → la prima non esiste più (riga e oggetto); target `USER` con l'id di un altro → 404; un altro utente non la legge né la scarica (404); `DELETE` → `avatarMediaId` null; account cancellato → nessun oggetto rimasto
+- [x] `MigrationIT` con V16; `./mvnw clean verify` verde (19/10: 76 unit + 185 IT)
 
 ---
 
@@ -1515,7 +1515,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M8 sono completate (M8, la 2FA, il 19/10); l'app KMP è a M9 in `../GeoSentinel-Mobile` e deve ancora integrare la 2FA (client da rigenerare). Prossimo lavoro del backend: M9 (foto profilo), poi M10 (frane). Ognuna ha la sua parte nell'app (M10 e M11 del piano mobile). Per altre funzionalità:
+M0–M9 sono completate (M8, la 2FA, e M9, la foto profilo, il 19/10); l'app KMP è a M9 in `../GeoSentinel-Mobile` e deve ancora integrare 2FA e foto profilo (client da rigenerare). Prossimo lavoro del backend: M10 (frane). Ognuna ha la sua parte nell'app (M10 e M11 del piano mobile). Per altre funzionalità:
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.

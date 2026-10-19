@@ -29,6 +29,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -36,7 +37,7 @@ public class MediaService {
     static final Duration UPLOAD_EXPIRATION = Duration.ofMinutes(10);
     private static final Duration DOWNLOAD_EXPIRATION = Duration.ofMinutes(5);
     private static final DateTimeFormatter KEY_PREFIX = DateTimeFormatter.ofPattern("yyyy/MM").withZone(ZoneOffset.UTC);
-    // Namespace dell'advisory lock a due chiavi usato per la quota (vedi MediaFileRepository.lockOwner)
+    // Namespace dell'advisory lock a due chiavi usato per la quota e per la foto profilo (vedi MediaFileRepository.lockOwner)
     private static final int QUOTA_LOCK_NAMESPACE = 7001;
 
     private final MediaFileRepository mediaRepository;
@@ -75,10 +76,15 @@ public class MediaService {
         return filename.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 
+    // Chiave del lock per utente: la stessa in upload e in confirm, così le richieste dello stesso utente si mettono in fila
+    private static int quotaLockKey(UUID ownerId) {
+        return Long.hashCode(ownerId.getMostSignificantBits() ^ ownerId.getLeastSignificantBits());
+    }
+
     // Le foto di un sentiero o di un rifugio sono contenuto ufficiale (visibile a tutti): solo PARK_MANAGER, e per un rifugio
-    // solo il suo gestore (checkTarget). Un escursionista allega foto alle proprie segnalazioni di pericolo
+    // solo il suo gestore (checkTarget). Un escursionista allega foto alle proprie segnalazioni e alla propria foto profilo
     @Transactional
-    @PreAuthorize("#cmd.entityType() == null or #cmd.entityType() == T(it.unical.geosentinel.media.domain.MediaTargetType).HAZARD_REPORT or hasRole('PARK_MANAGER')")
+    @PreAuthorize("#cmd.entityType() == null or #cmd.entityType() == T(it.unical.geosentinel.media.domain.MediaTargetType).HAZARD_REPORT or #cmd.entityType() == T(it.unical.geosentinel.media.domain.MediaTargetType).USER or hasRole('PARK_MANAGER')")
     public UploadSessionView initiateUpload(UUID ownerId, InitUploadCommand cmd) {
         Instant now = clock.instant();
         MediaFile mediaFile = MediaFile.initUpload(
@@ -93,7 +99,7 @@ public class MediaService {
         checkTarget(ownerId, cmd.entityType(), cmd.entityId());
 
         // Lock per utente prima di leggere la quota: due richieste simultanee si mettono in fila e la seconda vede la riga della prima
-        mediaRepository.lockOwner(QUOTA_LOCK_NAMESPACE, Long.hashCode(ownerId.getMostSignificantBits() ^ ownerId.getLeastSignificantBits()));
+        mediaRepository.lockOwner(QUOTA_LOCK_NAMESPACE, quotaLockKey(ownerId));
         long used = mediaRepository.sumQuotaBytes(ownerId, now.minus(UPLOAD_EXPIRATION), MediaStatus.READY, MediaStatus.PENDING_UPLOAD);
         MediaPolicy.checkQuota(used, cmd.sizeBytes());
 
@@ -103,7 +109,8 @@ public class MediaService {
         return new UploadSessionView(saved.getId(), upload.url(), upload.formFields(), now.plus(UPLOAD_EXPIRATION));
     }
 
-    // Un sentiero deve esistere; una segnalazione deve esistere ed essere di chi carica (404 altrimenti: non se ne rivela l'esistenza)
+    // Un sentiero deve esistere; una segnalazione deve esistere ed essere di chi carica; la foto profilo è solo di chi carica.
+    // 404 altrimenti: non se ne rivela l'esistenza
     private void checkTarget(UUID ownerId, MediaTargetType entityType, UUID entityId) {
         if (entityType == null) {
             return;
@@ -119,6 +126,11 @@ public class MediaService {
             case REFUGE -> {
                 if (!refugeService.getRefugeOrThrow(entityId).isManagedBy(ownerId)) {
                     throw new AccessDeniedException("Only the refuge manager can add photos to this refuge");
+                }
+            }
+            case USER -> {
+                if (!entityId.equals(ownerId)) {
+                    throw new ResourceNotFoundException("User", entityId);
                 }
             }
         }
@@ -151,7 +163,27 @@ public class MediaService {
         }
 
         mediaFile.markReady(stored.sizeBytes(), stored.etag());
+        // Una foto profilo appena verificata sostituisce la precedente
+        if (mediaFile.getEntityType() == MediaTargetType.USER) {
+            replaceAvatar(mediaFile);
+        }
         return MediaFileView.from(mediaFile);
+    }
+
+    // Una sola foto profilo per utente. Il lock per utente (stesso di initiateUpload) fa mettere in fila due confirm: il secondo
+    // vede la foto del primo e la sostituisce, quindi vince l'ultimo. Il lock si rilascia al commit.
+    // Come deleteAllOf: prima le righe (flush), poi gli oggetti. Limite noto: se il commit fallisce dopo la cancellazione
+    // degli oggetti, la riga della nuova foto resta senza oggetto precedente; si accetta come in deleteAllOf
+    private void replaceAvatar(MediaFile avatar) {
+        mediaRepository.lockOwner(QUOTA_LOCK_NAMESPACE, quotaLockKey(avatar.getOwnerId()));
+        List<MediaFile> previous = mediaRepository
+                .findByEntityTypeAndEntityIdAndStatus(MediaTargetType.USER, avatar.getEntityId(), MediaStatus.READY)
+                .stream()
+                .filter(m -> !m.getId().equals(avatar.getId()))
+                .toList();
+        mediaRepository.deleteAll(previous);
+        mediaRepository.flush();
+        previous.forEach(m -> objectStorage.deleteObject(m.getObjectKey()));
     }
 
     // Cancellazione dell'account: tutti i media, anche PENDING (la delete di un oggetto mai caricato non fallisce).
@@ -182,7 +214,7 @@ public class MediaService {
         return MediaFileView.from(findVisible(requesterId, mediaId));
     }
 
-    // Il proprietario vede tutti i suoi file; gli altri solo quelli pronti, allegati a un'entità che possono vedere.
+    // Il proprietario vede tutti i suoi file (anche la foto profilo); gli altri solo quelli pronti, allegati a un'entità che possono vedere.
     // 404, non 403: non se ne rivela l'esistenza
     private MediaFile findVisible(UUID requesterId, UUID mediaId) {
         return mediaRepository.findById(mediaId)
@@ -190,26 +222,35 @@ public class MediaService {
                 .orElseThrow(() -> new ResourceNotFoundException("MediaFile", mediaId));
     }
 
-    // I sentieri sono pubblici, i rifugi visibili a ogni utente loggato; una segnalazione segue la regola di HazardReportService.getHazard
-    // (una REJECTED la vedono solo PARK_MANAGER e chi l'ha fatta): unica fonte della regola, riusata tramite il proxy
+    // Switch come espressione: un tipo nuovo senza ramo non compila. I sentieri sono pubblici; i rifugi li vede ogni utente loggato
     private boolean isTargetVisible(MediaTargetType entityType, UUID entityId) {
         if (entityType == null) {
             return false;
         }
-        if (entityType == MediaTargetType.TRAIL) {
-            return true;
-        }
-        // i rifugi li vede ogni utente loggato (come GET /refuges/{id}): basta che esista
-        if (entityType == MediaTargetType.REFUGE) {
-            try {
-                refugeService.getRefugeOrThrow(entityId);
-                return true;
-            } catch (ResourceNotFoundException e) {
-                return false;
-            }
-        }
+        return switch (entityType) {
+            case TRAIL -> true;
+            case REFUGE -> refugeExists(entityId);
+            case HAZARD_REPORT -> hazardVisible(entityId);
+            // la foto profilo la vede solo il proprietario: lo decide findVisible
+            case USER -> false;
+        };
+    }
+
+    // i rifugi li vede ogni utente loggato (come GET /refuges/{id}): basta che esista
+    private boolean refugeExists(UUID refugeId) {
         try {
-            hazardReportService.getHazard(entityId);
+            refugeService.getRefugeOrThrow(refugeId);
+            return true;
+        } catch (ResourceNotFoundException e) {
+            return false;
+        }
+    }
+
+    // una segnalazione segue la regola di HazardReportService.getHazard (una REJECTED la vedono solo PARK_MANAGER e chi l'ha fatta):
+    // unica fonte della regola, riusata tramite il proxy
+    private boolean hazardVisible(UUID hazardId) {
+        try {
+            hazardReportService.getHazard(hazardId);
             return true;
         } catch (AccessDeniedException | ResourceNotFoundException e) {
             return false;
@@ -231,6 +272,15 @@ public class MediaService {
     public Page<MediaFileView> getUserMedia(UUID ownerId, Pageable pageable) {
         return mediaRepository.findByOwnerId(ownerId, pageable)
                 .map(MediaFileView::from);
+    }
+
+    // Id della foto profilo corrente (la READY: di norma è l'unica, vedi replaceAvatar). Per GET /users/me
+    @Transactional(readOnly = true)
+    public Optional<UUID> currentAvatarOf(UUID userId) {
+        return mediaRepository.findByEntityTypeAndEntityIdAndStatus(MediaTargetType.USER, userId, MediaStatus.READY)
+                .stream()
+                .map(MediaFile::getId)
+                .findFirst();
     }
 
     // Il proprietario o un ADMIN (moderazione); un altro utente riceve 404 se il file non gli è visibile, 403 altrimenti
