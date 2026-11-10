@@ -5,6 +5,16 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 
 ## [Non rilasciato]
 
+### Sicurezza
+- Audit della 2FA del 10/11 (ADR-0026, V17). Tre piste confermate e corrette, due respinte (motivi nell'ADR):
+  - `POST /users/me/mfa/setup` manda un codice all'email dell'account; `POST /users/me/mfa/enable` richiede
+    `emailCode` oltre al TOTP (**cambio incompatibile**: l'app deve chiederlo). Chi ha registrato l'email di un
+    altro non può più attivare la 2FA e chiuderlo fuori;
+  - `POST /users/me/password` accetta `mfaCode`, obbligatorio con la 2FA attiva (422 `invalid-mfa-code`);
+  - il limite dei codici 2FA ha due bucket (login e operazioni in sessione), azzerati anche dal reset della password
+    e da quello da ADMIN: chi conosce la password non blocca più il titolare;
+  - il collegamento a Google cancella anche i token push dell'account.
+
 ### Aggiunto
 - Foto profilo (M9, V16): un media con `entityType = USER` ed `entityId` = id dell'utente, caricato con il flusso
   di upload esistente (ogni ruolo, solo per sé stessi: l'id di un altro → 404). Al confirm la nuova sostituisce la

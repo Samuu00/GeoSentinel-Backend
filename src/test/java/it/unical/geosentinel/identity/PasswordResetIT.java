@@ -6,6 +6,7 @@ import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.support.AbstractIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import tools.jackson.databind.JsonNode;
@@ -27,6 +28,9 @@ class PasswordResetIT extends AbstractIntegrationTest {
     @Autowired
     private PasswordResetCleanupJob cleanupJob;
 
+    @Autowired
+    private StringRedisTemplate redis;
+
     @Test
     void fullFlowChangesPasswordAndClosesEverySession() {
         User hiker = createUser(Role.HIKER);
@@ -35,9 +39,12 @@ class PasswordResetIT extends AbstractIntegrationTest {
 
         requestAndAwait(hiker);
         useKnownCode(hiker.getId());
+        // ADR-0026: bucket della 2FA svuotato da chi conosceva la vecchia password
+        redis.opsForValue().set("rl:mfa:" + hiker.getId(), "0");
 
         // come lo scriverebbe l'utente: minuscole e trattino
         assertThat(confirm(hiker.getEmail(), "abcdefgh-23456789", NEW_PASSWORD).status()).isEqualTo(204);
+        assertThat(redis.hasKey("rl:mfa:" + hiker.getId())).isFalse();
 
         assertThat(loginStatus(hiker.getEmail(), TEST_PASSWORD)).isEqualTo(401);
         assertThat(loginStatus(hiker.getEmail(), NEW_PASSWORD)).isEqualTo(200);

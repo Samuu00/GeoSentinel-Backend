@@ -3,7 +3,7 @@
 > Ruolo di Claude: mentore/architetto/reviewer. **Il codice lo scrivi tu.** Qui trovi solo struttura, contratti (firme), vincoli e checkpoint.
 > Regola di avanzamento: un task si chiude solo quando **tutti** i suoi checkpoint passano. Poi chiedi la review (vedi §5).
 >
-> **Stato (17/10): M0–M7 completate.** M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web), che dal 12/10 è a M9 (`../GeoSentinel-Mobile`): i checkpoint di M7 che richiedevano l'app (push FCM, foto dall'emulatore → `READY`, flusso completo) sono stati provati da lì; restano le push su iOS (APNs, serve un account Apple).
+> **Stato (19/10): M0–M9 completate.** M8 (verifica in due passaggi) e M9 (foto profilo) sono integrate e provate anche nell'app (sue M10 e M11, emulatore e iPhone). Prossima: M10, rischio frane. M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web), che dal 12/10 è a M9 (`../GeoSentinel-Mobile`): i checkpoint di M7 che richiedevano l'app (push FCM, foto dall'emulatore → `READY`, flusso completo) sono stati provati da lì; restano le push su iOS (APNs, serve un account Apple).
 > Dopo M7, su richiesta dell'app (dettagli in `CHANGELOG.md` e negli ADR):
 > - ADR-0019: periodo di grazia di 60 s sul refresh token appena ruotato (`V10__refresh_token_successor`);
 > - ADR-0020: percorso semplificato nei sentieri della bbox, bbox per `ST_Intersects`;
@@ -14,7 +14,7 @@
 > - reset della password con codice via email (M7.2.2, `V13__password_reset_tokens`), verificato il 17/10; dal 18/10 anche con email vere da Gmail;
 > - login con Google tramite ID token nativo (M7.2.3, ADR-0024, `V14__google_identity`), revisionato e corretto il 18/10; slug `birth-date-required` per l'app; client OAuth Web, Android e iOS creati, integrato nell'app (Android e iOS).
 > - **M8, verifica in due passaggi** (TOTP, ADR-0025, `V15__mfa`): scritta dall'utente, revisionata e corretta il 19/10; `./mvnw verify` verde (76 unit + 179 IT).
-> **Pianificate (18/10), nell'ordine:** M9, foto profilo (media con target `USER`, V16); M10, rischio frane con un calcolo parallelo in C++ (MPI + pthread) e la feature `landslide` (V17, ADR-0022, ADR-0023), pianificata il 17/10 come M8 e spostata dopo le prime due.
+> **Pianificate (18/10), nell'ordine:** M9, foto profilo (media con target `USER`, V16); M10, rischio frane con un calcolo parallelo in C++ (MPI + pthread) e la feature `landslide` (V18, ADR-0022, ADR-0023), pianificata il 17/10 come M8 e spostata dopo le prime due.
 > M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
 ---
@@ -1095,6 +1095,7 @@ apposta con un dominio proprio.
 
 > Pianificata il 18/10, prima del calcolo delle frane (spostato a M10). Decisioni in **ADR-0025**. Il codice lo scrivi tu.
 > **Completata il 19/10:** scritta dall'utente, poi revisionata e corretta da Claude su richiesta (vedi "Review del 19/10" in fondo alla milestone).
+> **Nell'app il 19/10** (M10 del piano mobile): login con il codice dopo 401 `mfa-required`, anche con Google; attivazione, codici di recupero, disattivazione e azzeramento da `ADMIN`. Provata dal vivo su questo backend, sull'emulatore e sull'iPhone (l'`otpauthUri` apre l'app Password di iOS). Unica differenza dal piano mobile, corretta lì: l'azzeramento della propria verifica è 422 `business-rule`, non 409.
 
 **Obiettivo:** chi vuole protegge l'account con un secondo fattore: un codice a 6 cifre da un'app di autenticazione (Google Authenticator, Aegis, Password di iOS…), più 10 codici di recupero per il telefono perso.
 
@@ -1180,6 +1181,7 @@ final class MfaSecretCipher { byte[] encrypt(byte[] plain); byte[] decrypt(byte[
 ### Milestone 9 — Foto profilo ✅ (19/10)
 
 > Pianificata il 18/10. Riusa la feature `media` (M3): nessuna tabella nuova, nessun nuovo percorso di upload. Il codice lo scrivi tu.
+> **Nell'app il 19/10** (M11 del piano mobile): JPEG quadrato da 512 px senza EXIF, anche da HEIC sull'iPhone; seconda foto → la prima risponde 404; rimozione → `avatarMediaId` null.
 
 **Obiettivo:** l'utente mette, cambia o toglie una foto profilo dall'app.
 
@@ -1197,7 +1199,7 @@ final class MfaSecretCipher { byte[] encrypt(byte[] plain); byte[] decrypt(byte[
 - [x] **Sostituzione:** in `confirmUpload`, se il file diventa `READY` ed è di tipo `USER`, cancella gli altri media `USER` dello stesso utente: prima le righe (flush), poi gli oggetti, come `deleteAllOf`. Due confirm paralleli: il lock per utente della quota (`lockOwner`) li mette in fila, l'ultimo vince
 - [x] `MediaService.currentAvatarOf(UUID userId)` → `Optional<UUID>`; `UserAccountService` lo usa per `UserProfileResponse.avatarMediaId` (nullable: senza `REQUIRED`). La dipendenza `identity → media` esiste già (`deleteAllOf`)
 - [x] **Rimozione:** `DELETE /api/v1/media/{id}` esistente (il proprietario può già cancellare). Nessuna rotta nuova
-- [x] Download: `GET /api/v1/media/{id}/download-url` esistente (URL firmato, 5 min). L'app mette in cache l'immagine per `mediaId` (cambia a ogni nuova foto), non per URL
+- [x] Download: `GET /api/v1/media/{id}/download-url` esistente (URL firmato, 5 min). L'app mette in cache l'immagine per `mediaId` (cambia a ogni nuova foto), non per URL, e solo in memoria (niente disco: al logout non resta nulla)
 - [x] Cancellazione dell'account: già coperta da `MediaService.deleteAllOf`
 - [x] `docs/openapi.json` rigenerato (enum `USER` nelle risposte: **l'app va aggiornata insieme**, regola di M7.1), `api-guide.md` (foto profilo = upload con target `USER`), `CHANGELOG.md`
 
@@ -1237,7 +1239,7 @@ PARK_MANAGER verifica una segnalazione LANDSLIDE        ADMIN lancia una suscett
 - **Niente porta in `application`:** Java non chiama il worker, scrive una riga. Una porta qui sarebbe un'interfaccia senza un secondo sistema da sostituire (D2).
 - **Il worker non sa cosa sia un sentiero:** produce poligoni. L'intersezione con i sentieri la fa PostGIS, lato Java.
 
-**Ordine:** M10.1 → M10.2 → M10.3 → M10.4 → M10.5 → M10.6 → M10.8, con **M10.7 (lato Java) in parallelo** da subito dopo aver fissato le tabelle (V17): si prova con zone finte inserite in SQL, senza il C++.
+**Ordine:** M10.1 → M10.2 → M10.3 → M10.4 → M10.5 → M10.6 → M10.8, con **M10.7 (lato Java) in parallelo** da subito dopo aver fissato le tabelle (V18): si prova con zone finte inserite in SQL, senza il C++.
 
 #### M10.1 — Dati: DEM, inventario frane, parametri
 **Obiettivo:** dati di ingresso riproducibili da uno script, mai committati (pesano centinaia di MB).
@@ -1377,8 +1379,8 @@ Modello (semplificazione ispirata a SCIDDICA-T, ADR-0023): celle quadrate, vicin
 - [ ] **Lease:** un thread del worker (con la sua connessione) allunga `lease_until` ogni minuto finché il calcolo gira. Worker morto → il lease scade → un altro worker riprende il job
 - [ ] **Chiusura, in una transazione:** `DELETE` delle zone del job (un retry non duplica) → `INSERT` delle zone con `ST_Multi(ST_Transform(ST_GeomFromWKB($wkb, 32633), 4326))` → `UPDATE ... SET status = 'DONE', finished_at, runtime_ms, processes, threads WHERE id = $1 AND worker_id = $me`. Se l'`UPDATE` tocca 0 righe (lease perso) → rollback
 - [ ] **Errore:** `FAILED` se `attempts >= 3`, altrimenti di nuovo `PENDING`; in `error` un messaggio breve (mai stringhe di connessione o stack)
-- [ ] **Permessi minimi:** ruolo `geosentinel_sim` creato da V17 senza login né password; `GRANT SELECT` e `UPDATE` (solo sulle colonne di stato) su `simulation_jobs`, `INSERT`/`DELETE` su `landslide_zones`, nient'altro (non legge `users`, `sos_alerts`, …)
-- [ ] Password del ruolo dal `.env` (`SIM_DB_PASSWORD`, aggiunta a `.env.example`): servizio `landslide-db-init` nel compose (come `minio-init`) che aspetta che V17 esista e poi fa `ALTER ROLE geosentinel_sim LOGIN PASSWORD ...`. **Trappola:** `psql -c` non sostituisce le variabili `:'pw'`, servono `-v pw=...` con il comando da stdin (heredoc), altrimenti la password va in chiaro nella riga di comando o la query si rompe
+- [ ] **Permessi minimi:** ruolo `geosentinel_sim` creato da V18 senza login né password; `GRANT SELECT` e `UPDATE` (solo sulle colonne di stato) su `simulation_jobs`, `INSERT`/`DELETE` su `landslide_zones`, nient'altro (non legge `users`, `sos_alerts`, …)
+- [ ] Password del ruolo dal `.env` (`SIM_DB_PASSWORD`, aggiunta a `.env.example`): servizio `landslide-db-init` nel compose (come `minio-init`) che aspetta che V18 esista e poi fa `ALTER ROLE geosentinel_sim LOGIN PASSWORD ...`. **Trappola:** `psql -c` non sostituisce le variabili `:'pw'`, servono `-v pw=...` con il comando da stdin (heredoc), altrimenti la password va in chiaro nella riga di comando o la query si rompe
 - [ ] Compose: servizio `landslide-worker` sotto `profiles: ["sim"]`, `shm_size: 1gb`, volume `${SIM_DATA_DIR}` in sola lettura (output in una cartella temporanea del container), `depends_on` postgres healthy + `landslide-db-init` completato
 
 **Checkpoint:**
@@ -1390,7 +1392,7 @@ Modello (semplificazione ispirata a SCIDDICA-T, ADR-0023): celle quadrate, vicin
 #### M10.7 — Backend Java: feature `landslide`
 **Obiettivo:** mettere in coda i calcoli, trasformare le zone in rischio per sentiero, esporlo all'app.
 
-`V17__landslide.sql` (V13 reset della password, V14 login Google, V15 verifica in due passaggi (M8), V16 foto profilo (M9)):
+`V18__landslide.sql` (V13 reset della password, V14 login Google, V15 verifica in due passaggi (M8), V16 foto profilo (M9), V17 codice email dello setup della 2FA (ADR-0026)):
 | Tabella | Contenuto |
 |---|---|
 | `simulation_jobs` | id uuid PK, type CHECK `SUSCEPTIBILITY/RUNOUT`, status CHECK `PENDING/RUNNING/DONE/FAILED`, `source_hazard_id` FK `hazard_reports(id)` NULL, `requested_by` FK `users(id)` NULL, **parametri in colonne tipizzate** (`rain_mm_24h`, `samples`, `seed`, `trigger_location geometry(Point,4326)`, `radius_m`, `h0_m`; niente `jsonb`: con Jackson 3 il mapping JSON di Hibernate va verificato, e le colonne si validano con `CHECK`), `attempts int NOT NULL DEFAULT 0`, `lease_until`, `worker_id varchar(64)`, `started_at`, `finished_at`, `error varchar(500)`, `runtime_ms`, `processes`, `threads`, `processed_at timestamptz NULL` (ingestione Java), audit cols. `CHECK` sui parametri obbligatori per tipo; `UNIQUE (source_hazard_id) WHERE type = 'RUNOUT'` (una propagazione per segnalazione, anche con due verifiche concorrenti); indici parziali `(created_at) WHERE status = 'PENDING'` e `(finished_at) WHERE status = 'DONE' AND processed_at IS NULL` |
@@ -1474,7 +1476,7 @@ M0.1 → M0.2 → M0.3 → M0.4 → M0.5
   → M7
   → M8 (2FA, V15) → M9 (foto profilo, V16)
   → M10.1 → M10.2 → M10.3 → M10.4 → M10.5 → M10.6 → M10.8
-           └─ M10.7 (Java, in parallelo dopo V17: si prova con zone finte)
+           └─ M10.7 (Java, in parallelo dopo V18: si prova con zone finte)
 ```
 Nota: `M5.1` (GlobalExceptionHandler) conviene farlo subito dopo M2, così ogni feature successiva nasce con gli errori già nel formato giusto. `AbstractIntegrationTest` (M6.1) puoi anticiparlo dopo M1 e scrivere gli IT insieme a ogni milestone. È la scelta consigliata.
 

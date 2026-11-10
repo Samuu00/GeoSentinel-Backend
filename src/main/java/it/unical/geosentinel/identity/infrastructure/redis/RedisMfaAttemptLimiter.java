@@ -13,6 +13,7 @@ import java.util.UUID;
 @Component
 public class RedisMfaAttemptLimiter implements MfaAttemptLimiter {
     private static final String KEY_PREFIX = "rl:mfa:";
+    private static final String SESSION_KEY_PREFIX = "rl:mfa-session:";
     private static final String FAILURES_PREFIX = "mfa:fails:";
     // 5 codici sbagliati all'ora per account; fail-closed come il login
     private static final RateLimitPolicy POLICY = new RateLimitPolicy(5, 5.0 / 3600, true);
@@ -26,14 +27,24 @@ public class RedisMfaAttemptLimiter implements MfaAttemptLimiter {
     }
 
     @Override
-    public Optional<Duration> tryAcquire(UUID userId) {
-        RateLimitDecision decision = redisRateLimiter.tryConsume(KEY_PREFIX + userId, POLICY);
-        return decision.allowed() ? Optional.empty() : Optional.of(Duration.ofMillis(decision.retryAfterMillis()));
+    public Optional<Duration> tryAcquireLogin(UUID userId) {
+        return tryAcquire(KEY_PREFIX + userId);
+    }
+
+    @Override
+    public Optional<Duration> tryAcquireInSession(UUID userId) {
+        return tryAcquire(SESSION_KEY_PREFIX + userId);
     }
 
     @Override
     public void reset(UUID userId) {
         redisRateLimiter.reset(KEY_PREFIX + userId);
+        redisRateLimiter.reset(SESSION_KEY_PREFIX + userId);
+    }
+
+    private Optional<Duration> tryAcquire(String key) {
+        RateLimitDecision decision = redisRateLimiter.tryConsume(key, POLICY);
+        return decision.allowed() ? Optional.empty() : Optional.of(Duration.ofMillis(decision.retryAfterMillis()));
     }
 
     // Finestra di un'ora dal primo errore. INCR + EXPIRE in uno script: con due comandi separati, un guasto tra i due

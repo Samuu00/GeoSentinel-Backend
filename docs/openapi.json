@@ -6326,7 +6326,7 @@
           "content" : {
             "application/json" : {
               "schema" : {
-                "$ref" : "#/components/schemas/MfaCodeRequest"
+                "$ref" : "#/components/schemas/MfaEnableRequest"
               }
             }
           },
@@ -6407,7 +6407,7 @@
         "security" : [ {
           "bearerAuth" : [ ]
         } ],
-        "summary" : "Confirm two-factor setup with a TOTP code: returns the recovery codes once",
+        "summary" : "Confirm two-factor setup with a TOTP code and the code emailed by setup: returns the recovery codes once",
         "tags" : [ "Two-factor authentication" ]
       }
     },
@@ -6581,7 +6581,7 @@
         "security" : [ {
           "bearerAuth" : [ ]
         } ],
-        "summary" : "Start two-factor setup: returns the secret and the otpauth URI (409 if already enabled)",
+        "summary" : "Start two-factor setup: returns the secret and the otpauth URI and emails a confirmation code valid 15 minutes (409 if already enabled)",
         "tags" : [ "Two-factor authentication" ]
       }
     },
@@ -6771,6 +6771,11 @@
           "currentPassword" : {
             "type" : "string",
             "minLength" : 1
+          },
+          "mfaCode" : {
+            "type" : "string",
+            "maxLength" : 32,
+            "minLength" : 0
           },
           "newPassword" : {
             "type" : "string",
@@ -7195,6 +7200,22 @@
           }
         },
         "required" : [ "code" ]
+      },
+      "MfaEnableRequest" : {
+        "type" : "object",
+        "properties" : {
+          "code" : {
+            "type" : "string",
+            "maxLength" : 32,
+            "minLength" : 0
+          },
+          "emailCode" : {
+            "type" : "string",
+            "maxLength" : 32,
+            "minLength" : 0
+          }
+        },
+        "required" : [ "code", "emailCode" ]
       },
       "MfaSetupResponse" : {
         "type" : "object",

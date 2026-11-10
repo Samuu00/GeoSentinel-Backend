@@ -1,5 +1,6 @@
 package it.unical.geosentinel.identity.application;
 
+import it.unical.geosentinel.identity.application.port.MfaAttemptLimiter;
 import it.unical.geosentinel.identity.application.port.LoginAttemptLimiter;
 import it.unical.geosentinel.identity.application.port.PasswordResetLimiter;
 import it.unical.geosentinel.identity.application.port.TokenBlacklist;
@@ -35,7 +36,7 @@ class PasswordResetServiceTest {
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
     private final PasswordResetService service = new PasswordResetService(
             users, resetTokens, mock(RefreshTokenRepository.class), mock(TokenBlacklist.class), limiter,
-            mock(LoginAttemptLimiter.class), passwordEncoder, events,
+            mock(LoginAttemptLimiter.class), mock(MfaAttemptLimiter.class), passwordEncoder, events,
             Clock.fixed(Instant.parse("2026-10-17T10:00:00Z"), ZoneOffset.UTC), Duration.ofMinutes(15), 5);
 
     @Test

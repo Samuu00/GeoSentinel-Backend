@@ -37,6 +37,12 @@ public class MfaAlertMailListener {
         mailer.ifAvailable(sender -> send(() -> sender.sendStatusChanged(event.email(), event.enabled()), "MFA status"));
     }
 
+    @Async("passwordResetMailExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onSetupCode(MfaSetupCodeRequested event) {
+        mailer.ifAvailable(sender -> send(() -> sender.sendSetupCode(event.email(), event.code(), event.validFor()), "MFA setup code"));
+    }
+
     private void send(Runnable action, String kind) {
         try {
             action.run();

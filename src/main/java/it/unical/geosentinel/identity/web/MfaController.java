@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import it.unical.geosentinel.identity.application.MfaService;
 import it.unical.geosentinel.identity.infrastructure.security.CurrentUser;
 import it.unical.geosentinel.identity.web.dto.MfaDtos.MfaCodeRequest;
+import it.unical.geosentinel.identity.web.dto.MfaDtos.MfaEnableRequest;
 import it.unical.geosentinel.identity.web.dto.MfaDtos.MfaSetupResponse;
 import it.unical.geosentinel.identity.web.dto.MfaDtos.RecoveryCodesResponse;
 import jakarta.validation.Valid;
@@ -32,7 +33,8 @@ public class MfaController {
     }
 
     @PostMapping("/setup")
-    @Operation(operationId = "startMfaSetup", summary = "Start two-factor setup: returns the secret and the otpauth URI (409 if already enabled)",
+    @Operation(operationId = "startMfaSetup",
+            summary = "Start two-factor setup: returns the secret and the otpauth URI and emails a confirmation code valid 15 minutes (409 if already enabled)",
             security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<MfaSetupResponse> startSetup() {
         UUID userId = currentUser.getRequiredUserId();
@@ -40,11 +42,12 @@ public class MfaController {
     }
 
     @PostMapping("/enable")
-    @Operation(operationId = "enableMfa", summary = "Confirm two-factor setup with a TOTP code: returns the recovery codes once",
+    @Operation(operationId = "enableMfa",
+            summary = "Confirm two-factor setup with a TOTP code and the code emailed by setup: returns the recovery codes once",
             security = @SecurityRequirement(name = "bearerAuth"))
-    public ResponseEntity<RecoveryCodesResponse> enable(@Valid @RequestBody MfaCodeRequest request) {
+    public ResponseEntity<RecoveryCodesResponse> enable(@Valid @RequestBody MfaEnableRequest request) {
         UUID userId = currentUser.getRequiredUserId();
-        return ResponseEntity.ok(new RecoveryCodesResponse(mfaService.enable(userId, request.code())));
+        return ResponseEntity.ok(new RecoveryCodesResponse(mfaService.enable(userId, request.code(), request.emailCode())));
     }
 
     @PostMapping("/disable")

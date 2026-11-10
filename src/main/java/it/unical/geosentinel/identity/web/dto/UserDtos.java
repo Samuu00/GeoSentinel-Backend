@@ -45,6 +45,10 @@ public class UserDtos {
             @NotBlank(message = "New password is required")
             @Size(min = 12, message = "Password must be at least 12 characters")
             @MaxUtf8Bytes(value = 72, message = "Password must not exceed 72 bytes in UTF-8")
-            String newPassword
+            String newPassword,
+
+            // ADR-0026: obbligatorio con la 2FA attiva (TOTP o codice di recupero), altrimenti 422 invalid-mfa-code
+            @Size(max = 32, message = "MFA code must be at most 32 characters long")
+            String mfaCode
     ) {}
 }

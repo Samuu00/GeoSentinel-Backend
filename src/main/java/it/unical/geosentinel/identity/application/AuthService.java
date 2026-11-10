@@ -7,6 +7,7 @@ import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserIdentityRepository;
 import it.unical.geosentinel.identity.infrastructure.persistence.UserRepository;
+import it.unical.geosentinel.notification.application.DeviceService;
 import it.unical.geosentinel.shared.domain.exception.AgeRequirementNotMetException;
 import it.unical.geosentinel.shared.domain.exception.BirthDateRequiredException;
 import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationException;
@@ -53,6 +54,7 @@ public class AuthService {
     private final TokenBlacklist tokenBlacklist;
     private final LoginAttemptLimiter loginAttemptLimiter;
     private final MfaService mfaService;
+    private final DeviceService deviceService;
     private final JwtIssuer jwtIssuer;
     private final Clock clock;
     private final Duration refreshTtl;
@@ -74,6 +76,7 @@ public class AuthService {
             TokenBlacklist tokenBlacklist,
             LoginAttemptLimiter loginAttemptLimiter,
             MfaService mfaService,
+            DeviceService deviceService,
             JwtIssuer jwtIssuer,
             Clock clock,
             // @Value e non JwtProperties: application non dipende da infrastructure
@@ -90,6 +93,7 @@ public class AuthService {
         this.tokenBlacklist = tokenBlacklist;
         this.loginAttemptLimiter = loginAttemptLimiter;
         this.mfaService = mfaService;
+        this.deviceService = deviceService;
         this.jwtIssuer = jwtIssuer;
         this.clock = clock;
         this.refreshTtl = refreshTtl;
@@ -120,7 +124,7 @@ public class AuthService {
     // Password attuale sbagliata -> 422, non 401: un 401 farebbe credere all'app che il token sia scaduto (refresh/logout).
     // Revoca tutte le sessioni (anche quelle di un eventuale ladro) e ne apre una nuova per chi ha cambiato la password
     @Transactional
-    public AuthTokens changePassword(UUID userId, String currentPassword, String newPassword) {
+    public AuthTokens changePassword(UUID userId, String currentPassword, String newPassword, String mfaCode) {
         // Lock sull'utente: un refresh concorrente attende e poi trova la famiglia già revocata
         User user = userRepository.findByIdForUpdate(userId)
                 .filter(User::isEnabled)
@@ -136,6 +140,9 @@ public class AuthService {
         if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
             throw new BusinessRuleViolationException("Current password is incorrect");
         }
+        // ADR-0026: apre una sessione nuova, quindi chiede il secondo fattore come il login. Altrimenti un access token
+        // rubato più la password diventerebbero una sessione lunga e chiuderebbero fuori il titolare
+        mfaService.verifyStepUp(userId, mfaCode);
 
         Instant now = clock.instant();
         user.updatePassword(passwordEncoder.encode(newPassword));
@@ -311,6 +318,8 @@ public class AuthService {
             user.clearPassword();
             userIdentityRepository.save(new UserIdentity(user, IdentityProvider.GOOGLE, google.subject(), email, now));
             refreshTokenRepository.revokeAllOfUser(user.getId(), now);
+            // ADR-0026: anche i telefoni di chi aveva registrato l'email smettono di ricevere le push di questo account
+            deviceService.deleteAllOf(user.getId());
             tokenBlacklist.revokeAllIssuedUntil(user.getId(), now.minusSeconds(1));
             return new GoogleSignIn(createAuthSession(user, null), false);
         }

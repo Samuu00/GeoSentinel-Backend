@@ -1,6 +1,7 @@
 package it.unical.geosentinel.identity.application;
 
 import it.unical.geosentinel.identity.application.port.LoginAttemptLimiter;
+import it.unical.geosentinel.identity.application.port.MfaAttemptLimiter;
 import it.unical.geosentinel.identity.application.port.PasswordResetLimiter;
 import it.unical.geosentinel.identity.application.port.TokenBlacklist;
 import it.unical.geosentinel.identity.domain.PasswordResetCode;
@@ -43,6 +44,7 @@ public class PasswordResetService {
     private final TokenBlacklist tokenBlacklist;
     private final PasswordResetLimiter limiter;
     private final LoginAttemptLimiter loginAttemptLimiter;
+    private final MfaAttemptLimiter mfaAttemptLimiter;
     private final PasswordEncoder passwordEncoder;
     private final ApplicationEventPublisher events;
     private final Clock clock;
@@ -58,6 +60,7 @@ public class PasswordResetService {
             TokenBlacklist tokenBlacklist,
             PasswordResetLimiter limiter,
             LoginAttemptLimiter loginAttemptLimiter,
+            MfaAttemptLimiter mfaAttemptLimiter,
             PasswordEncoder passwordEncoder,
             ApplicationEventPublisher events,
             Clock clock,
@@ -70,6 +73,7 @@ public class PasswordResetService {
         this.tokenBlacklist = tokenBlacklist;
         this.limiter = limiter;
         this.loginAttemptLimiter = loginAttemptLimiter;
+        this.mfaAttemptLimiter = mfaAttemptLimiter;
         this.passwordEncoder = passwordEncoder;
         this.events = events;
         this.clock = clock;
@@ -142,6 +146,8 @@ public class PasswordResetService {
         tokenBlacklist.revokeAllIssuedUntil(user.get().getId(), now);
         // Chi è stato bloccato dai login sbagliati deve poter entrare subito con la password nuova
         loginAttemptLimiter.reset(sha256Hex(user.get().getEmail()));
+        // ADR-0026: anche i bucket della 2FA. Chi li svuotava con la vecchia password non ce l'ha più
+        mfaAttemptLimiter.reset(user.get().getId());
     }
 
     // Codice appena emesso, da spedire. toString senza dati: non finisce nei log per sbaglio

@@ -29,6 +29,16 @@ public class MfaDtos {
             String code
     ) {}
 
+    // ADR-0026: TOTP dell'app di autenticazione + codice arrivato all'email con lo setup
+    public record MfaEnableRequest(
+            @NotBlank(message = "MFA code is required")
+            @Size(max = 32, message = "MFA code must be at most 32 characters long")
+            String code,
+            @NotBlank(message = "Email code is required")
+            @Size(max = 32, message = "Email code must be at most 32 characters long")
+            String emailCode
+    ) {}
+
     public record RecoveryCodesResponse(
             @Schema(requiredMode = REQUIRED)
             List<String> codes

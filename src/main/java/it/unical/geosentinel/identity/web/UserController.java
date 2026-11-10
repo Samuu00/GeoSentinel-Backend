@@ -59,7 +59,7 @@ public class UserController {
     public ResponseEntity<TokenResponse> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
         UUID userId = currentUser.getRequiredUserId();
         return ResponseEntity.ok(TokenResponse.from(
-                authService.changePassword(userId, request.currentPassword(), request.newPassword())));
+                authService.changePassword(userId, request.currentPassword(), request.newPassword(), request.mfaCode())));
     }
 
     @DeleteMapping

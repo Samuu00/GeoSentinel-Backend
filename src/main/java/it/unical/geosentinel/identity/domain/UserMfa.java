@@ -5,6 +5,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -30,6 +32,13 @@ public class UserMfa {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    // ADR-0026: hash del codice mandato all'email allo setup; null dopo l'attivazione
+    @Column(name = "email_code_hash", length = 64)
+    private String emailCodeHash;
+
+    @Column(name = "email_code_expires_at")
+    private Instant emailCodeExpiresAt;
+
     protected UserMfa() {}
 
     public UserMfa(UUID userId, byte[] secretEnc, Instant now) {
@@ -54,6 +63,22 @@ public class UserMfa {
 
     public void enable(Instant now){
         this.enabledAt = Objects.requireNonNull(now, "Enabled at cannot be null");
+        this.emailCodeHash = null;
+        this.emailCodeExpiresAt = null;
+    }
+
+    // Un codice nuovo sostituisce il precedente
+    public void issueEmailCode(String codeHash, Instant expiresAt) {
+        this.emailCodeHash = Objects.requireNonNull(codeHash, "Code hash cannot be null");
+        this.emailCodeExpiresAt = Objects.requireNonNull(expiresAt, "Expires at cannot be null");
+    }
+
+    // Confronto a tempo costante sull'hash
+    public boolean emailCodeMatches(String codeHash, Instant now) {
+        return emailCodeHash != null
+                && now.isBefore(emailCodeExpiresAt)
+                && MessageDigest.isEqual(emailCodeHash.getBytes(StandardCharsets.US_ASCII),
+                        codeHash.getBytes(StandardCharsets.US_ASCII));
     }
 
     public boolean isStepFresh(long step){

@@ -10,7 +10,9 @@ import it.unical.geosentinel.identity.domain.User;
 import it.unical.geosentinel.support.AbstractIntegrationTest;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpMethod;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import tools.jackson.databind.JsonNode;
@@ -22,7 +24,9 @@ import java.util.Locale;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -31,6 +35,7 @@ import static org.mockito.Mockito.when;
 // M8: il secondo fattore non si aggira (replay, brute force, Google, login paralleli) e il reset da ADMIN chiude tutto.
 // I codici TOTP si calcolano dal segreto salvato (decifrato con il bean vero): nessun segreto letterale nei test
 class MfaIT extends AbstractIntegrationTest {
+    private static final String NEW_PASSWORD = "NuovaPassword456!";
 
     @MockitoBean
     private MfaAlertMailer mailer;
@@ -40,6 +45,9 @@ class MfaIT extends AbstractIntegrationTest {
 
     @Autowired
     private MfaSecretCipher cipher;
+
+    @Autowired
+    private StringRedisTemplate redis;
 
     // ---- supporto ---------------------------------------------------------------------------------------------------
 
@@ -86,10 +94,32 @@ class MfaIT extends AbstractIntegrationTest {
         return jdbcTemplate.queryForObject(sql, Integer.class, args);
     }
 
+    private int setups;
+
+    // ADR-0026: il codice dello setup arriva per email (dopo il commit, su un altro thread); si aspetta l'n-esimo invio,
+    // così dopo un secondo setup non si legge il codice del primo
+    private String awaitEmailCode(User user) {
+        setups++;
+        ArgumentCaptor<String> code = ArgumentCaptor.forClass(String.class);
+        verify(mailer, timeout(2000).times(setups)).sendSetupCode(eq(user.getEmail()), code.capture(), any());
+        return code.getValue();
+    }
+
+    private HttpResult enable(String token, String code, String emailCode) {
+        return call(HttpMethod.POST, "/api/v1/users/me/mfa/enable", token,
+                "{\"code\":\"%s\",\"emailCode\":\"%s\"}".formatted(code, emailCode));
+    }
+
+    private HttpResult changePassword(String token, String mfaCode) {
+        String code = mfaCode == null ? "" : ",\"mfaCode\":\"%s\"".formatted(mfaCode);
+        return call(HttpMethod.POST, "/api/v1/users/me/password", token,
+                "{\"currentPassword\":\"%s\",\"newPassword\":\"%s\"%s}".formatted(TEST_PASSWORD, NEW_PASSWORD, code));
+    }
+
     // 2FA attiva con il codice del passo attuale (quindi già consumato); restituisce i codici di recupero
     private List<String> enableMfa(User user, String token) {
         assertThat(mfa("setup", token, null).status()).isEqualTo(200);
-        HttpResult enabled = mfa("enable", token, totp(user.getId(), 0));
+        HttpResult enabled = enable(token, totp(user.getId(), 0), awaitEmailCode(user));
         assertThat(enabled.status()).isEqualTo(200);
         List<String> codes = new ArrayList<>();
         json(enabled.body()).get("codes").forEach(node -> codes.add(node.asString()));
@@ -109,7 +139,7 @@ class MfaIT extends AbstractIntegrationTest {
         assertThat(json(setup.body()).get("otpauthUri").asString()).startsWith("otpauth://totp/GeoSentinel:");
         assertThat(setup.headers().getCacheControl()).contains("no-store");
         String enableCode = totp(hiker.getId(), 0);
-        HttpResult enabled = mfa("enable", token, enableCode);
+        HttpResult enabled = enable(token, enableCode, awaitEmailCode(hiker));
         assertThat(json(enabled.body()).get("codes")).hasSize(10);
         assertThat(json(call(HttpMethod.GET, "/api/v1/users/me", token, null).body()).get("mfaEnabled").asBoolean()).isTrue();
         verify(mailer, timeout(2000)).sendStatusChanged(hiker.getEmail(), true);
@@ -143,14 +173,17 @@ class MfaIT extends AbstractIntegrationTest {
 
         assertThat(mfa("setup", token, null).status()).isEqualTo(200);
         String oldCode = totp(hiker.getId(), 0);
+        String oldEmailCode = awaitEmailCode(hiker);
         assertThat(login(hiker, null).status()).isEqualTo(200);
 
         assertThat(mfa("setup", token, null).status()).isEqualTo(200);
-        // il segreto vecchio non vale più (salvo una collisione di 1 su 10^6 tra i due codici)
+        String emailCode = awaitEmailCode(hiker);
+        // il segreto vecchio non vale più (salvo una collisione di 1 su 10^6 tra i due codici), né il codice email vecchio
         if (!oldCode.equals(totp(hiker.getId(), 0))) {
-            assertThat(mfa("enable", token, oldCode).status()).isEqualTo(422);
+            assertThat(enable(token, oldCode, emailCode).status()).isEqualTo(422);
         }
-        assertThat(mfa("enable", token, totp(hiker.getId(), 0)).status()).isEqualTo(200);
+        assertThat(enable(token, totp(hiker.getId(), 0), oldEmailCode).status()).isEqualTo(422);
+        assertThat(enable(token, totp(hiker.getId(), 0), emailCode).status()).isEqualTo(200);
         HttpResult again = mfa("setup", token, null);
         assertThat(again.status()).isEqualTo(409);
         assertThat(slug(again)).isEqualTo("mfa-already-enabled");
@@ -325,5 +358,76 @@ class MfaIT extends AbstractIntegrationTest {
         assertThat(call(HttpMethod.DELETE, "/api/v1/users/me", token, null).status()).isEqualTo(204);
         assertThat(count("SELECT count(*) FROM user_mfa WHERE user_id = ?", hiker.getId())).isZero();
         assertThat(count("SELECT count(*) FROM mfa_recovery_codes WHERE user_id = ?", hiker.getId())).isZero();
+    }
+
+    // ---- ADR-0026 (audit del 10/11) ---------------------------------------------------------------------------------
+
+    // Pista 5: chi ha registrato l'email di un altro non riceve il codice e non può attivare la 2FA
+    @Test
+    void enableNeedsTheCodeSentToTheAccountEmail() throws Exception {
+        awaitSafeStep();
+        User hiker = createUser(Role.HIKER);
+        String token = tokenFor(hiker);
+        assertThat(mfa("setup", token, null).status()).isEqualTo(200);
+        String emailCode = awaitEmailCode(hiker);
+
+        assertThat(mfa("enable", token, totp(hiker.getId(), 0)).status()).isEqualTo(400); // emailCode assente
+        HttpResult wrong = enable(token, totp(hiker.getId(), 0), "ABCDEFGH-23456789");
+        assertThat(wrong.status()).isEqualTo(422);
+        assertThat(slug(wrong)).isEqualTo("invalid-mfa-code");
+        assertThat(count("SELECT count(*) FROM user_mfa WHERE user_id = ? AND enabled_at IS NULL", hiker.getId())).isOne();
+
+        // come lo scriverebbe l'utente: minuscole, senza trattino
+        String typed = emailCode.toLowerCase(Locale.ROOT).replace("-", "");
+        assertThat(enable(token, totp(hiker.getId(), 0), typed).status()).isEqualTo(200);
+        assertThat(count("SELECT count(*) FROM user_mfa WHERE user_id = ? AND email_code_hash IS NULL", hiker.getId())).isOne();
+    }
+
+    // Pista 3: il cambio password apre una sessione nuova, quindi chiede il secondo fattore (422, mai 401)
+    @Test
+    void changePasswordNeedsTheSecondFactor() throws Exception {
+        awaitSafeStep();
+        User hiker = createUser(Role.HIKER);
+        String token = tokenFor(hiker);
+        enableMfa(hiker, token);
+
+        HttpResult missing = changePassword(token, null);
+        assertThat(missing.status()).isEqualTo(422);
+        assertThat(slug(missing)).isEqualTo("invalid-mfa-code");
+        assertThat(changePassword(token, "999999").status()).isEqualTo(422);
+        assertThat(changePassword(token, totp(hiker.getId(), 1)).status()).isEqualTo(200);
+    }
+
+    // Pista 2: chi conosce la password svuota il bucket del login, ma il titolare cambia la password in sessione
+    // (bucket separato) e così sblocca anche il login
+    @Test
+    void drainedLoginBucketDoesNotBlockTheOwnerInSession() throws Exception {
+        awaitSafeStep();
+        User hiker = createUser(Role.HIKER);
+        String token = tokenFor(hiker);
+        enableMfa(hiker, token);
+        String good = totp(hiker.getId(), 1);
+        String wrong = good.equals("000000") ? "000001" : "000000";
+        for (int i = 0; i < 5; i++) {
+            assertThat(login(hiker, wrong).status()).isEqualTo(401);
+        }
+        assertThat(login(hiker, good).status()).isEqualTo(429);
+
+        assertThat(changePassword(token, good).status()).isEqualTo(200);
+        assertThat(redis.hasKey("rl:mfa:" + hiker.getId())).isFalse();
+    }
+
+    // Pista 5: il collegamento a Google chiude fuori anche i telefoni di chi aveva registrato l'email
+    @Test
+    void googleLinkRemovesTheDevicesOfThePreRegisteredAccount() {
+        User preRegistered = createUser(Role.HIKER);
+        assertThat(call(HttpMethod.POST, "/api/v1/devices", tokenFor(preRegistered),
+                "{\"token\":\"fcm-%s\",\"platform\":\"ANDROID\"}".formatted(UUID.randomUUID())).status()).isLessThan(300);
+        assertThat(count("SELECT count(*) FROM device_tokens WHERE user_id = ?", preRegistered.getId())).isOne();
+        when(googleVerifier.verify(anyString()))
+                .thenReturn(new GoogleIdentity("google-sub-" + UUID.randomUUID(), preRegistered.getEmail(), true, "Mario"));
+
+        assertThat(googleLogin(null).status()).isEqualTo(200);
+        assertThat(count("SELECT count(*) FROM device_tokens WHERE user_id = ?", preRegistered.getId())).isZero();
     }
 }

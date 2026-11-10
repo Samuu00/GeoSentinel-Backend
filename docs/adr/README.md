@@ -31,3 +31,4 @@ del vecchio (`Sostituito da ADR-XXXX`). Il modello è in [`template.md`](templat
 | [0023](0023-modello-frane.md) | Modello delle frane: pendio indefinito con Monte Carlo e automa cellulare | 2026-10-17 | Proposto |
 | [0024](0024-login-google.md) | Login con Google tramite ID token nativo | 2026-10-17 | Accettato |
 | [0025](0025-verifica-in-due-passaggi.md) | Verifica in due passaggi con TOTP | 2026-10-19 | Accettato |
+| [0026](0026-rafforzamento-2fa.md) | Rafforzamento della 2FA dopo l'audit del 10/11 | 2026-11-10 | Accettato |

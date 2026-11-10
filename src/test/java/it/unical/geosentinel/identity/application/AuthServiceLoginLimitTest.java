@@ -1,5 +1,6 @@
 package it.unical.geosentinel.identity.application;
 
+import it.unical.geosentinel.notification.application.DeviceService;
 import it.unical.geosentinel.identity.application.port.LoginAttemptLimiter;
 import it.unical.geosentinel.identity.application.port.TokenBlacklist;
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
@@ -36,7 +37,7 @@ class AuthServiceLoginLimitTest {
     private final LoginAttemptLimiter limiter = mock(LoginAttemptLimiter.class);
     private final AuthService service = new AuthService(
             mock(UserIdentityRepository.class), users, mock(RefreshTokenRepository.class), passwordEncoder, mock(TokenBlacklist.class),
-            limiter, mock(MfaService.class), mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC),
+            limiter, mock(MfaService.class), mock(DeviceService.class), mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC),
             Duration.ofDays(7), Duration.ofDays(30), Duration.ofSeconds(60), 14);
 
     @Test

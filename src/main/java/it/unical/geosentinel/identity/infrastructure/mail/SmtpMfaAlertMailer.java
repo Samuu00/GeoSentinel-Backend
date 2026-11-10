@@ -10,6 +10,7 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 // Stessa condizione del mailer di reset: con la mail spenta non esiste, e il listener non fallisce
 @Component
@@ -68,6 +69,18 @@ public class SmtpMfaAlertMailer implements MfaAlertMailer {
         } else {
             send(email, "Verifica in due passaggi disattivata", DISABLED_BODY);
         }
+    }
+
+    @Override
+    public void sendSetupCode(String email, String code, Duration validFor) {
+        send(email, "Codice per attivare la verifica in due passaggi", """
+                Per attivare la verifica in due passaggi sul tuo account GeoSentinel inserisci nell'app questo codice:
+
+                %s
+
+                Vale %d minuti. Se non stai attivando la verifica in due passaggi, qualcuno ha accesso al tuo account: \
+                cambia subito la password.
+                """.formatted(code, validFor.toMinutes()));
     }
 
     private void send(String email, String subject, String body) {

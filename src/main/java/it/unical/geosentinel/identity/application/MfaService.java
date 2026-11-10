@@ -30,6 +30,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -44,6 +45,7 @@ public class MfaService {
     private static final int SECRET_BYTES = 20; // 160 bit
     private static final int RECOVERY_CODES = 10;
     private static final long LOGIN_ALERT_THRESHOLD = 3; // email d'avviso al terzo errore del login nell'ora
+    private static final Duration SETUP_EMAIL_CODE_TTL = Duration.ofMinutes(15);
 
     private static final Logger log = LoggerFactory.getLogger(MfaService.class);
 
@@ -87,23 +89,33 @@ public class MfaService {
         byte[] secret = new byte[SECRET_BYTES];
         RANDOM.nextBytes(secret);
         byte[] encrypted = cipher.encrypt(secret);
+        Instant now = clock.instant();
         if (mfa == null) {
-            userMfaRepository.save(new UserMfa(userId, encrypted, clock.instant()));
+            mfa = userMfaRepository.save(new UserMfa(userId, encrypted, now));
         } else {
             mfa.replaceSecret(encrypted);
         }
+        // ADR-0026: la registrazione non verifica l'email. Il codice mandato lì prova che chi attiva la 2FA ne è il
+        // titolare: chi ha registrato l'email di un altro non può chiuderlo fuori quando entra con Google
+        String emailCode = PasswordResetCode.generate(RANDOM);
+        mfa.issueEmailCode(sha256Hex(emailCode), now.plus(SETUP_EMAIL_CODE_TTL));
+        eventPublisher.publishEvent(new MfaSetupCodeRequested(user.getEmail(), PasswordResetCode.display(emailCode), SETUP_EMAIL_CODE_TTL));
         return new MfaSetupView(Totp.encodeSecret(secret), Totp.otpauthUri(user.getEmail(), secret));
     }
 
     @Transactional
-    public List<String> enable(UUID userId, String code) {
+    public List<String> enable(UUID userId, String code, String emailCode) {
         User user = lockUser(userId);
         UserMfa mfa = findSetup(userId);
         if (mfa.isEnabled()) {
             throw new MfaAlreadyEnabledException();
         }
-        acquireAttempt(userId);
+        acquireInSessionAttempt(userId);
         Instant now = clock.instant();
+        String normalizedEmailCode = emailCode == null ? "" : PasswordResetCode.normalize(emailCode);
+        if (!PasswordResetCode.isWellFormed(normalizedEmailCode) || !mfa.emailCodeMatches(sha256Hex(normalizedEmailCode), now)) {
+            throw new InvalidMfaCodeException();
+        }
         mfa.useStep(checkTotp(mfa, requireTotpFormat(code), now)); // il codice di conferma non vale anche al login
         attemptLimiter.reset(userId);
         mfa.enable(now);
@@ -115,7 +127,7 @@ public class MfaService {
     public void disable(UUID userId, String code) {
         User user = lockUser(userId);
         UserMfa mfa = findEnabled(userId);
-        acquireAttempt(userId);
+        acquireInSessionAttempt(userId);
         verifyTotpOrRecovery(mfa, userId, code, clock.instant());
         attemptLimiter.reset(userId);
         userMfaRepository.deleteAllOfUser(userId);
@@ -127,12 +139,31 @@ public class MfaService {
     public List<String> regenerateRecoveryCodes(UUID userId, String code) {
         lockUser(userId);
         UserMfa mfa = findEnabled(userId);
-        acquireAttempt(userId);
+        acquireInSessionAttempt(userId);
         Instant now = clock.instant();
         mfa.useStep(checkTotp(mfa, requireTotpFormat(code), now));
         attemptLimiter.reset(userId);
         return issueRecoveryCodes(userId, now);
     }
+
+    // ADR-0026: un'operazione in sessione che apre una sessione nuova (cambio password) chiede il secondo fattore come
+    // il login. Senza 2FA non fa nulla. Codice assente o sbagliato -> 422 (un 401 farebbe credere all'app che il token
+    // sia scaduto); il bucket è quello delle operazioni in sessione
+    @Transactional
+    public void verifyStepUp(UUID userId, String code) {
+        lockUser(userId);
+        UserMfa mfa = userMfaRepository.findById(userId).filter(UserMfa::isEnabled).orElse(null);
+        if (mfa == null) {
+            return;
+        }
+        if (code == null || code.isBlank()) {
+            throw new InvalidMfaCodeException();
+        }
+        acquireInSessionAttempt(userId);
+        verifyTotpOrRecovery(mfa, userId, code, clock.instant());
+        attemptLimiter.reset(userId);
+    }
+
 
     // Chiamato dal login dopo la password giusta: senza 2FA non fa nulla.
     // noRollbackFor: l'errore deve restare committato (contatore ed evento d'avviso), come in AuthService.login
@@ -147,7 +178,9 @@ public class MfaService {
         if (mfaCode == null || mfaCode.isBlank()) {
             throw new MfaRequiredException();
         }
-        acquireAttempt(userId);
+        attemptLimiter.tryAcquireLogin(userId).ifPresent(retryAfter -> {
+            throw new RateLimitExceededException(retryAfter);
+        });
         try {
             verifyTotpOrRecovery(mfa, userId, mfaCode, clock.instant());
         } catch (InvalidMfaCodeException e) {
@@ -194,14 +227,16 @@ public class MfaService {
         refreshTokenRepository.revokeAllOfUser(userId, now);
         // Redis per ultimo: se cade, la transazione torna indietro
         tokenBlacklist.revokeAllIssuedUntil(userId, now);
+        // Il titolare deve poter riattivare la 2FA subito, anche se qualcuno aveva svuotato i bucket
+        attemptLimiter.reset(userId);
         eventPublisher.publishEvent(new MfaAdminResetRequested(target.getEmail()));
         // Solo gli id: mai l'email nel log
         log.info("Two-factor reset by administrator {} for user {}", adminId, userId);
     }
 
-    // Ogni codice inviato conta: il bucket si svuota solo con un codice giusto
-    private void acquireAttempt(UUID userId) {
-        attemptLimiter.tryAcquire(userId).ifPresent(retryAfter -> {
+    // Ogni codice inviato conta: il bucket si azzera solo con un codice giusto
+    private void acquireInSessionAttempt(UUID userId) {
+        attemptLimiter.tryAcquireInSession(userId).ifPresent(retryAfter -> {
             throw new RateLimitExceededException(retryAfter);
         });
     }
