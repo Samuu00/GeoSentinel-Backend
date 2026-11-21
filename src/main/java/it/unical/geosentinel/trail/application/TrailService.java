@@ -13,6 +13,7 @@ import it.unical.geosentinel.trail.domain.Trail;
 import it.unical.geosentinel.trail.domain.TrailStatus;
 import it.unical.geosentinel.trail.infrastructure.persistence.TrailRepository;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -30,10 +31,13 @@ public class TrailService {
 
     private final TrailRepository trailRepository;
     private final GeometryMapper geometryMapper;
+    // ogni cambio di sentiero rifà la rete del percorso A→B, dopo il commit (RouteService)
+    private final ApplicationEventPublisher events;
 
-    public TrailService(TrailRepository trailRepository, GeometryMapper geometryMapper) {
+    public TrailService(TrailRepository trailRepository, GeometryMapper geometryMapper, ApplicationEventPublisher events) {
         this.trailRepository = trailRepository;
         this.geometryMapper = geometryMapper;
+        this.events = events;
     }
 
     @Transactional(readOnly = true)
@@ -69,6 +73,7 @@ public class TrailService {
     @PreAuthorize("hasRole('PARK_MANAGER')")
     public TrailDetail create(CreateTrailCommand cmd) {
         Trail trail = new Trail(cmd.name(), cmd.description(), cmd.difficulty(), cmd.path());
+        events.publishEvent(new RouteService.TrailsChanged());
         return TrailDetail.from(trailRepository.saveAndFlush(trail), geometryMapper);
     }
 
@@ -79,6 +84,7 @@ public class TrailService {
         Trail trail = getTrailOrThrow(id);
         trail.updateDetails(cmd.name(), cmd.description(), cmd.difficulty(), cmd.path());
         trailRepository.flush();
+        events.publishEvent(new RouteService.TrailsChanged());
         return TrailDetail.from(trail, geometryMapper);
     }
 
@@ -89,6 +95,7 @@ public class TrailService {
         Trail trail = getTrailOrThrow(id);
         trail.changeStatus(status);
         trailRepository.flush();
+        events.publishEvent(new RouteService.TrailsChanged());
         return TrailDetail.from(trail, geometryMapper);
     }
 }

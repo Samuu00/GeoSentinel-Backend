@@ -128,6 +128,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 ex.getMessage(), new HttpHeaders(), request);
     }
 
+    @ExceptionHandler(NoRouteException.class)
+    public ResponseEntity<Object> handleNoRoute(NoRouteException ex, WebRequest request) {
+        return problem(ex, HttpStatus.UNPROCESSABLE_ENTITY, ProblemTypes.NO_ROUTE, "No route",
+                ex.getMessage(), new HttpHeaders(), request);
+    }
+
     @ExceptionHandler(AlertAlreadyTakenException.class)
     public ResponseEntity<Object> handleAlertAlreadyTaken(AlertAlreadyTakenException ex, WebRequest request) {
         return problem(ex, HttpStatus.CONFLICT, ProblemTypes.ALERT_ALREADY_TAKEN, "Alert already taken",

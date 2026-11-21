@@ -141,6 +141,12 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       MINIO_ENDPOINT: http://minio:9000
+      # Il JSON di Firebase non entra nell'immagine: si monta in sola lettura dal percorso del .env
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase.json
+    volumes:
+      # Percorso relativo alla cartella del progetto (come dall'IDE). Con le push spente la variabile può mancare:
+      # si monta un file innocuo, che nessuno legge
+      - ./${GOOGLE_APPLICATION_CREDENTIALS:-.env.example}:/run/secrets/firebase.json:ro
     ports:
       - "${SERVER_PORT:-8080}:8080"
     depends_on:

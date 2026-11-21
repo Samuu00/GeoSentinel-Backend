@@ -3,7 +3,7 @@
 > Ruolo di Claude: mentore/architetto/reviewer. **Il codice lo scrivi tu.** Qui trovi solo struttura, contratti (firme), vincoli e checkpoint.
 > Regola di avanzamento: un task si chiude solo quando **tutti** i suoi checkpoint passano. Poi chiedi la review (vedi §5).
 >
-> **Stato (19/10): M0–M9 completate.** M8 (verifica in due passaggi) e M9 (foto profilo) sono integrate e provate anche nell'app (sue M10 e M11, emulatore e iPhone). Prossima: M10, rischio frane. M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web), che dal 12/10 è a M9 (`../GeoSentinel-Mobile`): i checkpoint di M7 che richiedevano l'app (push FCM, foto dall'emulatore → `READY`, flusso completo) sono stati provati da lì; restano le push su iOS (APNs, serve un account Apple).
+> **Stato (10/11): M0–M9 completate, più l'audit della 2FA del 10/11 (ADR-0026, `V17__mfa_setup_email_code`).** M8 (verifica in due passaggi) e M9 (foto profilo) sono integrate e provate anche nell'app (sue M10 e M11, emulatore e iPhone). Prossima: M10, rischio frane. M7 è il backend per l'app mobile Kotlin Multiplatform (unico client, nessun frontend web), che dal 12/10 è a M9 (`../GeoSentinel-Mobile`): i checkpoint di M7 che richiedevano l'app (push FCM, foto dall'emulatore → `READY`, flusso completo) sono stati provati da lì; restano le push su iOS (APNs, serve un account Apple).
 > Dopo M7, su richiesta dell'app (dettagli in `CHANGELOG.md` e negli ADR):
 > - ADR-0019: periodo di grazia di 60 s sul refresh token appena ruotato (`V10__refresh_token_successor`);
 > - ADR-0020: percorso semplificato nei sentieri della bbox, bbox per `ST_Intersects`;
@@ -14,6 +14,7 @@
 > - reset della password con codice via email (M7.2.2, `V13__password_reset_tokens`), verificato il 17/10; dal 18/10 anche con email vere da Gmail;
 > - login con Google tramite ID token nativo (M7.2.3, ADR-0024, `V14__google_identity`), revisionato e corretto il 18/10; slug `birth-date-required` per l'app; client OAuth Web, Android e iOS creati, integrato nell'app (Android e iOS).
 > - **M8, verifica in due passaggi** (TOTP, ADR-0025, `V15__mfa`): scritta dall'utente, revisionata e corretta il 19/10; `./mvnw verify` verde (76 unit + 179 IT).
+> - **Audit della 2FA del 10/11** (ADR-0026, `V17__mfa_setup_email_code`): 3 piste su 5 confermate e corrette da Claude su richiesta (codice email allo setup, 2FA nel cambio password, due bucket dei tentativi, dispositivi cancellati al collegamento Google); `./mvnw verify` verde (76 unit + 189 IT); app adattata e provata sull'emulatore lo stesso giorno. Dettagli in fondo a M8.
 > **Pianificate (18/10), nell'ordine:** M9, foto profilo (media con target `USER`, V16); M10, rischio frane con un calcolo parallelo in C++ (MPI + pthread) e la feature `landslide` (V18, ADR-0022, ADR-0023), pianificata il 17/10 come M8 e spostata dopo le prime due.
 > M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
@@ -1175,6 +1176,22 @@ final class MfaSecretCipher { byte[] encrypt(byte[] plain); byte[] decrypt(byte[
 - **aggiunto:** email all'attivazione e alla disattivazione (`MfaStatusChanged`, `MfaAlertMailer.sendStatusChanged`). Chi ruba un access token può attivare la 2FA e chiudere fuori il titolare: così lui lo sa subito;
 - import inutili tolti da `MfaController`; `Totp.codeAt` e `stepAt` pubblici per gli IT; test unitari di `AuthService` e `MigrationIT` aggiornati; `.env.example` spiega come generare la chiave;
 - test: `TotpTest` (vettori dell'RFC, finestra, Base32), `MfaSecretCipherTest` (manomissione, chiave diversa), `MfaIT` (16 test, tra cui 8 login paralleli con lo stesso codice → una sola sessione, `@RepeatedTest(5)`, e l'avviso dal login Google). `docs/openapi.json` rigenerato. `./mvnw verify` verde: 76 unit + 179 IT.
+
+**Audit della 2FA del 10/11 (ADR-0026, `V17__mfa_setup_email_code`, corretto da Claude su richiesta):** cinque piste proposte da un audit esterno, verificate sul codice.
+- **respinta — il reset della password scavalca la 2FA:** `confirmReset` non apre sessioni e la 2FA resta al login (scelta di §9 sopra);
+- **respinta — gestione della 2FA con il solo bearer:** rischio già accettato; con il solo bearer si cancella anche l'account, chiedere la password solo qui non alza la garanzia;
+- **corretta — blocco della 2FA di una vittima:** il bucket `rl:mfa:` era unico per login e rotte `/mfa`, e chi conosceva la password ne bloccava il titolare per sempre (un errore ogni 12 minuti). Ora due bucket: `rl:mfa:` (login) e `rl:mfa-session:` (`enable`, `disable`, `recovery-codes`, cambio password); il reset della password e quello da ADMIN li azzerano entrambi;
+- **corretta — il cambio password apriva una sessione senza 2FA:** `mfaCode` facoltativo in `ChangePasswordRequest`, obbligatorio con la 2FA attiva; `MfaService.verifyStepUp` → 422 `invalid-mfa-code` (mai 401, l'app lo prenderebbe per un token scaduto);
+- **corretta — account pre-registrato con l'email di un altro:** chi registrava `vittima@gmail.com` e attivava la 2FA chiudeva fuori la vittima anche al login con Google. Ora `setup` manda un codice all'email dell'account (16 caratteri, 15 minuti, solo l'hash SHA-256 in `user_mfa`) ed `enable` richiede `emailCode` oltre al TOTP; il collegamento a Google cancella anche i dispositivi (`DeviceService.deleteAllOf`).
+
+**Checkpoint dell'audit:**
+- [x] `MfaIT`: `enableNeedsTheCodeSentToTheAccountEmail` (senza codice 400, sbagliato 422, minuscolo senza trattino 200, hash cancellato), `changePasswordNeedsTheSecondFactor`, `drainedLoginBucketDoesNotBlockTheOwnerInSession`, `googleLinkRemovesTheDevicesOfThePreRegisteredAccount`; il codice email si legge dal mock di `MfaAlertMailer` (`awaitEmailCode`)
+- [x] `PasswordResetIT`: il reset riuscito azzera `rl:mfa:`
+- [x] `MigrationIT` con V17; `docs/openapi.json` rigenerato; `./mvnw verify` verde (76 unit + 189 IT)
+- [x] Prova dal vivo (10/11): app sull'emulatore, email su Mailpit; setup con codice email sbagliato → errore sul campo, giusto → 2FA attiva; cambio password senza codice, con codice sbagliato e con un codice di recupero
+- [x] Reset da ADMIN dal vivo sull'account vero dell'utente (app di autenticazione persa): 204, email di avviso da Gmail
+
+**Limiti noti accettati (ADR-0026):** senza email configurata la 2FA non si attiva; chi conosce la password spende ancora il bucket del login (il titolare lo sblocca cambiando la password); l'account pre-registrato senza 2FA tiene i dati creati da chi l'aveva registrato. **Non coperto:** verifica dell'email alla registrazione (correzione alla radice).
 
 ---
 

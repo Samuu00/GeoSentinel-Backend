@@ -1,6 +1,7 @@
 package it.unical.geosentinel.trail.infrastructure.persistence;
 
 import it.unical.geosentinel.trail.domain.Trail;
+import it.unical.geosentinel.trail.domain.TrailStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -9,6 +10,9 @@ import java.util.UUID;
 import java.util.List;
 
 public interface TrailRepository extends JpaRepository<Trail, UUID>{
+    // La rete del percorso A→B (RouteService): tutti i sentieri non chiusi, col percorso completo
+    List<Trail> findByStatusNot(TrailStatus status);
+
     @Query(value = """
             SELECT t.* FROM trails t
             WHERE ST_DWithin(t.path::geography, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :radiusMeters)

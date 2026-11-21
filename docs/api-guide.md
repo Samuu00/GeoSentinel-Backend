@@ -48,7 +48,9 @@ ripete da solo.
 I token vanno salvati cifrati (Android Keystore, iOS Keychain).
 
 Il cambio password (`POST /users/me/password`, che restituisce token nuovi) e la cancellazione dell'account
-(`DELETE /users/me`) invalidano anche gli access token degli altri dispositivi.
+(`DELETE /users/me`) invalidano anche gli access token degli altri dispositivi. Con la verifica in due passaggi attiva
+il cambio password chiede anche `mfaCode` (TOTP o codice di recupero): se manca o è sbagliato → 422 `invalid-mfa-code`
+(ADR-0026).
 
 ### Verifica in due passaggi
 
@@ -57,8 +59,8 @@ Facoltativa per ogni ruolo, con un'app di autenticazione (TOTP: 6 cifre, 30 s). 
 
 | Passo | Operazione | Note |
 |---|---|---|
-| Configurazione | `POST /users/me/mfa/setup` | → `secret` (Base32, per l'inserimento a mano) e `otpauthUri` (da mostrare come QR o da aprire nell'app di autenticazione). Ripeterla prima della conferma cambia il segreto; con la 2FA già attiva → 409 `mfa-already-enabled` |
-| Conferma | `POST /users/me/mfa/enable` `{code}` | Un TOTP valido → `codes`: 10 codici di recupero, **mostrati una volta sola** (l'app li fa salvare all'utente). Codice sbagliato → 422 `invalid-mfa-code` |
+| Configurazione | `POST /users/me/mfa/setup` | → `secret` (Base32, per l'inserimento a mano) e `otpauthUri` (da mostrare come QR o da aprire nell'app di autenticazione). Manda anche un **codice all'email** dell'account (16 caratteri, vale 15 minuti; ADR-0026). Ripeterla prima della conferma cambia il segreto e il codice; con la 2FA già attiva → 409 `mfa-already-enabled` |
+| Conferma | `POST /users/me/mfa/enable` `{code, emailCode}` | TOTP valido + codice dell'email (maiuscole, trattini e spazi indifferenti) → `codes`: 10 codici di recupero, **mostrati una volta sola** (l'app li fa salvare all'utente). Uno dei due sbagliato → 422 `invalid-mfa-code`, senza dire quale; `emailCode` assente → 400 |
 | Disattivazione | `POST /users/me/mfa/disable` `{code}` | TOTP o codice di recupero → 204 |
 | Nuovi codici di recupero | `POST /users/me/mfa/recovery-codes` `{code}` | Solo TOTP → 10 codici nuovi; i vecchi smettono di valere |
 | Stato | `GET /users/me` | `mfaEnabled` |
@@ -74,8 +76,9 @@ Facoltativa per ogni ruolo, con un'app di autenticazione (TOTP: 6 cifre, 30 s). 
 Ogni codice vale una volta sola: se il login va a buon fine ma la risposta si perde, l'app aspetta il codice
 successivo, non ripete lo stesso. Il refresh non chiede il codice.
 
-Limiti: 5 codici sbagliati all'ora per account (login, `disable`, `recovery-codes`) → 429 con `Retry-After`, anche con
-il codice giusto. Al terzo codice sbagliato del login il titolare riceve un'email; ne riceve una anche quando la 2FA
+Limiti: 5 codici sbagliati all'ora per account → 429 con `Retry-After`, anche con il codice giusto. Due contatori
+separati (ADR-0026): uno per il login, uno per le operazioni da dentro l'app (`enable`, `disable`, `recovery-codes`,
+cambio password); un codice giusto, il reset della password e quello da ADMIN li azzerano. Al terzo codice sbagliato del login il titolare riceve un'email; ne riceve una anche quando la 2FA
 viene attivata o disattivata.
 
 **Telefono e codici di recupero persi:** l'utente contatta il supporto. Un `ADMIN`, dopo aver verificato l'identità

@@ -39,6 +39,7 @@ import org.springframework.security.web.header.writers.DelegatingRequestMatcherH
 import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
+import org.springframework.security.web.util.matcher.AndRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
@@ -69,9 +70,12 @@ public class SecurityConfig {
     // GET pubbliche del catalogo con ETag (HttpCacheConfig): "no-cache" permette all'app di conservare la risposta
     // e la obbliga a rivalidarla con If-None-Match. Il "no-store" di default impedirebbe sia la cache del client
     // sia l'ETag (ShallowEtagHeaderFilter lo salta). Tutte le altre rotte restano no-store: contengono dati personali
-    private static final RequestMatcher PUBLIC_CATALOG = new OrRequestMatcher(
-            PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/trails/**"),
-            PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/pois/**"));
+    // Il percorso A→B (ADR-0027) no: la richiesta contiene la posizione dell'utente, resta no-store (e senza ETag)
+    private static final RequestMatcher PUBLIC_CATALOG = new AndRequestMatcher(
+            new OrRequestMatcher(
+                    PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/trails/**"),
+                    PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/pois/**")),
+            new NegatedRequestMatcher(PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/trails/route")));
 
     private final JtiBlacklistValidator jtiBlacklistValidator;
     private final ProblemAuthenticationEntryPoint authenticationEntryPoint;

@@ -1,5 +1,6 @@
 package it.unical.geosentinel.shared.config;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -11,10 +12,17 @@ import org.springframework.web.filter.ShallowEtagHeaderFilter;
 // Il Cache-Control "no-cache" di queste rotte lo scrive SecurityConfig (PUBLIC_CATALOG)
 @Configuration
 public class HttpCacheConfig {
+    private static final String ROUTE_PATH = "/api/v1/trails/route";
 
     @Bean
     public FilterRegistrationBean<ShallowEtagHeaderFilter> catalogEtagFilter() {
-        ShallowEtagHeaderFilter filter = new ShallowEtagHeaderFilter();
+        ShallowEtagHeaderFilter filter = new ShallowEtagHeaderFilter() {
+            // il percorso A→B (ADR-0027) contiene la posizione dell'utente: no-store e niente ETag (SecurityConfig)
+            @Override
+            protected boolean shouldNotFilter(HttpServletRequest request) {
+                return ROUTE_PATH.equals(request.getRequestURI());
+            }
+        };
         // ETag debole (W/"..."): Tomcat non comprime le risposte con un ETag forte, e senza questa riga
         // le GET del catalogo non sarebbero mai gzip. If-None-Match usa comunque il confronto debole (RFC 9110)
         filter.setWriteWeakETag(true);

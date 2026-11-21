@@ -1,8 +1,10 @@
 package it.unical.geosentinel.trail.web;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import it.unical.geosentinel.trail.application.RouteService;
 import it.unical.geosentinel.trail.web.dto.TrailMapper;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
@@ -15,6 +17,7 @@ import it.unical.geosentinel.trail.application.dto.TrailCommands.GeoQuery;
 import it.unical.geosentinel.trail.application.dto.TrailCommands.TrailDetail;
 import it.unical.geosentinel.trail.application.dto.TrailCommands.TrailSummary;
 import it.unical.geosentinel.trail.web.dto.TrailDtos.CreateTrailRequest;
+import it.unical.geosentinel.trail.web.dto.TrailDtos.RouteResponse;
 import it.unical.geosentinel.trail.web.dto.TrailDtos.TrailDetailResponse;
 import it.unical.geosentinel.trail.web.dto.TrailDtos.TrailSummaryResponse;
 import it.unical.geosentinel.trail.web.dto.TrailDtos.UpdateTrailRequest;
@@ -44,10 +47,12 @@ import java.util.UUID;
 public class TrailController {
     private final TrailService trailService;
     private final TrailMapper trailMapper;
+    private final RouteService routeService;
 
-    public TrailController(TrailService trailService, TrailMapper trailMapper) {
+    public TrailController(TrailService trailService, TrailMapper trailMapper, RouteService routeService) {
         this.trailService = trailService;
         this.trailMapper = trailMapper;
+        this.routeService = routeService;
     }
 
     @GetMapping("/{id}")
@@ -68,6 +73,23 @@ public class TrailController {
         GeoQuery query = new GeoQuery(lon, lat, radius, limit);
         List<TrailSummary> summaries = trailService.findNearby(query);
         return ResponseEntity.ok(summaries.stream().map(trailMapper::toResponse).toList());
+    }
+
+    // Pubblica come il resto del catalogo; "/route" vince su "/{id}" perché è un segmento fisso
+    @GetMapping("/route")
+    @Operation(operationId = "findRoute", summary = "Find the shortest walking route on open trails between two points (each within 50 km of a trail; the off-trail stretches are not part of the path)",
+            responses = {
+                    @ApiResponse(responseCode = "200", description = "Route found"),
+                    @ApiResponse(responseCode = "422", description = "A point is more than 50 km from every open trail, or the two points are on trails that do not connect (no-route)")
+            })
+    public ResponseEntity<RouteResponse> findRoute(
+            @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") double fromLon,
+            @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") double fromLat,
+            @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") double toLon,
+            @RequestParam @DecimalMin("-90.0") @DecimalMax("90.0") double toLat
+    ) {
+        RouteService.Route route = routeService.findRoute(fromLon, fromLat, toLon, toLat);
+        return ResponseEntity.ok(new RouteResponse(route.path(), route.lengthM(), route.trailIds()));
     }
 
     @GetMapping

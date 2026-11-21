@@ -9,6 +9,7 @@ import it.unical.geosentinel.shared.web.geo.GeoJsonLineString;
 import it.unical.geosentinel.trail.domain.Difficulty;
 import it.unical.geosentinel.trail.domain.TrailStatus;
 
+import java.util.List;
 import java.util.UUID;
 
 import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
@@ -48,6 +49,14 @@ public class TrailDtos {
             @Schema(requiredMode = REQUIRED) TrailStatus status,
             @Schema(requiredMode = REQUIRED) GeoJsonLineString path,
             @Schema(requiredMode = REQUIRED) Double lengthM
+    ) {}
+
+    // Percorso A→B sui sentieri aperti (ADR-0027): parte e arriva sul vertice di sentiero più vicino ai due punti
+    public record RouteResponse(
+            @Schema(requiredMode = REQUIRED, description = "Path from the trail vertex nearest to the start to the one nearest to the destination")
+            GeoJsonLineString path,
+            @Schema(requiredMode = REQUIRED) Double lengthM,
+            @Schema(requiredMode = REQUIRED, description = "Trails walked, in order") List<UUID> trailIds
     ) {}
 
     public record TrailSummaryResponse(

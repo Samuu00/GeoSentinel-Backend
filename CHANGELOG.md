@@ -5,6 +5,11 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 
 ## [Non rilasciato]
 
+### Aggiunto
+- `GET /trails/route` (`findRoute`, ADR-0027): percorso a piedi più breve sui sentieri aperti tra due punti, con
+  `path` (semplificato a ~5 m), `lengthM` e `trailIds`; 422 `no-route` se un punto è a più di 50 km dai sentieri o
+  non sono collegati. La rete si prepara all'avvio.
+
 ### Sicurezza
 - Audit della 2FA del 10/11 (ADR-0026, V17). Tre piste confermate e corrette, due respinte (motivi nell'ADR):
   - `POST /users/me/mfa/setup` manda un codice all'email dell'account; `POST /users/me/mfa/enable` richiede

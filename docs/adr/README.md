@@ -32,3 +32,4 @@ del vecchio (`Sostituito da ADR-XXXX`). Il modello è in [`template.md`](templat
 | [0024](0024-login-google.md) | Login con Google tramite ID token nativo | 2026-10-17 | Accettato |
 | [0025](0025-verifica-in-due-passaggi.md) | Verifica in due passaggi con TOTP | 2026-10-19 | Accettato |
 | [0026](0026-rafforzamento-2fa.md) | Rafforzamento della 2FA dopo l'audit del 10/11 | 2026-11-10 | Accettato |
+| [0027](0027-percorso-sui-sentieri.md) | Percorso A→B sui sentieri, in memoria con JTS | 2026-11-21 | Accettato |
