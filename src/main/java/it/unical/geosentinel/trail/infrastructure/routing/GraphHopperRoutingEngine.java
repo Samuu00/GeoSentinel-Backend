@@ -22,8 +22,9 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * {@link RoutingEngine} su GraphHopper ({@code POST /route}, ADR-0028). Le aree vietate vanno nel custom model della
- * richiesta: con il profilo senza CH GraphHopper lo accetta, e una priorità 0 esclude gli archi dentro l'area.
+ * {@link RoutingEngine} su GraphHopper ({@code POST /route}, ADR-0028). Il custom model della richiesta (ammesso con il
+ * profilo senza CH) tiene solo i tratti degli itinerari escursionistici ({@code foot_network}) e, con priorità 0,
+ * esclude gli archi dentro le aree vietate.
  * Un 400 di GraphHopper ("Cannot find point", "Connection between locations not found") è "nessun percorso";
  * rete, timeout e 5xx sono il motore che non risponde. Mai coordinate nei log né nei messaggi.
  */
@@ -65,13 +66,19 @@ public class GraphHopperRoutingEngine implements RoutingEngine {
         body.put("profile", profile);
         body.put("points_encoded", false);
         body.put("instructions", false);
+        // Solo i sentieri: i tratti che non fanno parte di un itinerario escursionistico di OSM (route=hiking, da cui
+        // vengono i sentieri del parco, tools/osm-import) hanno priorità 0, quindi niente strade né scorciatoie
+        List<Map<String, Object>> priority = new ArrayList<>();
+        priority.add(Map.of("if", "foot_network == MISSING", "multiply_by", "0"));
+        Map<String, Object> customModel = new LinkedHashMap<>();
+        customModel.put("priority", priority);
         if (avoidGeoJson != null) {
             Map<String, Object> feature = Map.of("type", "Feature", "id", AREA_ID, "properties", Map.of(),
                     "geometry", jsonMapper.readTree(avoidGeoJson));
-            body.put("custom_model", Map.of(
-                    "priority", List.of(Map.of("if", "in_" + AREA_ID, "multiply_by", "0")),
-                    "areas", Map.of("type", "FeatureCollection", "features", List.of(feature))));
+            priority.add(Map.of("if", "in_" + AREA_ID, "multiply_by", "0"));
+            customModel.put("areas", Map.of("type", "FeatureCollection", "features", List.of(feature)));
         }
+        body.put("custom_model", customModel);
         JsonNode response;
         try {
             response = client.post().uri("/route").contentType(MediaType.APPLICATION_JSON).body(body)

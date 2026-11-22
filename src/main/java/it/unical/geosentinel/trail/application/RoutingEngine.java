@@ -15,7 +15,8 @@ public interface RoutingEngine {
     record EngineRoute(List<List<Double>> coordinates, double distanceM) {}
 
     /**
-     * Il percorso a piedi da A a B che non entra nelle aree vietate.
+     * Il percorso a piedi da A a B solo sui sentieri (i tratti degli itinerari escursionistici), fuori dalle aree
+     * vietate. Partenza e arrivo si agganciano al sentiero più vicino, anche lontano: la distanza la controlla chi chiama.
      *
      * @param avoidGeoJson geometria GeoJSON (Polygon o MultiPolygon, {@code [lon, lat]}) da non attraversare, o null
      * @return vuoto se il motore non trova un percorso (un punto fuori dalla rete o due punti non collegati)

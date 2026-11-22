@@ -1245,6 +1245,9 @@ circa 57 gruppi non collegati, e tra due gruppi l'app mostrava una linea dritta.
   `tools/osm-import`), configurazione in `tools/routing/config.yml`, grafo nel volume `geosentinel_graphhopper_data`.
 - **Porta** `trail/application/RoutingEngine`, **adattatore** `trail/infrastructure/routing/GraphHopperRoutingEngine`
   (`POST /route`, timeout 2 s + 10 s, `geosentinel.routing.url` = `ROUTING_URL`).
+- **Solo sui sentieri del parco:** priorità 0 a ciò che non è un itinerario escursionistico OSM
+  (`foot_network == MISSING`); partenza e arrivo entro 1 km dal sentiero (`RouteService.MAX_SNAP_METERS`), altrimenti
+  422 `no-route`. Niente strade.
 - **Sentieri `CLOSED`:** tracciato allargato di 10 m, unito in PostGIS (`TrailRepository.findClosedAreasGeoJson`),
   mandato a ogni richiesta come area con priorità 0 nel custom model.
 - **`trailIds`:** sentieri aperti seguiti per almeno 50 m entro 20 m, in ordine lungo il percorso
@@ -1258,9 +1261,11 @@ circa 57 gruppi non collegati, e tra due gruppi l'app mostrava una linea dritta.
 - [x] `TrailRouteIT` (4, motore finto con `@MockitoBean`): sentieri seguiti in ordine e `no-store`; sentiero chiuso
   mandato come area e tolto dai `trailIds`; 422 `no-route`; 503 `routing-unavailable` con `Retry-After`
 - [x] `docs/openapi.json` rigenerato (descrizione della rotta, 503); `./mvnw verify` verde (193 IT)
-- [x] Dal vivo, compose locale: Camigliatello → Lorica 18,9 km con 10 sentieri del parco; un'area vietata fa girare il
-  percorso attorno (+1,8 km); un punto fuori dalla Calabria → 422
-- [x] Dall'app sull'emulatore: dalla pagina del rifugio, Camigliatello → Lo Scoiattolo 16,7 km su 8 sentieri
+- [x] Dal vivo, compose locale, solo sentieri: Camigliatello → Lorica 25,1 km su 9 sentieri (con le strade erano
+  18,9 km); da Cosenza (oltre 1 km dai sentieri) e fuori dalla Calabria → 422; un'area vietata fa girare il percorso
+- [x] `TrailRouteIT` (5): anche partenza a più di 1 km dal sentiero → 422; `./mvnw verify` verde (194 IT)
+- [x] Dall'app sull'emulatore (prima versione, con le strade): dalla pagina del rifugio, Camigliatello → Lo Scoiattolo
+- [ ] Dall'app, solo sentieri: percorso sulla mappa e messaggio "nessun percorso" da un paese lontano dai sentieri
 - [ ] Servizio `graphhopper` in `docker-compose.prod.yml` (§7)
 - [ ] Review con la catena di §5 (riga "Percorso A→B")
 

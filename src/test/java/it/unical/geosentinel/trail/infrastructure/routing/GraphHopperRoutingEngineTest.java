@@ -43,8 +43,9 @@ class GraphHopperRoutingEngineTest {
                 .andExpect(jsonPath("$.points[0][1]").value(39.33))
                 .andExpect(jsonPath("$.profile").value("hike"))
                 .andExpect(jsonPath("$.points_encoded").value(false))
-                .andExpect(jsonPath("$.custom_model.priority[0].if").value("in_closed"))
-                .andExpect(jsonPath("$.custom_model.priority[0].multiply_by").value("0"))
+                .andExpect(jsonPath("$.custom_model.priority[0].if").value("foot_network == MISSING"))
+                .andExpect(jsonPath("$.custom_model.priority[1].if").value("in_closed"))
+                .andExpect(jsonPath("$.custom_model.priority[1].multiply_by").value("0"))
                 .andExpect(jsonPath("$.custom_model.areas.features[0].id").value("closed"))
                 .andExpect(jsonPath("$.custom_model.areas.features[0].geometry.type").value("MultiPolygon"))
                 .andRespond(withSuccess("""
@@ -61,9 +62,11 @@ class GraphHopperRoutingEngineTest {
     }
 
     @Test
-    void withoutAreasThereIsNoCustomModel() {
+    void withoutAreasOnlyTheTrailsRuleIsSent() {
         server.expect(requestTo("http://graphhopper:8989/route"))
-                .andExpect(jsonPath("$.custom_model").doesNotExist())
+                .andExpect(jsonPath("$.custom_model.priority.length()").value(1))
+                .andExpect(jsonPath("$.custom_model.priority[0].if").value("foot_network == MISSING"))
+                .andExpect(jsonPath("$.custom_model.areas").doesNotExist())
                 .andRespond(withSuccess("{\"paths\":[{\"distance\":1,\"points\":{\"coordinates\":[[1,2],[3,4]]}}]}", MediaType.APPLICATION_JSON));
 
         assertThat(engine.route(1, 2, 3, 4, null)).isPresent();

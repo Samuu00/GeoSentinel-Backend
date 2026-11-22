@@ -1,8 +1,8 @@
 package it.unical.geosentinel.shared.domain.exception;
 
-// Il motore non trova un percorso a piedi: un punto fuori dalla rete OSM o due punti non collegati (422 no-route)
+// Nessun percorso sui sentieri: un punto a più di 1 km da ogni sentiero, o sentieri non collegati (422 no-route)
 public class NoRouteException extends DomainException {
     public NoRouteException() {
-        super("No walking route between the two points: both must be inside the routing area and connected");
+        super("No route on the trails: both points must be within 1 km of a trail, on trails that connect");
     }
 }

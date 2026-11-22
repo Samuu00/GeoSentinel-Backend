@@ -5784,7 +5784,7 @@
                 }
               }
             },
-            "description" : "A point is outside the routing area, or no walking route connects the two points (no-route)"
+            "description" : "A point is more than 1 km from every park trail, or no chain of open trails connects the two points (no-route)"
           },
           "429" : {
             "content" : {
@@ -5817,7 +5817,7 @@
             "description" : "The routing service is unavailable (routing-unavailable): retry after Retry-After"
           }
         },
-        "summary" : "Find a walking route between two points on the OpenStreetMap paths and roads, avoiding closed trails; trailIds are the park trails it follows",
+        "summary" : "Find a walking route between two points on the park trails only (no roads), avoiding closed trails; trailIds are the trails it follows",
         "tags" : [ "Trails" ]
       }
     },

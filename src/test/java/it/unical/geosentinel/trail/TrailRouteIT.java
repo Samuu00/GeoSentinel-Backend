@@ -98,6 +98,17 @@ class TrailRouteIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void startMoreThanOneKilometerFromTheTrailsIsA422NoRoute() {
+        // il motore aggancia la partenza al sentiero più vicino, qui a circa 4 km
+        when(routingEngine.route(anyDouble(), anyDouble(), anyDouble(), anyDouble(), any())).thenReturn(Optional.of(alongBoth));
+
+        HttpResult result = route(9.950, 45.000, 10.010, 45.030);
+
+        assertThat(result.status()).isEqualTo(422);
+        assertThat(json(result.body()).get("type").asString()).endsWith("/no-route");
+    }
+
+    @Test
     void engineDownIsA503WithRetryAfter() {
         when(routingEngine.route(anyDouble(), anyDouble(), anyDouble(), anyDouble(), any()))
                 .thenThrow(new RoutingUnavailableException("down", null));

@@ -77,10 +77,10 @@ public class TrailController {
 
     // Pubblica come il resto del catalogo (ADR-0028); "/route" vince su "/{id}" perché è un segmento fisso
     @GetMapping("/route")
-    @Operation(operationId = "findRoute", summary = "Find a walking route between two points on the OpenStreetMap paths and roads, avoiding closed trails; trailIds are the park trails it follows",
+    @Operation(operationId = "findRoute", summary = "Find a walking route between two points on the park trails only (no roads), avoiding closed trails; trailIds are the trails it follows",
             responses = {
                     @ApiResponse(responseCode = "200", description = "Route found"),
-                    @ApiResponse(responseCode = "422", description = "A point is outside the routing area, or no walking route connects the two points (no-route)"),
+                    @ApiResponse(responseCode = "422", description = "A point is more than 1 km from every park trail, or no chain of open trails connects the two points (no-route)"),
                     @ApiResponse(responseCode = "503", description = "The routing service is unavailable (routing-unavailable): retry after Retry-After")
             })
     public ResponseEntity<RouteResponse> findRoute(

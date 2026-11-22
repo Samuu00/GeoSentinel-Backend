@@ -14,9 +14,9 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * Percorso A→B a piedi (ADR-0028): lo calcola il motore ({@link RoutingEngine}, GraphHopper sull'estratto OSM) su
- * sentieri, mulattiere e strade, lontano dai sentieri CLOSED del parco; i sentieri del parco che il percorso segue
- * si ricavano in PostGIS. Le coordinate di partenza e arrivo sono posizioni degli utenti: non si loggano.
+ * Percorso A→B solo sui sentieri del parco (ADR-0028): lo calcola il motore ({@link RoutingEngine}, GraphHopper
+ * sull'estratto OSM) sugli itinerari escursionistici, lontano dai sentieri CLOSED; partenza e arrivo entro 1 km da un
+ * sentiero, altrimenti nessun percorso. I sentieri del parco che il percorso segue si ricavano in PostGIS. Le coordinate di partenza e arrivo sono posizioni degli utenti: non si loggano.
  */
 @Service
 public class RouteService {
@@ -31,6 +31,9 @@ public class RouteService {
     // al metro; un incrocio non basta)
     private static final double TRAIL_MATCH_TOLERANCE_METERS = 20;
     private static final double TRAIL_MATCH_MIN_OVERLAP_METERS = 50;
+    // Distanza massima tra un punto (partenza o arrivo) e il sentiero su cui si aggancia
+    private static final double MAX_SNAP_METERS = 1_000;
+    private static final double EARTH_RADIUS_METERS = 6_371_000;
     private static final GeometryFactory GEOMETRY = new GeometryFactory();
 
     private final TrailRepository trailRepository;
@@ -46,11 +49,28 @@ public class RouteService {
         String closedAreas = trailRepository.findClosedAreasGeoJson(CLOSED_BUFFER_METERS);
         RoutingEngine.EngineRoute route = routingEngine.route(fromLon, fromLat, toLon, toLat, closedAreas)
                 .orElseThrow(NoRouteException::new);
+        // Il motore aggancia partenza e arrivo al sentiero più vicino anche se è lontano: oltre MAX_SNAP_METERS il punto
+        // non è "sul sentiero" e il percorso non c'è (si cammina solo sui sentieri del parco)
+        List<Double> first = route.coordinates().getFirst();
+        List<Double> last = route.coordinates().getLast();
+        if (distanceMeters(fromLon, fromLat, first.get(0), first.get(1)) > MAX_SNAP_METERS
+                || distanceMeters(toLon, toLat, last.get(0), last.get(1)) > MAX_SNAP_METERS) {
+            throw new NoRouteException();
+        }
         // ~5 m come i sentieri della mappa (ADR-0020)
         Coordinate[] all = route.coordinates().stream().map(c -> new Coordinate(c.get(0), c.get(1))).toArray(Coordinate[]::new);
         Coordinate[] simplified = DouglasPeuckerSimplifier.simplify(GEOMETRY.createLineString(all), SIMPLIFY_TOLERANCE_DEGREES).getCoordinates();
         List<List<Double>> coordinates = Arrays.stream(simplified).map(c -> List.of(c.x, c.y)).toList();
         return new Route(GeoJsonLineString.of(coordinates), route.distanceM(), trailsAlong(simplified));
+    }
+
+    // Haversine: per distanze di qualche km l'errore è di pochi metri
+    private static double distanceMeters(double lon1, double lat1, double lon2, double lat2) {
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.pow(Math.sin(dLat / 2), 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.pow(Math.sin(dLon / 2), 2);
+        return 2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(Math.min(1, a)));
     }
 
     // Le query del repository hanno già la loro transazione di sola lettura (Spring Data)
