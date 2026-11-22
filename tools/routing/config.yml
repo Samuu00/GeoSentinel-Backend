@@ -1,0 +1,36 @@
+# GraphHopper 10 per il percorso A→B (ADR-0028). Un solo profilo a piedi, senza CH né LM: il backend manda a ogni
+# richiesta un custom model con le aree dei sentieri CLOSED, che con CH non si potrebbe. La Calabria è piccola:
+# Dijkstra/A* senza preparazione risponde in decine di millisecondi.
+graphhopper:
+  datareader.file: ""
+  graph.location: /graph/calabria-gh
+  profiles:
+    - name: hike
+      custom_model_files: [hike.json]
+  profiles_ch: []
+  profiles_lm: []
+  # Senza quote (niente download SRTM): niente average_slope né foot_elevation.json
+  graph.encoded_values: foot_access, hike_rating, foot_priority, foot_network, foot_average_speed
+  prepare.min_network_size: 200
+  prepare.subnetworks.threads: 1
+  routing.snap_preventions_default: tunnel, bridge, ferry
+  routing.non_ch.max_waypoint_distance: 1000000
+  # A piedi si tolgono solo le autostrade (il pedone non può entrarci); sentieri, strade e mulattiere restano
+  import.osm.ignored_highways: motorway,motorway_link
+  graph.dataaccess.default_type: RAM_STORE
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+      bind_host: 0.0.0.0
+  request_log:
+    appenders: []
+  admin_connectors:
+    - type: http
+      port: 8990
+      bind_host: 0.0.0.0
+logging:
+  appenders:
+    - type: console
+      time_zone: UTC
+      log_format: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %logger{36} - %msg%n"

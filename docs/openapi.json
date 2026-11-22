@@ -5784,7 +5784,7 @@
                 }
               }
             },
-            "description" : "A point is more than 50 km from every open trail, or the two points are on trails that do not connect (no-route)"
+            "description" : "A point is outside the routing area, or no walking route connects the two points (no-route)"
           },
           "429" : {
             "content" : {
@@ -5805,9 +5805,19 @@
               }
             },
             "description" : "Unexpected error (internal-error)"
+          },
+          "503" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RouteResponse"
+                }
+              }
+            },
+            "description" : "The routing service is unavailable (routing-unavailable): retry after Retry-After"
           }
         },
-        "summary" : "Find the shortest walking route on open trails between two points (each within 50 km of a trail; the off-trail stretches are not part of the path)",
+        "summary" : "Find a walking route between two points on the OpenStreetMap paths and roads, avoiding closed trails; trailIds are the park trails it follows",
         "tags" : [ "Trails" ]
       }
     },
@@ -7533,7 +7543,7 @@
           "type" : {
             "type" : "string",
             "format" : "uri",
-            "description" : "https://geosentinel.dev/problems/<slug>, stable slugs: account-managed, age-requirement-not-met, alert-already-taken, birth-date-required, business-rule, capacity-exceeded, concurrent-modification, conflict, forbidden, idempotency-key-reused, identity-provider-unavailable, internal-error, invalid-mfa-code, invalid-reset-code, media-payload-too-large, media-quota-exceeded, media-unsupported-type, mfa-already-enabled, mfa-required, no-route, not-found, precondition-required, rate-limit-exceeded, resource-busy, storage-unavailable, unauthorized, validation-error. Clients must map the slug, never the detail text, and tolerate unknown slugs",
+            "description" : "https://geosentinel.dev/problems/<slug>, stable slugs: account-managed, age-requirement-not-met, alert-already-taken, birth-date-required, business-rule, capacity-exceeded, concurrent-modification, conflict, forbidden, idempotency-key-reused, identity-provider-unavailable, internal-error, invalid-mfa-code, invalid-reset-code, media-payload-too-large, media-quota-exceeded, media-unsupported-type, mfa-already-enabled, mfa-required, no-route, not-found, precondition-required, rate-limit-exceeded, resource-busy, routing-unavailable, storage-unavailable, unauthorized, validation-error. Clients must map the slug, never the detail text, and tolerate unknown slugs",
             "example" : "https://geosentinel.dev/problems/validation-error"
           }
         },

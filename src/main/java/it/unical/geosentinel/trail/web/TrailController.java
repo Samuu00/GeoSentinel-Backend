@@ -75,12 +75,13 @@ public class TrailController {
         return ResponseEntity.ok(summaries.stream().map(trailMapper::toResponse).toList());
     }
 
-    // Pubblica come il resto del catalogo; "/route" vince su "/{id}" perché è un segmento fisso
+    // Pubblica come il resto del catalogo (ADR-0028); "/route" vince su "/{id}" perché è un segmento fisso
     @GetMapping("/route")
-    @Operation(operationId = "findRoute", summary = "Find the shortest walking route on open trails between two points (each within 50 km of a trail; the off-trail stretches are not part of the path)",
+    @Operation(operationId = "findRoute", summary = "Find a walking route between two points on the OpenStreetMap paths and roads, avoiding closed trails; trailIds are the park trails it follows",
             responses = {
                     @ApiResponse(responseCode = "200", description = "Route found"),
-                    @ApiResponse(responseCode = "422", description = "A point is more than 50 km from every open trail, or the two points are on trails that do not connect (no-route)")
+                    @ApiResponse(responseCode = "422", description = "A point is outside the routing area, or no walking route connects the two points (no-route)"),
+                    @ApiResponse(responseCode = "503", description = "The routing service is unavailable (routing-unavailable): retry after Retry-After")
             })
     public ResponseEntity<RouteResponse> findRoute(
             @RequestParam @DecimalMin("-180.0") @DecimalMax("180.0") double fromLon,

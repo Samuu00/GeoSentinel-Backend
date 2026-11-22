@@ -1,6 +1,6 @@
 # ADR-0027: Percorso A→B sui sentieri, calcolato in memoria con JTS
 
-- **Stato:** Accettato
+- **Stato:** Sostituito dall'[ADR-0028](0028-percorso-con-graphhopper.md) (22/11)
 - **Data:** 2026-11-21
 
 ## Contesto

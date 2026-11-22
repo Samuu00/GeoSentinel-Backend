@@ -157,6 +157,7 @@ inglese e possono cambiare. Gli errori di validazione aggiungono `errors[]`, con
 | `rate-limit-exceeded` | 429 | Troppe richieste: aspettare `Retry-After` |
 | `storage-unavailable` | 503 | Object storage irraggiungibile: riprovare dopo `Retry-After` |
 | `identity-provider-unavailable` | 503 | Chiavi pubbliche di Google irraggiungibili: riprovare dopo `Retry-After` |
+| `routing-unavailable` | 503 | Motore del percorso A→B (GraphHopper) irraggiungibile: riprovare dopo `Retry-After` ([ADR-0028](adr/0028-percorso-con-graphhopper.md)) |
 | `internal-error` | 500 | Errore inatteso (segnalarlo con il `traceId`) |
 
 ## Retry e idempotenza

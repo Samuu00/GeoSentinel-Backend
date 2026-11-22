@@ -161,6 +161,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 "The file storage is temporarily unavailable. Retry shortly.", headers, request);
     }
 
+    @ExceptionHandler(RoutingUnavailableException.class)
+    public ResponseEntity<Object> handleRoutingUnavailable(RoutingUnavailableException ex, WebRequest request) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.RETRY_AFTER, "5");
+        return problem(ex, HttpStatus.SERVICE_UNAVAILABLE, ProblemTypes.ROUTING_UNAVAILABLE, "Routing unavailable",
+                "The routing service is temporarily unavailable. Retry shortly.", headers, request);
+    }
+
     @ExceptionHandler(IdentityProviderUnavailableException.class)
     public ResponseEntity<Object> handleIdentityProviderUnavailable(IdentityProviderUnavailableException ex, WebRequest request) {
         HttpHeaders headers = new HttpHeaders();

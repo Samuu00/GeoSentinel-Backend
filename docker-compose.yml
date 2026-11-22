@@ -122,6 +122,33 @@ services:
       - geosentinel-net
 
   # ----------------------------------------------------------------------------
+  # GraphHopper: percorso A→B a piedi sull'estratto OSM della Calabria (ADR-0028). L'estratto si prepara con
+  # tools/routing/build_extract.sh; il grafo si costruisce al primo avvio (un paio di minuti) nel volume
+  # ----------------------------------------------------------------------------
+  graphhopper:
+    image: israelhikingmap/graphhopper:10.2
+    container_name: geosentinel-graphhopper
+    restart: unless-stopped
+    command: ["--input", "/osm/calabria.osm.pbf", "--config", "/config/config.yml"]
+    environment:
+      JAVA_OPTS: "-Xmx1g -Xms512m"
+    volumes:
+      - ./tools/routing/.cache:/osm:ro
+      - ./tools/routing/config.yml:/config/config.yml:ro
+      - graphhopper_data:/graph
+    ports:
+      # Solo per il backend avviato dall'IDE: il percorso parte dalle posizioni degli utenti
+      - "127.0.0.1:8989:8989"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8989"]
+      interval: 10s
+      timeout: 3s
+      start_period: 300s
+      retries: 10
+    networks:
+      - geosentinel-net
+
+  # ----------------------------------------------------------------------------
   # Backend (facoltativo, profilo "app")
   # ----------------------------------------------------------------------------
   backend:
@@ -141,6 +168,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       MINIO_ENDPOINT: http://minio:9000
+      ROUTING_URL: http://graphhopper:8989
       # Il JSON di Firebase non entra nell'immagine: si monta in sola lettura dal percorso del .env
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase.json
     volumes:
@@ -166,6 +194,8 @@ volumes:
     name: geosentinel_redis_data
   minio_data:
     name: geosentinel_minio_data
+  graphhopper_data:
+    name: geosentinel_graphhopper_data
 
 networks:
   geosentinel-net:

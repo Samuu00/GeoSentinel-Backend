@@ -15,6 +15,8 @@
 > - login con Google tramite ID token nativo (M7.2.3, ADR-0024, `V14__google_identity`), revisionato e corretto il 18/10; slug `birth-date-required` per l'app; client OAuth Web, Android e iOS creati, integrato nell'app (Android e iOS).
 > - **M8, verifica in due passaggi** (TOTP, ADR-0025, `V15__mfa`): scritta dall'utente, revisionata e corretta il 19/10; `./mvnw verify` verde (76 unit + 179 IT).
 > - **Audit della 2FA del 10/11** (ADR-0026, `V17__mfa_setup_email_code`): 3 piste su 5 confermate e corrette da Claude su richiesta (codice email allo setup, 2FA nel cambio password, due bucket dei tentativi, dispositivi cancellati al collegamento Google); `./mvnw verify` verde (76 unit + 189 IT); app adattata e provata sull'emulatore lo stesso giorno. Dettagli in fondo a M8.
+> - **Percorso A→B (21–22/11):** prima una rete in memoria (ADR-0027), poi GraphHopper sull'estratto OSM della Calabria (ADR-0028), sentieri `CLOSED` evitati, 503 `routing-unavailable`. Sezione "Dopo M9 — Percorso A→B" prima di M10.
+> **Cosa manca, in ordine: §7.**
 > **Pianificate (18/10), nell'ordine:** M9, foto profilo (media con target `USER`, V16); M10, rischio frane con un calcolo parallelo in C++ (MPI + pthread) e la feature `landslide` (V18, ADR-0022, ADR-0023), pianificata il 17/10 come M8 e spostata dopo le prime due.
 > M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
@@ -1226,6 +1228,44 @@ final class MfaSecretCipher { byte[] encrypt(byte[] plain); byte[] decrypt(byte[
 
 ---
 
+### Dopo M9 (21–22/11) — Percorso A→B (fatto; aperti produzione e review)
+
+> Su richiesta dell'app (sua sezione "Dopo il redesign"). Scritto da Claude su richiesta. ADR-0027 (21/11) sostituita
+> dall'ADR-0028 (22/11).
+
+**Obiettivo:** `GET /api/v1/trails/route?fromLon&fromLat&toLon&toLat` (pubblica, `no-store`) dà un percorso a piedi
+vero da A a B, anche dove i sentieri del parco non sono collegati tra loro.
+
+**Storia:** il 21/11 una rete in memoria con JTS sui soli sentieri del database (ADR-0027, `TrailNetwork`). Erano
+circa 57 gruppi non collegati, e tra due gruppi l'app mostrava una linea dritta. Il 22/11 sostituita da GraphHopper.
+
+**Scelte (ADR-0028):**
+- **GraphHopper 10** (`israelhikingmap/graphhopper:10.2`) nel `docker-compose.yml`, profilo `hike` senza quote, senza
+  CH né LM. Estratto OSM della Calabria da `tools/routing/build_extract.sh` (osmium sul `sud-latest.osm.pbf` di
+  `tools/osm-import`), configurazione in `tools/routing/config.yml`, grafo nel volume `geosentinel_graphhopper_data`.
+- **Porta** `trail/application/RoutingEngine`, **adattatore** `trail/infrastructure/routing/GraphHopperRoutingEngine`
+  (`POST /route`, timeout 2 s + 10 s, `geosentinel.routing.url` = `ROUTING_URL`).
+- **Sentieri `CLOSED`:** tracciato allargato di 10 m, unito in PostGIS (`TrailRepository.findClosedAreasGeoJson`),
+  mandato a ogni richiesta come area con priorità 0 nel custom model.
+- **`trailIds`:** sentieri aperti seguiti per almeno 50 m entro 20 m, in ordine lungo il percorso
+  (`TrailRepository.findTrailIdsAlong`).
+- **Errori:** 400 di GraphHopper → 422 `no-route`; rete, timeout, 5xx → 503 `routing-unavailable` con `Retry-After: 5`.
+- Tolti `TrailNetwork`, il suo test e l'evento `TrailsChanged`.
+
+**Checkpoint:**
+- [x] `GraphHopperRoutingEngineTest` (4, `MockRestServiceServer`): punti in `[lon, lat]`, area nel custom model,
+  niente custom model senza aree, 400 → vuoto, 5xx → `RoutingUnavailableException`
+- [x] `TrailRouteIT` (4, motore finto con `@MockitoBean`): sentieri seguiti in ordine e `no-store`; sentiero chiuso
+  mandato come area e tolto dai `trailIds`; 422 `no-route`; 503 `routing-unavailable` con `Retry-After`
+- [x] `docs/openapi.json` rigenerato (descrizione della rotta, 503); `./mvnw verify` verde (193 IT)
+- [x] Dal vivo, compose locale: Camigliatello → Lorica 18,9 km con 10 sentieri del parco; un'area vietata fa girare il
+  percorso attorno (+1,8 km); un punto fuori dalla Calabria → 422
+- [x] Dall'app sull'emulatore: dalla pagina del rifugio, Camigliatello → Lo Scoiattolo 16,7 km su 8 sentieri
+- [ ] Servizio `graphhopper` in `docker-compose.prod.yml` (§7)
+- [ ] Review con la catena di §5 (riga "Percorso A→B")
+
+---
+
 ### Milestone 10 — Rischio frane: calcolo parallelo in C++ (MPI + pthread)
 
 > Pianificata il 17/10, spostata da M8 a M10 il 18/10 (prima 2FA e foto profilo). Decisioni in ADR-0022 (architettura) e ADR-0023 (modello). Il codice lo scrivi tu, come sempre.
@@ -1492,6 +1532,7 @@ M0.1 → M0.2 → M0.3 → M0.4 → M0.5
   → M6
   → M7
   → M8 (2FA, V15) → M9 (foto profilo, V16)
+  → percorso A→B (21–22/11: ADR-0027, poi ADR-0028 con GraphHopper)
   → M10.1 → M10.2 → M10.3 → M10.4 → M10.5 → M10.6 → M10.8
            └─ M10.7 (Java, in parallelo dopo V18: si prova con zone finte)
 ```
@@ -1515,6 +1556,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 | 7 | App mobile (KMP) | `ecc:security-reviewer,ecc:java-reviewer` |
 | 8 | Verifica in due passaggi | `ecc:security-reviewer,ecc:java-reviewer` |
 | 9 | Foto profilo | `ecc:security-reviewer,ecc:java-reviewer` |
+| — | Percorso A→B (GraphHopper) | `ecc:security-reviewer,ecc:java-reviewer,ecc:database-reviewer` |
 | 10 | Rischio frane (C++ MPI/pthread) | `ecc:cpp-reviewer,ecc:database-reviewer,ecc:java-reviewer,ecc:security-reviewer` |
 
 ```bash
@@ -1534,8 +1576,40 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M9 sono completate (M8, la 2FA, e M9, la foto profilo, il 19/10); l'app KMP è a M9 in `../GeoSentinel-Mobile` e deve ancora integrare 2FA e foto profilo (client da rigenerare). Prossimo lavoro del backend: M10 (frane). Ognuna ha la sua parte nell'app (M10 e M11 del piano mobile). Per altre funzionalità:
+M0–M9 completate e integrate nell'app (2FA e foto profilo comprese), più il percorso A→B con GraphHopper (22/11). Prossimo lavoro: §7, poi M10 (rischio frane).
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.
 4. Spunta i checkpoint e passa al task successivo.
+
+## 7. Cosa manca (aggiornato al 22/11)
+
+In ordine di priorità. I dettagli stanno nei checkpoint delle milestone; qui solo l'elenco.
+
+### 7.1 Prima di un rilascio
+1. **GraphHopper in `docker-compose.prod.yml`:** servizio con l'estratto e il volume del grafo, `ROUTING_URL` per il
+   backend, limite di memoria (heap di 1 GB), nessuna porta esposta fuori dalla rete interna. Senza, il percorso
+   risponde 503.
+2. **Immagini fissate per digest**, non solo per tag: soprattutto quelle non ufficiali (`israelhikingmap/graphhopper`,
+   `pgsty/minio`, `pgsty/mc`).
+3. **Osservabilità:** il `traceId` c'è in ogni `ProblemDetail`, ma nessun exporter manda tracce e metriche da qualche
+   parte. Da decidere se serve per questa versione.
+
+### 7.2 Review e verifiche
+1. Catena di review di §5 sul percorso A→B (non ancora lanciata).
+2. Checkpoint aperti che si chiudono dall'app:
+   - flusso completo da Android e iOS (M7);
+   - primo accesso Google dal vivo (M7.2.3).
+3. Percorso provato solo con il motore finto nei test: un test d'integrazione contro GraphHopper vero (container con
+   un estratto minuscolo) se il percorso diventa centrale.
+
+### 7.3 Percorso A→B: miglioramenti noti (ADR-0028)
+1. **Aggiornamento dell'estratto OSM:** oggi a mano (`build_extract.sh`, poi si cancellano il container e il volume
+   del grafo). Da fare insieme a ogni nuovo import dei sentieri (`tools/osm-import`).
+2. **Aree dei sentieri chiusi rifatte a ogni richiesta:** con più traffico, una cache invalidata al cambio di stato
+   del sentiero.
+3. **Dislivello:** fuori dal costo (niente SRTM). Si aggiunge `foot_elevation.json` quando serve.
+
+### 7.4 Prossima milestone
+- **M10, rischio frane** (C++ MPI + pthread, feature `landslide`, V18): tutti i task di M10.1–M10.8 sono ancora da fare.
+
