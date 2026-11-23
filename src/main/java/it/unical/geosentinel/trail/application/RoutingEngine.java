@@ -1,3 +1,6 @@
+// Porta (interfaccia) verso il motore esterno che calcola i percorsi a piedi. L'applicazione dipende solo
+// da questa interfaccia; l'implementazione concreta, GraphHopperRoutingEngine, sta nel package
+// infrastructure e interroga il servizio GraphHopper costruito su un estratto di OpenStreetMap.
 package it.unical.geosentinel.trail.application;
 
 import it.unical.geosentinel.shared.domain.exception.RoutingUnavailableException;
@@ -6,20 +9,32 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Porta verso il motore di percorso a piedi (GraphHopper sull'estratto OSM, ADR-0028). Le coordinate sono posizioni
- * degli utenti: l'adattatore non le logga.
+ * Motore di calcolo dei percorsi a piedi. Le coordinate ricevute sono posizioni degli utenti, quindi
+ * dati personali: le implementazioni non devono scriverle nei log.
  */
 public interface RoutingEngine {
 
-    /** Il tracciato in coppie {@code [lon, lat]} dalla partenza all'arrivo, con la lunghezza in metri. */
+    /**
+     * Risultato grezzo del motore.
+     *
+     * @param coordinates tracciato dalla partenza all'arrivo, come coppie {@code [lon, lat]}
+     * @param distanceM   lunghezza del tracciato in metri
+     */
     record EngineRoute(List<List<Double>> coordinates, double distanceM) {}
 
     /**
-     * Il percorso a piedi da A a B solo sui sentieri (i tratti degli itinerari escursionistici), fuori dalle aree
-     * vietate. Partenza e arrivo si agganciano al sentiero più vicino, anche lontano: la distanza la controlla chi chiama.
+     * Calcola il percorso a piedi tra due punti usando solo i sentieri, cioè i tratti che fanno parte di
+     * itinerari escursionistici, senza attraversare le aree vietate. Il motore aggancia partenza e arrivo
+     * al sentiero più vicino anche se è molto lontano: controllare quella distanza è compito del chiamante.
      *
-     * @param avoidGeoJson geometria GeoJSON (Polygon o MultiPolygon, {@code [lon, lat]}) da non attraversare, o null
-     * @return vuoto se il motore non trova un percorso (un punto fuori dalla rete o due punti non collegati)
+     * @param fromLon      longitudine della partenza
+     * @param fromLat      latitudine della partenza
+     * @param toLon        longitudine dell'arrivo
+     * @param toLat        latitudine dell'arrivo
+     * @param avoidGeoJson geometria GeoJSON (Polygon o MultiPolygon, coordinate {@code [lon, lat]}) da non
+     *                     attraversare, oppure {@code null} se non ci sono aree vietate
+     * @return il percorso, oppure vuoto se il motore non lo trova (un punto fuori dalla rete o due punti
+     *         non collegati)
      * @throws RoutingUnavailableException se il motore non risponde
      */
     Optional<EngineRoute> route(double fromLon, double fromLat, double toLon, double toLat, String avoidGeoJson);

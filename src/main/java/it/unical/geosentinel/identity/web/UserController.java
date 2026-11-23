@@ -1,3 +1,7 @@
+/*
+ * Controller REST del profilo dell'utente autenticato: lettura e modifica del profilo, cambio password e
+ * cancellazione dell'account.
+ */
 package it.unical.geosentinel.identity.web;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,6 +30,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
+/**
+ * Endpoint sotto {@code /api/v1/users/me}.
+ */
 @RestController
 @RequestMapping("/api/v1/users/me")
 @Tag(name = "User Profile", description = "Current user's profile, password change and account deletion")
@@ -40,12 +47,21 @@ public class UserController {
         this.currentUser = currentUser;
     }
 
+    /**
+     * @return 200 con il profilo dell'utente autenticato
+     */
     @GetMapping
     @Operation(operationId = "getMyProfile", summary = "Get the current user's profile", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<UserProfileResponse> getProfile() {
         return ResponseEntity.ok(UserProfileResponse.from(accountService.getProfile(currentUser.getRequiredUserId())));
     }
 
+    /**
+     * Cambia il nome mostrato nell'app.
+     *
+     * @param request nuovo nome
+     * @return 200 con il profilo aggiornato
+     */
     @PatchMapping
     @Operation(operationId = "updateMyProfile", summary = "Update the current user's display name", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<UserProfileResponse> updateProfile(@Valid @RequestBody UpdateProfileRequest request) {
@@ -53,7 +69,13 @@ public class UserController {
         return ResponseEntity.ok(UserProfileResponse.from(accountService.updateDisplayName(userId, request.displayName())));
     }
 
-    // Nuovi token nella risposta: tutte le sessioni sono revocate, l'app continua con quella nuova
+    /**
+     * Cambia la password. Tutte le sessioni vengono revocate e la risposta contiene i token di una sessione
+     * nuova, con cui l'app continua.
+     *
+     * @param request password attuale, nuova password ed eventuale codice di verifica
+     * @return 200 con i nuovi token
+     */
     @PostMapping("/password")
     @Operation(operationId = "changeMyPassword", summary = "Change password: revokes every session and returns new tokens", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<TokenResponse> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
@@ -62,6 +84,12 @@ public class UserController {
                 authService.changePassword(userId, request.currentPassword(), request.newPassword(), request.mfaCode())));
     }
 
+    /**
+     * Cancella e anonimizza l'account (solo escursionisti; per lo staff 409).
+     *
+     * @param jwt access token della richiesta, che viene messo nella blacklist
+     * @return 204 senza corpo
+     */
     @DeleteMapping
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(operationId = "deleteMyAccount", summary = "Delete and anonymize the account (hikers only, 409 for staff)", security = @SecurityRequirement(name = "bearerAuth"))

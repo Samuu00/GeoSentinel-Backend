@@ -1,3 +1,7 @@
+/*
+ * Job pianificato che cancella dal database i refresh token delle sessioni scadute, per evitare che la
+ * tabella cresca senza limite.
+ */
 package it.unical.geosentinel.identity.application;
 
 import it.unical.geosentinel.identity.infrastructure.persistence.RefreshTokenRepository;
@@ -9,6 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 
+/**
+ * Pulizia notturna dei refresh token scaduti.
+ */
 @Component
 public class RefreshTokenCleanupJob {
     private static final Logger log = LoggerFactory.getLogger(RefreshTokenCleanupJob.class);
@@ -21,7 +28,10 @@ public class RefreshTokenCleanupJob {
         this.clock = clock;
     }
 
-    // Ogni notte alle 03:30 UTC. Con più istanze gira su ognuna: il DELETE è idempotente, nessun lock distribuito
+    /**
+     * Cancella i token delle sessioni scadute ogni notte alle 03:30 UTC. Con più istanze del backend il job
+     * gira su ognuna, ma non serve un lock distribuito: la DELETE è idempotente.
+     */
     @Scheduled(cron = "0 30 3 * * *", zone = "UTC")
     @Transactional
     public void deleteExpiredSessions() {

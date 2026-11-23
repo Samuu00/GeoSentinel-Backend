@@ -1,3 +1,7 @@
+/*
+ * Invio via SMTP delle email legate alla verifica in due passaggi (avvisi, azzeramento, cambio di stato,
+ * codice di configurazione), attivo quando geosentinel.mail.enabled è vero.
+ */
 package it.unical.geosentinel.identity.infrastructure.mail;
 
 import it.unical.geosentinel.identity.application.port.MfaAlertMailer;
@@ -12,10 +16,14 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
-// Stessa condizione del mailer di reset: con la mail spenta non esiste, e il listener non fallisce
+/**
+ * Implementazione SMTP di {@link MfaAlertMailer}. Ha la stessa condizione del mailer del reset: con l'invio
+ * delle email disattivato il bean non esiste e {@code MfaAlertMailListener} ignora gli eventi.
+ */
 @Component
 @ConditionalOnProperty(name = "geosentinel.mail.enabled", havingValue = "true")
 public class SmtpMfaAlertMailer implements MfaAlertMailer {
+    /** Testo dell'avviso per codici di verifica sbagliati dopo una password giusta. */
     private static final String WRONG_CODE_BODY = """
             Qualcuno ha inserito la password del tuo account GeoSentinel, ma non il codice della verifica in due passaggi.
 
@@ -24,6 +32,7 @@ public class SmtpMfaAlertMailer implements MfaAlertMailer {
             Altrimenti cambia subito la password: si chiudono tutte le sessioni aperte.
             """;
 
+    /** Testo dell'avviso di azzeramento da parte di un amministratore. */
     private static final String ADMIN_RESET_BODY = """
             La verifica in due passaggi del tuo account GeoSentinel è stata disattivata da un amministratore, su tua richiesta verificata.
 
@@ -32,12 +41,14 @@ public class SmtpMfaAlertMailer implements MfaAlertMailer {
             Se non hai chiesto tu la disattivazione, cambia subito la password e contatta il supporto.
             """;
 
+    /** Testo dell'avviso di attivazione. */
     private static final String ENABLED_BODY = """
             La verifica in due passaggi del tuo account GeoSentinel è stata attivata.
 
             Se non sei stato tu, qualcuno ha accesso al tuo account: cambia subito la password e contatta il supporto.
             """;
 
+    /** Testo dell'avviso di disattivazione. */
     private static final String DISABLED_BODY = """
             La verifica in due passaggi del tuo account GeoSentinel è stata disattivata.
 
@@ -47,21 +58,28 @@ public class SmtpMfaAlertMailer implements MfaAlertMailer {
     private final JavaMailSender mailSender;
     private final String from;
 
+    /**
+     * @param mailSender client SMTP configurato da Spring Boot
+     * @param from indirizzo del mittente
+     */
     public SmtpMfaAlertMailer(JavaMailSender mailSender, @Value("${geosentinel.mail.from}") String from) {
         this.mailSender = mailSender;
         this.from = from;
     }
 
+    /** {@inheritDoc} */
     @Override
     public void sendWrongCodeWarning(String email) {
         send(email, "Tentativo di accesso al tuo account GeoSentinel", WRONG_CODE_BODY);
     }
 
+    /** {@inheritDoc} */
     @Override
     public void sendAdminReset(String email) {
         send(email, "Verifica in due passaggi disattivata", ADMIN_RESET_BODY);
     }
 
+    /** {@inheritDoc} */
     @Override
     public void sendStatusChanged(String email, boolean enabled) {
         if (enabled) {
@@ -71,6 +89,7 @@ public class SmtpMfaAlertMailer implements MfaAlertMailer {
         }
     }
 
+    /** {@inheritDoc} */
     @Override
     public void sendSetupCode(String email, String code, Duration validFor) {
         send(email, "Codice per attivare la verifica in due passaggi", """
@@ -83,6 +102,14 @@ public class SmtpMfaAlertMailer implements MfaAlertMailer {
                 """.formatted(code, validFor.toMinutes()));
     }
 
+    /**
+     * Costruisce e spedisce un'email di solo testo in UTF-8.
+     *
+     * @param email destinatario
+     * @param subject oggetto
+     * @param body testo
+     * @throws IllegalStateException se il messaggio non può essere costruito
+     */
     private void send(String email, String subject, String body) {
         MimeMessage message = mailSender.createMimeMessage();
         try {
@@ -92,7 +119,7 @@ public class SmtpMfaAlertMailer implements MfaAlertMailer {
             helper.setSubject(subject);
             helper.setText(body, false);
         } catch (MessagingException e) {
-            // Nessun dato dell'utente nel messaggio dell'eccezione
+            // Il messaggio dell'eccezione non contiene dati dell'utente
             throw new IllegalStateException("MFA mail could not be built", e);
         }
         mailSender.send(message);

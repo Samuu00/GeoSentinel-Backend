@@ -1,3 +1,6 @@
+// Job pianificato che elimina i caricamenti mai confermati: la riga in PENDING_UPLOAD e l'eventuale
+// oggetto già caricato nello storage, che altrimenti occuperebbe spazio per sempre senza rientrare in
+// nessuna quota.
 package it.unical.geosentinel.media.application;
 
 import it.unical.geosentinel.media.application.port.ObjectStorage;
@@ -16,27 +19,39 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
-// Cancella gli upload mai confermati: la riga PENDING_UPLOAD e l'oggetto eventualmente caricato (che altrimenti occuperebbe
-// spazio per sempre, fuori da ogni quota). Con più istanze gira su ognuna: deleteIfPending è condizionale, il secondo salta
+/**
+ * Pulizia periodica dei caricamenti scaduti. Con più istanze del backend il job gira su ognuna, ma la
+ * cancellazione è condizionata allo stato: se due istanze trattano la stessa riga, la seconda la salta.
+ */
 @Component
 public class MediaCleanupJob {
     private static final Logger log = LoggerFactory.getLogger(MediaCleanupJob.class);
-    // Margine oltre la scadenza della policy: un upload finito all'ultimo secondo ha tempo per il confirm
+    /** Margine oltre la scadenza dell'autorizzazione al caricamento, per lasciare il tempo alla conferma di un upload finito all'ultimo secondo. */
     private static final Duration GRACE = Duration.ofHours(1);
+    /** Numero massimo di righe trattate a ogni esecuzione. */
     private static final int BATCH_SIZE = 100;
 
     private final MediaFileRepository mediaRepository;
     private final ObjectStorage objectStorage;
     private final Clock clock;
 
+    /**
+     * @param mediaRepository repository dei media
+     * @param objectStorage   storage degli oggetti
+     * @param clock           orologio dell'applicazione
+     */
     public MediaCleanupJob(MediaFileRepository mediaRepository, ObjectStorage objectStorage, Clock clock) {
         this.mediaRepository = mediaRepository;
         this.objectStorage = objectStorage;
         this.clock = clock;
     }
 
-    // Prima la riga (il DELETE la blocca: un confirm concorrente attende e poi fallisce sulla @Version), poi l'oggetto.
-    // Se lo storage fallisce la transazione torna indietro: le righe restano e si riprova al giro successivo
+    /**
+     * Ogni 15 minuti (il primo giro 5 minuti dopo l'avvio) elimina fino a {@link #BATCH_SIZE} caricamenti
+     * scaduti. Per ciascuno cancella prima la riga, poi l'oggetto: il DELETE blocca la riga, quindi una
+     * conferma concorrente attende e poi fallisce sul controllo di {@code @Version}. Se lo storage
+     * fallisce la transazione viene annullata, le righe restano e si riprova al giro successivo.
+     */
     @Scheduled(fixedDelayString = "PT15M", initialDelayString = "PT5M")
     @Transactional
     public void purgeExpiredUploads() {

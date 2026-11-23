@@ -1,3 +1,6 @@
+// Test unitario della serializzazione del dettaglio di un sentiero verso la cache Redis.
+// Il dettaglio viene salvato in cache con un serializer JSON tipizzato: il test controlla che l'oggetto
+// riletto sia identico a quello scritto, senza bisogno di un Redis vero.
 package it.unical.geosentinel.trail;
 
 import it.unical.geosentinel.shared.web.geo.GeoJsonLineString;
@@ -13,9 +16,16 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Stesso serializer di CacheConfig.typed(...): TrailDetail deve sopravvivere al giro su Redis
+/**
+ * Verifica che {@link TrailDetail} sopravviva al passaggio serializzazione e deserializzazione con lo stesso
+ * tipo di serializer configurato in {@code CacheConfig.typed(...)}.
+ */
 class TrailDetailCacheSerializationTest {
 
+    /**
+     * Serializza un dettaglio completo (con geometria GeoJSON) e lo deserializza: il risultato atteso è un
+     * oggetto uguale all'originale, quindi nessun campo si perde nel giro sulla cache.
+     */
     @Test
     void trailDetailRoundTripsThroughTypedCacheSerializer() {
         JsonMapper mapper = JsonMapper.builder().build();

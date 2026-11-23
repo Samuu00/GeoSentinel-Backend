@@ -1,3 +1,7 @@
+/*
+ * Servizio applicativo dell'account dell'utente autenticato: lettura e modifica del profilo e cancellazione
+ * dell'account. Il cambio password sta invece in AuthService, perché apre una nuova sessione.
+ */
 package it.unical.geosentinel.identity.application;
 
 import it.unical.geosentinel.emergency.application.SosService;
@@ -23,7 +27,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
-// Profilo e cancellazione dell'account. Il cambio password sta in AuthService: apre una nuova sessione
+/**
+ * Profilo e cancellazione dell'account, usato da {@code UserController}. La cancellazione coordina i service
+ * degli altri moduli (rifugi, SOS, media, notifiche) perché ognuno ripulisca i propri dati.
+ */
 @Service
 public class UserAccountService {
     private final UserRepository userRepository;
@@ -67,11 +74,24 @@ public class UserAccountService {
         this.clock = clock;
     }
 
+    /**
+     * @param userId utente autenticato
+     * @return il profilo dell'utente
+     * @throws ResourceNotFoundException se l'utente non esiste o è disabilitato
+     */
     @Transactional(readOnly = true)
     public UserProfile getProfile(UUID userId) {
         return profileOf(activeUser(userId));
     }
 
+    /**
+     * Cambia il nome mostrato nell'app.
+     *
+     * @param userId utente autenticato
+     * @param displayName nuovo nome, già validato dal DTO
+     * @return il profilo aggiornato
+     * @throws ResourceNotFoundException se l'utente non esiste o è disabilitato
+     */
     @Transactional
     public UserProfile updateDisplayName(UUID userId, String displayName) {
         User user = activeUser(userId);
@@ -79,19 +99,36 @@ public class UserAccountService {
         return profileOf(user);
     }
 
-    // La foto profilo è un media di tipo USER: qui solo l'id, l'immagine si scarica con /media/{id}/download-url
+    /**
+     * Costruisce il profilo aggiungendo lo stato della verifica in due passaggi e la foto profilo. La foto è un
+     * media di tipo {@code USER}: qui si restituisce solo il suo id, l'immagine si scarica con
+     * {@code /media/{id}/download-url}.
+     *
+     * @param user utente
+     * @return il profilo completo
+     */
     private UserProfile profileOf(User user) {
         UUID avatarId = mediaService.currentAvatarOf(user.getId()).orElse(null);
         return UserProfile.from(user, mfaService.isEnabled(user.getId()), avatarId);
     }
 
-    // Solo HIKER: gli account del personale li chiude l'organizzazione (rifugi, ticket e missioni in carico) -> 409.
-    // Le altre feature puliscono i propri dati dal loro service, in questa stessa transazione.
-    // Ordine: prima tutto ciò che torna indietro con un rollback, poi la blacklist (Redis giù -> rollback, nulla perso),
-    // per ultimi gli oggetti dello storage, l'unico passo irreversibile
+    /**
+     * Cancella (anonimizza) l'account dell'utente autenticato. Vale solo per gli escursionisti: gli account del
+     * personale li chiude l'organizzazione, perché possono avere in carico rifugi, ticket e missioni.
+     * Gli altri moduli ripuliscono i propri dati dai loro service, nella stessa transazione.
+     * <p>
+     * L'ordine dei passi conta: prima tutto ciò che un rollback può annullare, poi la blacklist su Redis (se Redis
+     * non risponde la transazione torna indietro e non si perde nulla), per ultima la cancellazione dei file
+     * nello storage, l'unico passo irreversibile.
+     *
+     * @param userId utente autenticato
+     * @param accessToken access token della richiesta, messo subito nella blacklist
+     * @throws ResourceNotFoundException se l'utente non esiste o è disabilitato
+     * @throws AccountManagedException se l'account è dello staff
+     */
     @Transactional
     public void deleteAccount(UUID userId, Jwt accessToken) {
-        // Lock come in changePassword: un refresh concorrente non crea una sessione dopo la revoca
+        // Lock come in changePassword: un refresh concorrente non può creare una sessione dopo la revoca
         User user = userRepository.findByIdForUpdate(userId)
                 .filter(User::isEnabled)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
@@ -104,25 +141,33 @@ public class UserAccountService {
         refugeBookingService.cancelAllFutureOf(userId);
         sosService.cancelActiveOf(userId);
         deviceService.deleteAllOf(userId);
-        // Le identità esterne vanno tolte insieme all'account: altrimenti lo stesso Google riaprirebbe l'account cancellato
+        // Le identità esterne si tolgono con l'account: altrimenti lo stesso account Google riaprirebbe
+        // l'account cancellato
         userIdentityRepository.deleteAllOf(userId);
         passwordResetTokens.deleteAllOf(userId);
         mfaService.deleteAllOf(userId);
-        // hash vero di un valore casuale mai restituito: nessuna password può più coincidere
+        // Hash vero di un valore casuale mai restituito: nessuna password potrà più coincidere
         user.markDeleted(now, passwordEncoder.encode(UUID.randomUUID().toString()));
-        // @Version: una seconda cancellazione concorrente fallisce qui (409), prima di Redis e dello storage
+        // Grazie a @Version una seconda cancellazione concorrente fallisce qui (409), prima di Redis e dello storage
         userRepository.flush();
 
         if (accessToken.getId() != null && accessToken.getExpiresAt() != null && accessToken.getExpiresAt().isAfter(now)) {
             tokenBlacklist.revoke(accessToken.getId(), Duration.between(now, accessToken.getExpiresAt()));
         }
-        // Anche gli access token degli altri dispositivi: altrimenti per 15 minuti potrebbero ancora prenotare,
-        // lanciare SOS o caricare foto (che deleteAllOf non vedrebbe più) a nome di un account cancellato
+        // Si revocano anche gli access token degli altri dispositivi: altrimenti fino alla loro scadenza potrebbero
+        // ancora prenotare, lanciare SOS o caricare foto (che la pulizia dei media non vedrebbe più) a nome di un
+        // account cancellato
         tokenBlacklist.revokeAllIssuedUntil(userId, now);
         mediaService.deleteAllOf(userId);
     }
 
-    // Un account cancellato o disabilitato non esiste più per l'API (il suo access token è già in blacklist)
+    /**
+     * Legge un utente attivo. Un account cancellato o disabilitato per l'API non esiste più.
+     *
+     * @param userId utente
+     * @return l'utente
+     * @throws ResourceNotFoundException se l'utente non esiste o è disabilitato
+     */
     private User activeUser(UUID userId) {
         return userRepository.findById(userId)
                 .filter(User::isEnabled)

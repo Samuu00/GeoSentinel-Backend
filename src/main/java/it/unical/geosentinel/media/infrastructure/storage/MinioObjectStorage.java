@@ -1,3 +1,6 @@
+// Adattatore che implementa la porta ObjectStorage con il client Java di MinIO. Usa due client: uno per
+// le chiamate dal backend verso l'indirizzo interno di MinIO e uno solo per firmare policy e URL con
+// l'indirizzo pubblico, quello che raggiunge il dispositivo dell'utente.
 package it.unical.geosentinel.media.infrastructure.storage;
 
 import io.minio.CopyObjectArgs;
@@ -29,25 +32,42 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Implementazione di {@link ObjectStorage} su MinIO. Gli errori del client diventano
+ * StorageUnavailableException, che l'API traduce in 503. Nei log compaiono solo le object key.
+ */
 @Component
 public class MinioObjectStorage implements ObjectStorage {
     private static final Logger log = LoggerFactory.getLogger(MinioObjectStorage.class);
-    // Region fissa: senza, il client la chiede al server prima di firmare (una chiamata di rete verso il publicEndpoint)
+    /** Region fissa: senza, il client la chiederebbe al server prima di firmare, con una chiamata di rete verso l'indirizzo pubblico. */
     private static final String REGION = "us-east-1";
-    // Gli upload del client finiscono qui; ciò che resta (policy riusate dopo il confirm) lo cancella la regola di
-    // lifecycle del bucket (minio-init), non l'app
+    /**
+     * Prefisso delle copie di staging, dove finiscono i caricamenti del client. Ciò che vi resta (ad esempio
+     * una policy riusata dopo la conferma) lo cancella la regola di lifecycle del bucket impostata da
+     * minio-init, non l'applicazione.
+     */
     static final String STAGING_PREFIX = "staging/";
 
+    /** Client per le operazioni sugli oggetti, verso l'indirizzo interno. */
     private final MinioClient minioClient;
+    /** Client usato solo per firmare, configurato con l'indirizzo pubblico perché la firma include l'host. */
     private final MinioClient signingClient;
     private final String bucket;
+    /** URL pubblico del bucket a cui il client invia il form di caricamento. */
     private final String uploadUrl;
     private final Clock clock;
 
+    /**
+     * Crea i due client a partire dalle proprietà di configurazione.
+     *
+     * @param properties indirizzi, credenziali e bucket
+     * @param clock      orologio, per la scadenza delle policy
+     */
     public MinioObjectStorage(MinioProperties properties, Clock clock) {
         this.clock = clock;
         this.uploadUrl = properties.publicEndpoint().replaceAll("/+$", "") + "/" + properties.bucket();
-        // Timeout brevi: le chiamate avvengono dentro transazioni che tengono una connessione del pool (default MinIO: 5 minuti)
+        // Timeout brevi (il default di MinIO è 5 minuti): le chiamate avvengono dentro transazioni che tengono
+        // occupata una connessione del pool.
         OkHttpClient httpClient = new OkHttpClient.Builder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .readTimeout(Duration.ofSeconds(30))
@@ -67,6 +87,10 @@ public class MinioObjectStorage implements ObjectStorage {
         this.bucket = properties.bucket();
     }
 
+    /**
+     * Crea una POST policy che vincola la chiave di staging, il Content-Type e la dimensione (da 1 byte a
+     * {@code maxBytes}).
+     */
     @Override
     public PresignedUpload presignUpload(String objectKey, String contentType, long maxBytes, Duration expiration) {
         try {
@@ -76,7 +100,8 @@ public class MinioObjectStorage implements ObjectStorage {
             policy.addEqualsCondition("Content-Type", contentType);
             policy.addContentLengthRangeCondition(1L, maxBytes);
 
-            // La firma non include key e Content-Type: il client li invia come campi del form, e la policy li vincola
+            // I campi firmati non contengono key e Content-Type: il client li invia come campi del form e la
+            // policy ne vincola il valore.
             Map<String, String> fields = new LinkedHashMap<>(signingClient.getPresignedPostFormData(policy));
             fields.put("key", stagingKey);
             fields.put("Content-Type", contentType);
@@ -87,8 +112,11 @@ public class MinioObjectStorage implements ObjectStorage {
         }
     }
 
-    // Copia lato server (nessun byte passa dall'app). Il client può riscrivere lo staging fino alla scadenza della
-    // policy, ma qualunque versione venga copiata è quella che il service poi verifica sull'oggetto finale
+    /**
+     * La copia avviene lato server, senza che i byte passino dal backend. Il client può riscrivere lo
+     * staging fino alla scadenza della policy, ma qualunque versione venga copiata è quella che il service
+     * verifica poi sull'oggetto finale.
+     */
     @Override
     public Optional<StoredObject> promoteUpload(String objectKey) {
         String stagingKey = STAGING_PREFIX + objectKey;
@@ -108,6 +136,10 @@ public class MinioObjectStorage implements ObjectStorage {
         return stat(objectKey);
     }
 
+    /**
+     * Firma l'URL con il client pubblico, aggiungendo i parametri che impongono Content-Type e
+     * {@code Content-Disposition: attachment} nella risposta.
+     */
     @Override
     public String generatePresignedDownloadUrl(String objectKey, String contentType, Duration expiration) {
         try {
@@ -129,6 +161,10 @@ public class MinioObjectStorage implements ObjectStorage {
         }
     }
 
+    /**
+     * Gli errori NoSuchKey e NoSuchObject significano che l'oggetto non esiste e danno un risultato vuoto;
+     * ogni altro errore indica uno storage non disponibile.
+     */
     @Override
     public Optional<StoredObject> stat(String objectKey) {
         try {
@@ -149,6 +185,7 @@ public class MinioObjectStorage implements ObjectStorage {
         }
     }
 
+    /** Legge un intervallo di byte dall'inizio dell'oggetto, senza scaricarlo tutto. */
     @Override
     public byte[] readHead(String objectKey, int length) {
         try (GetObjectResponse in = minioClient.getObject(
@@ -160,12 +197,19 @@ public class MinioObjectStorage implements ObjectStorage {
         }
     }
 
+    /** Cancella sia l'oggetto finale sia la sua copia di staging. */
     @Override
     public void deleteObject(String objectKey) {
         removeObject(objectKey);
         removeObject(STAGING_PREFIX + objectKey);
     }
 
+    /**
+     * Cancella un singolo oggetto. MinIO non dà errore se l'oggetto non esiste.
+     *
+     * @param objectKey chiave dell'oggetto
+     * @throws StorageUnavailableException se lo storage non risponde
+     */
     private void removeObject(String objectKey) {
         try {
             minioClient.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(objectKey).build());

@@ -1,3 +1,7 @@
+/*
+ * Controller REST del reset della password con codice via email: richiesta del codice e conferma con la
+ * nuova password.
+ */
 package it.unical.geosentinel.identity.web;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -16,6 +20,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * Endpoint sotto {@code /api/v1/auth/password-reset}, pubblici.
+ */
 @RestController
 @RequestMapping("/api/v1/auth/password-reset")
 @Tag(name = "Authentication")
@@ -26,7 +33,13 @@ public class PasswordResetController {
         this.passwordResetService = passwordResetService;
     }
 
-    // 204 per un email sconosciuta, la risposta non dice se l'account esista o meno
+    /**
+     * Chiede l'invio di un codice. Risponde 204 anche per un'email sconosciuta, così la risposta non rivela
+     * se l'account esiste.
+     *
+     * @param request email dell'account
+     * @return 204 senza corpo
+     */
     @PostMapping("/request")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(operationId = "requestPasswordReset", summary = "Send a password reset code by email")
@@ -35,7 +48,13 @@ public class PasswordResetController {
         return ResponseEntity.noContent().build();
     }
 
-    // Il 422 non lo aggiunge il customizer di OpenApiConfig: va dichiarato qui, come per il register
+    /**
+     * Imposta la nuova password con il codice ricevuto. La risposta 422 va dichiarata qui perché il
+     * customizer di {@code OpenApiConfig} non la aggiunge da solo.
+     *
+     * @param request email, codice e nuova password
+     * @return 204 senza corpo
+     */
     @PostMapping("/confirm")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(operationId = "confirmPasswordReset", summary = "Set a new password with the code received by email")

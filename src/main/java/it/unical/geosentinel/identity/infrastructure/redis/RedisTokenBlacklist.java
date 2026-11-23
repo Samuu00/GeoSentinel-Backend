@@ -1,3 +1,7 @@
+/*
+ * Implementazione su Redis della blacklist degli access token (porta TokenBlacklist). Ogni voce ha una
+ * scadenza pari alla vita residua dei token che revoca, così Redis si ripulisce da solo.
+ */
 package it.unical.geosentinel.identity.infrastructure.redis;
 
 import it.unical.geosentinel.identity.application.port.TokenBlacklist;
@@ -13,6 +17,11 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * Blacklist su Redis con due tipi di chiave: {@code bl:jti:<jti>} per un singolo token e
+ * {@code bl:user:<id>} con l'istante (in secondi) fino al quale sono revocati tutti i token di un utente.
+ * Le scritture che falliscono lanciano un'eccezione; la lettura, in caso di errore, considera il token revocato.
+ */
 @Component
 public class RedisTokenBlacklist implements TokenBlacklist {
     private static final Logger log = LoggerFactory.getLogger(RedisTokenBlacklist.class);
@@ -21,6 +30,7 @@ public class RedisTokenBlacklist implements TokenBlacklist {
     private static final String REVOKED_VALUE = "1";
 
     private final StringRedisTemplate redisTemplate;
+    /** Durata di un access token, usata come scadenza delle revoche per utente. */
     private final Duration accessTtl;
 
     public RedisTokenBlacklist(StringRedisTemplate redisTemplate, JwtProperties jwtProperties) {
@@ -28,6 +38,7 @@ public class RedisTokenBlacklist implements TokenBlacklist {
         this.accessTtl = jwtProperties.accessTtl();
     }
 
+    /** {@inheritDoc} Un TTL nullo o negativo indica un token già scaduto: non si scrive nulla. */
     @Override
     public void revoke(String jti, Duration ttl) {
         Objects.requireNonNull(jti, "jti cannot be null");
@@ -43,7 +54,10 @@ public class RedisTokenBlacklist implements TokenBlacklist {
         }
     }
 
-    // TTL = durata di un access token: dopo, quelli emessi fino a 'until' sono scaduti comunque
+    /**
+     * {@inheritDoc} La chiave scade dopo la durata di un access token: a quel punto tutti i token emessi fino a
+     * {@code until} sono scaduti comunque.
+     */
     @Override
     public void revokeAllIssuedUntil(UUID userId, Instant until) {
         try {
@@ -54,7 +68,11 @@ public class RedisTokenBlacklist implements TokenBlacklist {
         }
     }
 
-    // Un solo round trip (MGET) per jti e revoca per utente
+    /**
+     * {@inheritDoc} Legge la revoca del token e quella dell'utente con un solo round trip (MGET). Un token senza
+     * {@code jti}, {@code sub} o {@code iat} si considera revocato, e così anche quando Redis non risponde
+     * (fail-closed).
+     */
     @Override
     public boolean isRevoked(String jti, String subject, Instant issuedAt) {
         if (jti == null || jti.isBlank() || subject == null || issuedAt == null) return true;

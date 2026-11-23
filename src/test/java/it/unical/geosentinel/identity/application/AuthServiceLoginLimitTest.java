@@ -1,3 +1,6 @@
+// Test unitario del limite di tentativi di login per account in AuthService, con dipendenze finte di Mockito
+// e orologio fisso, senza Spring. Il limite si applica prima di cercare l'utente e di verificare la password,
+// usa come chiave un hash dell'email normalizzata e non cambia il tempo costante della verifica.
 package it.unical.geosentinel.identity.application;
 
 import it.unical.geosentinel.notification.application.DeviceService;
@@ -29,17 +32,33 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * Verifica l'interazione tra il login e il {@link LoginAttemptLimiter}.
+ */
 class AuthServiceLoginLimitTest {
+
+    /** Istante fisso restituito dall'orologio del servizio. */
     private static final Instant NOW = Instant.parse("2026-09-26T10:00:00Z");
 
+    /** Repository degli utenti, su cui si verifica se la ricerca per email avviene. */
     private final UserRepository users = mock(UserRepository.class);
+
+    /** Encoder delle password, su cui si verifica se il confronto BCrypt avviene. */
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+
+    /** Limitatore dei tentativi di login per account. */
     private final LoginAttemptLimiter limiter = mock(LoginAttemptLimiter.class);
+
+    /** Servizio sotto test; le dipendenze non coinvolte nel login sono finte. */
     private final AuthService service = new AuthService(
             mock(UserIdentityRepository.class), users, mock(RefreshTokenRepository.class), passwordEncoder, mock(TokenBlacklist.class),
             limiter, mock(MfaService.class), mock(DeviceService.class), mock(AuthService.JwtIssuer.class), Clock.fixed(NOW, ZoneOffset.UTC),
             Duration.ofDays(7), Duration.ofDays(30), Duration.ofSeconds(60), 14);
 
+    /**
+     * Se il limitatore rifiuta il tentativo, il login deve lanciare una {@link RateLimitExceededException} con
+     * il tempo di attesa indicato dal limitatore, senza cercare l'utente e senza calcolare BCrypt.
+     */
     @Test
     void rejectedAttemptSkipsLookupAndBcrypt() {
         when(limiter.tryAcquire(anyString())).thenReturn(Optional.of(Duration.ofSeconds(90)));
@@ -53,6 +72,10 @@ class AuthServiceLoginLimitTest {
         verify(passwordEncoder, never()).matches(any(), any());
     }
 
+    /**
+     * La stessa email scritta con maiuscole diverse deve produrre la stessa chiave per il limitatore, e la chiave
+     * deve essere un hash esadecimale di 64 caratteri (SHA-256): in Redis non finisce l'email in chiaro.
+     */
     @Test
     void keyIsHashOfNormalizedEmail() {
         when(limiter.tryAcquire(anyString())).thenReturn(Optional.of(Duration.ofSeconds(1)));
@@ -66,6 +89,11 @@ class AuthServiceLoginLimitTest {
         assertThat(captured.get(0)).isEqualTo(captured.get(1)).matches("[0-9a-f]{64}");
     }
 
+    /**
+     * Se il limitatore lascia passare il tentativo, il login prosegue con la verifica delle credenziali: per un
+     * account inesistente la risposta è {@link BadCredentialsException}, ma il confronto BCrypt viene eseguito
+     * comunque.
+     */
     @Test
     void allowedAttemptContinuesToCredentialCheck() {
         when(limiter.tryAcquire(anyString())).thenReturn(Optional.empty());
@@ -73,7 +101,8 @@ class AuthServiceLoginLimitTest {
 
         assertThatThrownBy(() -> service.login("mario@example.com", "sbagliata", null))
                 .isInstanceOf(BadCredentialsException.class);
-        // tempo costante: BCrypt gira anche per un account inesistente
+        // BCrypt viene calcolato anche quando l'account non esiste, così il tempo di risposta è lo stesso e
+        // non rivela quali email sono registrate.
         verify(passwordEncoder).matches(any(), any());
     }
 }

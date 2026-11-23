@@ -1,3 +1,7 @@
+/*
+ * Gestore dei 403 di Spring Security: quando un utente autenticato non ha il ruolo richiesto, risponde con un
+ * ProblemDetail (RFC 9457) nello stesso formato degli altri errori dell'API.
+ */
 package it.unical.geosentinel.identity.infrastructure.security;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,6 +18,9 @@ import java.io.IOException;
 import java.net.URI;
 import java.time.Clock;
 
+/**
+ * Risposta 403 in formato ProblemDetail.
+ */
 @Component
 public class ProblemAccessDeniedHandler implements AccessDeniedHandler{
     private final ProblemDetailWriter problemDetailWriter;
@@ -24,6 +31,14 @@ public class ProblemAccessDeniedHandler implements AccessDeniedHandler{
         this.clock = clock;
     }
 
+    /**
+     * Scrive la risposta 403 con tipo, titolo, percorso della richiesta e istante.
+     *
+     * @param request richiesta rifiutata
+     * @param response risposta da scrivere
+     * @param accessDeniedException eccezione di Spring Security (il dettaglio non viene esposto)
+     * @throws IOException se la scrittura della risposta fallisce
+     */
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response, AccessDeniedException accessDeniedException) throws IOException {
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(

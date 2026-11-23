@@ -46,6 +46,4 @@ il 22/11 si è deciso che il percorso usa solo i sentieri.
 - **Aggiornamento dell'estratto OSM:** a mano. Si rilancia `build_extract.sh`, poi si cancellano il container e il
   volume del grafo (comandi nello script). Va fatto anche quando si rifà l'import dei sentieri.
 - Il dislivello non entra nel costo (niente SRTM). Si aggiunge `foot_elevation.json` quando servirà.
-- La produzione (`docker-compose.prod.yml`) non ha ancora il servizio: va aggiunto prima del rilascio, con
-  `ROUTING_URL`.
 - Tolte la rete in memoria (`TrailNetwork`) e l'evento `TrailsChanged`.

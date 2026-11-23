@@ -1,3 +1,5 @@
+// Repository Spring Data JPA dei sentieri. Le query native PostGIS servono alle ricerche geografiche e al
+// calcolo dei percorsi: aree da evitare attorno ai sentieri chiusi e sentieri seguiti da un percorso.
 package it.unical.geosentinel.trail.infrastructure.persistence;
 
 import it.unical.geosentinel.trail.domain.Trail;
@@ -8,10 +10,17 @@ import org.springframework.data.repository.query.Param;
 import java.util.UUID;
 import java.util.List;
 
+/**
+ * Accesso ai dati della tabella trails.
+ */
 public interface TrailRepository extends JpaRepository<Trail, UUID>{
     /**
-     * Le aree da non attraversare nel percorso A→B (ADR-0028): i sentieri CLOSED allargati di :bufferMeters, uniti
-     * e semplificati, come GeoJSON MultiPolygon in [lon, lat]. Null se non ce ne sono.
+     * Aree da non attraversare nel calcolo dei percorsi: i sentieri {@code CLOSED} allargati di
+     * {@code bufferMeters}, uniti in una sola geometria e semplificati, in formato GeoJSON MultiPolygon con
+     * coordinate {@code [lon, lat]} e 6 decimali.
+     *
+     * @param bufferMeters raggio dell'area attorno a ogni sentiero chiuso, in metri
+     * @return il GeoJSON, oppure {@code null} se non ci sono sentieri chiusi
      */
     @Query(value = """
             SELECT ST_AsGeoJSON(ST_Multi(ST_SimplifyPreserveTopology(
@@ -21,8 +30,14 @@ public interface TrailRepository extends JpaRepository<Trail, UUID>{
     String findClosedAreasGeoJson(@Param("bufferMeters") double bufferMeters);
 
     /**
-     * I sentieri aperti che il percorso :routeWkt (LINESTRING in 4326) segue per almeno :minOverlapMeters entro
-     * :toleranceMeters, nell'ordine in cui li incontra (il punto medio del tratto in comune lungo il percorso).
+     * Sentieri non chiusi che il percorso segue per almeno {@code minOverlapMeters} restando entro
+     * {@code toleranceMeters}. Sono ordinati nell'ordine in cui il percorso li incontra, cioè secondo la
+     * posizione lungo il percorso del centro del tratto in comune.
+     *
+     * @param routeWkt         percorso come LINESTRING WKT in SRID 4326
+     * @param toleranceMeters  distanza massima tra percorso e sentiero, in metri
+     * @param minOverlapMeters lunghezza minima del tratto in comune, in metri
+     * @return gli id dei sentieri come stringhe
      */
     @Query(value = """
             WITH r AS (SELECT ST_GeomFromText(:routeWkt, 4326) AS g)
@@ -36,6 +51,15 @@ public interface TrailRepository extends JpaRepository<Trail, UUID>{
     List<String> findTrailIdsAlong(@Param("routeWkt") String routeWkt, @Param("toleranceMeters") double toleranceMeters,
                                    @Param("minOverlapMeters") double minOverlapMeters);
 
+    /**
+     * Sentieri entro un raggio da un punto, dal più vicino.
+     *
+     * @param lon          longitudine del centro
+     * @param lat          latitudine del centro
+     * @param radiusMeters raggio in metri
+     * @param limit        numero massimo di risultati
+     * @return i sentieri trovati
+     */
     @Query(value = """
             SELECT t.* FROM trails t
             WHERE ST_DWithin(t.path::geography, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :radiusMeters)
@@ -44,6 +68,17 @@ public interface TrailRepository extends JpaRepository<Trail, UUID>{
             """, nativeQuery = true)
     List<Trail> findWithinDistance(@Param("lon") double lon, @Param("lat") double lat, @Param("radiusMeters") double radiusMeters, @Param("limit") int limit);
 
+    /**
+     * Sentieri che attraversano un rettangolo, ordinati per id per avere risultati stabili. Si usa
+     * {@code ST_Intersects} sulla geometria, che sfrutta l'indice spaziale del tracciato.
+     *
+     * @param minLon longitudine del lato ovest
+     * @param minLat latitudine del lato sud
+     * @param maxLon longitudine del lato est
+     * @param maxLat latitudine del lato nord
+     * @param limit  numero massimo di risultati
+     * @return i sentieri trovati
+     */
     @Query(value = """
             SELECT t.* FROM trails t
             WHERE ST_Intersects(ST_MakeEnvelope(:minLon, :minLat, :maxLon, :maxLat, 4326), t.path)

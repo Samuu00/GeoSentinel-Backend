@@ -1,3 +1,7 @@
+/*
+ * Entità JPA che collega un account GeoSentinel a un'identità esterna (oggi solo Google), così lo stesso utente
+ * può entrare sia con email e password sia con il fornitore esterno.
+ */
 package it.unical.geosentinel.identity.domain;
 
 import jakarta.persistence.Column;
@@ -17,6 +21,10 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * Identità esterna collegata a un {@link User} (tabella {@code user_identities}). La coppia fornitore e
+ * {@code subject} identifica l'utente presso il fornitore e non cambia nel tempo, a differenza dell'email.
+ */
 @Entity
 @Table(name = "user_identities")
 public class UserIdentity {
@@ -33,17 +41,27 @@ public class UserIdentity {
     @Column(name = "provider", nullable = false, updatable = false, length = 20)
     private IdentityProvider provider;
 
+    /** Identificativo stabile dell'utente presso il fornitore (il claim {@code sub} del token di Google). */
     @Column(name = "subject", nullable = false, updatable = false, length = 255)
     private String subject;
 
+    /** Email comunicata dal fornitore al momento del collegamento. */
     @Column(name = "email", nullable = false, length = 254)
     private String email;
 
     @Column(name = "linked_at", nullable = false, updatable = false)
     private Instant linkedAt;
 
+    /** Costruttore senza argomenti richiesto da JPA. */
     protected UserIdentity() {}
 
+    /**
+     * @param user account GeoSentinel da collegare
+     * @param provider fornitore di identità
+     * @param subject identificativo dell'utente presso il fornitore
+     * @param email email comunicata dal fornitore
+     * @param linkedAt istante del collegamento
+     */
     public UserIdentity(User user, IdentityProvider provider, String subject, String email, Instant linkedAt) {
         this.user = Objects.requireNonNull(user, "User cannot be null");
         this.provider = Objects.requireNonNull(provider, "Provider cannot be null");

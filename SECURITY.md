@@ -10,7 +10,7 @@ Solo il ramo `main`. Il progetto non ha ancora versioni rilasciate.
 |---|---|
 | API REST (`/api/v1`) | Pubblica tramite il client mobile; catalogo di sentieri e POI leggibile senza login |
 | Object storage | Solo URL firmati e a scadenza; bucket privato |
-| Database, Redis | Mai esposti: solo il backend (porte su `127.0.0.1` in sviluppo, nessuna porta in produzione) |
+| Database, Redis | Mai esposti: solo il backend (porte pubblicate solo su `127.0.0.1`) |
 | FCM | In uscita; il payload contiene solo tipo evento e id |
 
 Attori considerati: utente anonimo, utente autenticato malevolo (accesso ai dati altrui, abuso delle API),
@@ -28,7 +28,7 @@ attaccante con un token rubato, client che ritenta su rete instabile.
 | Input | Bean Validation su ogni DTO, query parametrizzate, whitelist dei campi ordinabili, chiavi degli oggetti generate dal server |
 | Upload | Tipo e dimensione imposti dallo storage, verifica dei magic bytes, quarantena, quota per utente, download come allegato ([ADR-0015](docs/adr/0015-presigned-post-policy.md)) |
 | Dati personali | Minimizzazione (data di nascita mai salvata), nessun dato personale in JWT, push e log; cancellazione con anonimizzazione; posizioni degli SOS anonimizzate dopo 90 giorni |
-| Trasporto | TLS terminato da Caddy in produzione; `X-Forwarded-For` accettato solo dal proxy interno |
+| Trasporto | HTTP in chiaro in locale (vedi i limiti noti); il rate limit usa l'indirizzo della connessione e ignora `X-Forwarded-For` |
 | Errori | RFC 7807 senza stack trace né dettagli interni |
 | Segreti | Solo da variabili d'ambiente; `.env*` ignorati da git; gitleaks su tutta la storia in CI |
 | Dipendenze | Dependabot (Maven, Docker, Compose, Actions); versioni delle immagini bloccate |
@@ -49,4 +49,3 @@ Non sono stati fatti penetration test né analisi statica automatica (es. CodeQL
 - Un attaccante può rallentare il login di una vittima esaurendo il limite per account della sua email.
 - Nessun tetto al numero di token push per utente.
 - Le notifiche SOS possono arrivare due volte.
-- I backup di produzione restano sullo stesso server.

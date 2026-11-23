@@ -1,7 +1,10 @@
-# Aggiornamenti settimanali delle dipendenze (M0.5). Minor e patch raggruppate in una PR per ecosistema,
-# le major arrivano separate (possono rompere: vanno lette)
+# Configurazione di Dependabot: ogni settimana controlla se ci sono versioni nuove delle dipendenze e apre
+# delle pull request per aggiornarle.
+
 version: 2
 updates:
+  # Dipendenze Maven del pom.xml. Gli aggiornamenti minor e patch arrivano raggruppati in un'unica PR; le
+  # major arrivano separate, perché possono rompere la compatibilità e vanno lette con attenzione.
   - package-ecosystem: maven
     directory: /
     schedule:
@@ -10,18 +13,19 @@ updates:
       maven-minor-patch:
         update-types: [minor, patch]
 
-  # Immagini base del Dockerfile (eclipse-temurin)
+  # Immagini di base del Dockerfile (eclipse-temurin).
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
 
-  # Immagini del compose (postgis, redis, pgsty/minio, pgsty/mc)
+  # Immagini usate nei file di Docker Compose (postgis, redis, pgsty/minio, pgsty/mc e le altre).
   - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly
 
+  # Versioni delle GitHub Actions usate nei workflow.
   - package-ecosystem: github-actions
     directory: /
     schedule:

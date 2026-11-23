@@ -46,7 +46,7 @@ un'app mobile Kotlin Multiplatform (Android e iOS).
 - Nessun frontend web: niente CORS né cookie ([ADR-0013](adr/0013-client-unico-kmp.md)).
 - GDPR: età minima per registrarsi (14 anni in Italia), minimizzazione, diritto alla cancellazione.
 - App Store e Google Play: la cancellazione dell'account deve essere possibile dall'app.
-- Progetto universitario: in esercizio sul PC dello sviluppatore; lo stack di produzione esiste ma non è in uso.
+- Progetto di tesi triennale: gira solo in locale, sul PC dello sviluppatore, con Docker Compose.
 
 ## 3. Contesto (C4 livello 1)
 
@@ -86,24 +86,23 @@ URL firmati dal backend. Le notifiche push passano da FCM, che le inoltra ad APN
 ```mermaid
 flowchart TB
     app[App mobile KMP]
-    subgraph server[Host Docker]
-        caddy[Caddy<br/>TLS, solo in prod]
+    subgraph server[PC dello sviluppatore, Docker Compose]
         be[Spring Boot<br/>API REST :8080]
         pg[(PostgreSQL 16 + PostGIS<br/>dati di dominio)]
         redis[(Redis 7<br/>blacklist JWT, rate limit, cache)]
         minio[(MinIO<br/>foto, bucket privato)]
     end
     fcm[FCM]
-    app -- HTTPS --> caddy
-    caddy --> be
-    caddy --> minio
+    app -- "HTTP :8080" --> be
+    app -- "HTTP :9000 (URL firmati)" --> minio
     be -- JDBC --> pg
     be -- RESP --> redis
     be -- "S3 API (stat, delete, firme)" --> minio
     be -- HTTPS --> fcm
 ```
 
-In sviluppo Caddy non c'è: l'app raggiunge direttamente il backend sulla 8080 e MinIO sulla 9000.
+L'app raggiunge direttamente il backend sulla 8080 e MinIO sulla 9000 (indirizzi per emulatore e telefono nel
+[README](../README.md#collegare-lapp-in-sviluppo)).
 
 ### Componenti del backend (C4 livello 3)
 
@@ -196,14 +195,13 @@ sequenceDiagram
    l'oggetto viene cancellato e il media va in `QUARANTINED`.
 4. Un job cancella ogni 15 minuti gli upload mai confermati.
 
-## 7. Vista di deployment
+## 7. Ambienti di esecuzione
 
 | Ambiente | Come | Note |
 |---|---|---|
 | Sviluppo | `docker compose up -d` (PostGIS, Redis, MinIO) + app dall'IDE con profilo `local` | seed di prova, Swagger acceso |
 | Test | Testcontainers (PostGIS, Redis, MinIO solo per `MediaUploadIT`) | profilo `test`, job programmati spenti |
 | CI | GitHub Actions: `verify`, `docker`, `secrets` (gitleaks) | Dependabot su Maven, Docker, Actions |
-| Produzione (pronta, non in uso) | `docker-compose.prod.yml`: Caddy (TLS) davanti a backend e MinIO, backup giornalieri | profilo `prod`, solo porte 80/443 esposte |
 
 Dettagli operativi nel [runbook](operations.md).
 
@@ -264,7 +262,6 @@ Elenco completo in [`adr/README.md`](adr/README.md).
 | Notifiche SOS duplicate (crash tra invio e `notified_at`) | Doppia notifica | L'app tollera i duplicati |
 | MinIO da un fork della community (`pgsty`) | Aggiornamenti incerti | Versione bloccata, Dependabot |
 | Nessun tetto ai token push per utente | Crescita della tabella | Rate limit generale |
-| Backup sullo stesso server | Persi con il server | Copia esterna quando i dati saranno reali |
 
 ## 12. Glossario
 

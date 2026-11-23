@@ -1,7 +1,7 @@
 # Runbook
 
-Configurazione, avvio, controlli e ripristino del backend. L'architettura è in
-[architecture.md](architecture.md), il deploy in produzione anche nel [README](../README.md#staging--produzione).
+Configurazione, avvio e controlli del backend in locale. L'architettura è in
+[architecture.md](architecture.md), l'avvio rapido nel [README](../README.md).
 
 ## Requisiti
 
@@ -15,8 +15,8 @@ Configurazione, avvio, controlli e ripristino del backend. L'architettura è in
 
 ## Configurazione
 
-Le variabili arrivano dal `.env` (sviluppo, importato da Spring con `spring.config.import`) o
-dall'ambiente del container (produzione). Modello completo in [`.env.example`](../.env.example).
+Le variabili arrivano dal `.env` (importato da Spring con `spring.config.import` e letto anche da Docker
+Compose) o dall'ambiente del container. Modello completo in [`.env.example`](../.env.example).
 
 | Variabile | Obbligatoria | Default | Uso |
 |---|---|---|---|
@@ -31,9 +31,7 @@ dall'ambiente del container (produzione). Modello completo in [`.env.example`](.
 | `MINIO_PUBLIC_ENDPOINT` | no | `http://localhost:9000` | Indirizzo di MinIO visto dal telefono o dall'emulatore, entra nella firma degli URL |
 | `PUSH_ENABLED` | no | `false` | Accende FCM; altrimenti le push vanno solo nel log |
 | `GOOGLE_APPLICATION_CREDENTIALS` | se `PUSH_ENABLED` |  | Percorso del JSON dell'account di servizio Firebase |
-
-Solo per `docker-compose.prod.yml`: `API_DOMAIN`, `MEDIA_DOMAIN`, `HTTP_PORT`, `HTTPS_PORT`, `BACKUP_DIR`,
-`BACKUP_KEEP_DAYS`.
+| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USER`, `MAIL_PASSWORD`, `MAIL_FROM`, `MAIL_SMTP_AUTH`, `MAIL_STARTTLS` | per inviare le email |  | Server SMTP delle email (reset della password, 2FA), ad esempio Gmail con una password per le app; il compose non ha un server di posta |
 
 Parametri applicativi principali (`application.properties`):
 
@@ -56,7 +54,6 @@ Parametri applicativi principali (`application.properties`):
 |---|---|---|
 | (nessuno) | Base | Swagger spento |
 | `local` | Sviluppo | Seed di prova (`db/seed`), Swagger acceso, log SQL |
-| `prod` | Dietro Caddy | `forward-headers-strategy=native`, Swagger spento, log `INFO` |
 | `test` | Test di integrazione | Segreti finti, job programmati spenti |
 
 ## Avvio e arresto
@@ -97,24 +94,6 @@ Quando qualcosa non torna conviene guardare queste chiavi su Redis:
 | `MediaCleanupJob` | ogni 15 min | Cancella riga e oggetto degli upload non confermati (TTL + 1 h) | Riprova al giro successivo |
 | `RefreshTokenCleanupJob` | 03:30 UTC | Cancella le famiglie di refresh token scadute | Nessun effetto per l'utente |
 | `SosDataRetentionJob` | 04:00 UTC | Anonimizza gli SOS chiusi da più di 90 giorni | Riprova la notte dopo |
-
-## Backup e ripristino (produzione)
-
-`docker-compose.prod.yml` salva ogni giorno un dump di Postgres (`BACKUP_DIR/db`, conservato
-`BACKUP_KEEP_DAYS` giorni) e una copia speculare del bucket (`BACKUP_DIR/media`).
-
-```bash
-# ripristino del database
-docker compose -f docker-compose.prod.yml --env-file .env.prod exec db-backup \
-  pg_restore --clean --if-exists -d geosentinel /backups/db/geosentinel-AAAA-MM-GG.dump
-
-# ripristino delle foto
-docker compose -f docker-compose.prod.yml --env-file .env.prod exec media-backup \
-  mc mirror --overwrite /backups/media local/geosentinel-media
-```
-
-Il ripristino è stato provato l'01/10 su un database temporaneo. I backup restano sul server: per
-sopravvivere a un guasto vanno copiati altrove.
 
 ## Problemi noti
 

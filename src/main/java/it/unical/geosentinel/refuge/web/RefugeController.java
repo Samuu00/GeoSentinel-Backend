@@ -1,3 +1,6 @@
+// Controller REST dei rifugi, sotto /api/v1/refuges: dettaglio, ricerca attorno a un punto,
+// disponibilità dei posti per notte, creazione e modifica dei posti letto. Tutte le rotte richiedono il
+// token; creazione e modifica sono riservate ai gestori, con i controlli nel service.
 package it.unical.geosentinel.refuge.web;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -36,6 +39,9 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Espone le operazioni sui rifugi e converte richieste e risposte con {@link RefugeMapper}.
+ */
 @RestController
 @RequestMapping("/api/v1/refuges")
 @Tag(name = "Refuges", description = "Endpoints for discovering mountain refuges, checking bed availability, and management")
@@ -44,12 +50,21 @@ public class RefugeController {
     private final RefugeMapper refugeMapper;
     private final CurrentUser currentUser;
 
+    /**
+     * @param refugeBookingService service dei rifugi e delle prenotazioni
+     * @param refugeMapper         mapper tra DTO REST e oggetti del service
+     * @param currentUser          accesso all'utente autenticato
+     */
     public RefugeController(RefugeBookingService refugeBookingService, RefugeMapper refugeMapper, CurrentUser currentUser) {
         this.refugeBookingService = refugeBookingService;
         this.refugeMapper = refugeMapper;
         this.currentUser = currentUser;
     }
 
+    /**
+     * @param id identificativo del rifugio
+     * @return 200 con il rifugio, 404 se non esiste
+     */
     @GetMapping("/{id}")
     @Operation(operationId = "getRefuge", summary = "Get refuge details by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RefugeResponse> getById(@PathVariable UUID id) {
@@ -57,6 +72,15 @@ public class RefugeController {
         return ResponseEntity.ok(refugeMapper.toResponse(view));
     }
 
+    /**
+     * Cerca i rifugi attorno a un punto, dal più vicino.
+     *
+     * @param lon    longitudine del centro
+     * @param lat    latitudine del centro
+     * @param radius raggio in metri, di default 15 km, al massimo 50 km
+     * @param limit  numero massimo di risultati, di default 30, al massimo 50
+     * @return 200 con i rifugi
+     */
     @GetMapping("/nearby")
     @Operation(operationId = "findRefugesNearby", summary = "Find refuges within a given distance in meters from coordinates", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<RefugeResponse>> findNearby(
@@ -69,6 +93,15 @@ public class RefugeController {
         return ResponseEntity.ok(views.stream().map(refugeMapper::toResponse).toList());
     }
 
+    /**
+     * Restituisce i posti liberi per ogni notte dell'intervallo, dal giorno from incluso al giorno to
+     * escluso.
+     *
+     * @param id   identificativo del rifugio
+     * @param from prima notte, in formato ISO (aaaa-mm-gg)
+     * @param to   giorno di fine, escluso
+     * @return 200 con la disponibilità; 422 se l'intervallo non è valido
+     */
     @GetMapping("/{id}/availability")
     @Operation(operationId = "getRefugeAvailability", summary = "Check bed availability per night in a date range [from, to)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<AvailableResponse> checkAvailability(
@@ -80,8 +113,14 @@ public class RefugeController {
         return ResponseEntity.ok(refugeMapper.toResponse(view));
     }
 
+    /**
+     * Crea un rifugio. Il gestore è l'utente che fa la richiesta, ricavato dal JWT e non dal body.
+     *
+     * @param request dati del rifugio, validati
+     * @return 201 con il rifugio creato
+     */
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime lo status lo decide la ResponseEntity
     @Operation(operationId = "createRefuge", summary = "Register a new refuge", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RefugeResponse> create(@Valid @RequestBody CreateRefugeRequest request){
         RefugeView created = refugeBookingService.createRefuge(
@@ -93,6 +132,14 @@ public class RefugeController {
         return ResponseEntity.created(location).body(refugeMapper.toResponse(created));
     }
 
+    /**
+     * Cambia i posti letto di un rifugio; è permesso al gestore di quel rifugio o a un amministratore.
+     *
+     * @param id      identificativo del rifugio
+     * @param request nuova capacità
+     * @return 200 con il rifugio aggiornato; 403 se l'utente non può modificarlo; 409 se la capacità è
+     *         inferiore agli ospiti già confermati
+     */
     @PatchMapping("/{id}/capacity")
     @Operation(operationId = "updateRefugeCapacity", summary = "Update refuge capacity", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<RefugeResponse> updateCapacity(

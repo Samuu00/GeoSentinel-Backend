@@ -5,7 +5,7 @@ stanno nel contratto OpenAPI 3.1, [`openapi.json`](openapi.json), che fa fede. Q
 comportamenti che dallo schema non si capiscono.
 
 In sviluppo l'API risponde su `http://localhost:8080` (gli indirizzi per emulatore e telefono sono nel
-[README](../README.md)), in produzione su `https://<API_DOMAIN>`. Tutte le rotte iniziano con `/api/v1`.
+[README](../README.md)). Tutte le rotte iniziano con `/api/v1`.
 Si parla JSON UTF-8: date `YYYY-MM-DD` (`LocalDate`), istanti ISO-8601 in UTC (`Instant`), coordinate WGS 84
 nei campi `lat` e `lon`, percorsi GeoJSON in ordine `[lon, lat]`. Swagger UI è su `/swagger-ui.html`, ma solo
 con il profilo `local`.

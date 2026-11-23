@@ -1,3 +1,6 @@
+// Test di integrazione delle informazioni descrittive dei rifugi (descrizione, quota, stagione di apertura,
+// telefono e servizi offerti), con chiamate HTTP vere e PostGIS in Testcontainers. Controlla che i campi
+// arrivino sia nel dettaglio del rifugio sia nella lista dei rifugi vicini, e la loro validazione.
 package it.unical.geosentinel.refuge;
 
 import it.unical.geosentinel.identity.domain.Role;
@@ -11,15 +14,26 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Rifugi descritti (V11): descrizione, quota, stagione, telefono e servizi, nel dettaglio e nella lista dei vicini
+/**
+ * Verifica creazione, lettura e validazione dei dettagli descrittivi di un rifugio.
+ */
 class RefugeDetailsIT extends AbstractIntegrationTest {
 
+    /**
+     * Corpo di creazione di un rifugio con tutti i dettagli. La descrizione ha spazi ai lati e i servizi
+     * contengono un doppione, per verificare la normalizzazione.
+     */
     private static final String DESCRIBED = """
             {"name":"Rifugio Descritto","location":{"lat":39.31,"lon":16.47},"capacity":12,
              "description":"  Rifugio in pietra con la stufa.  ","altitudeM":1650,"season":"Da giugno a settembre",
              "phone":"+39 0984 123 456","amenities":["HEATING","DRINKING_WATER","HEATING"]}
             """;
 
+    /**
+     * Un gestore crea un rifugio con tutti i dettagli e un escursionista lo legge. La descrizione deve
+     * arrivare senza spazi ai lati, quota, stagione e telefono invariati, e i servizi senza doppioni e
+     * nell'ordine in cui sono dichiarati nell'enum.
+     */
     @Test
     void createdRefugeCarriesItsDescriptionAndAmenitiesInEnumOrder() {
         String manager = obtainToken(Role.PARK_MANAGER);
@@ -33,10 +47,14 @@ class RefugeDetailsIT extends AbstractIntegrationTest {
         assertThat(refuge.get("altitudeM").asInt()).isEqualTo(1650);
         assertThat(refuge.get("season").asString()).isEqualTo("Da giugno a settembre");
         assertThat(refuge.get("phone").asString()).isEqualTo("+39 0984 123 456");
-        // senza doppioni, nell'ordine dell'enum (DRINKING_WATER prima di HEATING)
+        // Nell'enum DRINKING_WATER viene prima di HEATING, quindi l'ordine di invio non conta.
         assertThat(strings(refuge.get("amenities"))).containsExactly("DRINKING_WATER", "HEATING");
     }
 
+    /**
+     * Un rifugio creato senza dettagli deve avere descrizione e quota a {@code null} e la lista dei servizi
+     * vuota (un array, non {@code null}), così il client non deve gestire casi diversi.
+     */
     @Test
     void refugeWithoutDetailsHasNullFieldsAndEmptyAmenities() {
         String id = json(call(HttpMethod.POST, "/api/v1/refuges", obtainToken(Role.PARK_MANAGER), """
@@ -51,6 +69,7 @@ class RefugeDetailsIT extends AbstractIntegrationTest {
         assertThat(refuge.get("amenities")).isEmpty();
     }
 
+    /** Anche la lista dei rifugi vicini a un punto deve riportare quota e servizi di ciascun rifugio. */
     @Test
     void nearbyListCarriesTheDetailsToo() {
         String manager = obtainToken(Role.PARK_MANAGER);
@@ -66,6 +85,7 @@ class RefugeDetailsIT extends AbstractIntegrationTest {
         assertThat(strings(mine.get("amenities"))).containsExactly("DRINKING_WATER", "HEATING");
     }
 
+    /** Una quota fuori dall'intervallo ammesso (qui 9000 metri) deve dare 400 con un corpo ProblemDetail. */
     @Test
     void altitudeOutOfRangeIsAValidationError() {
         HttpResult result = call(HttpMethod.POST, "/api/v1/refuges", obtainToken(Role.PARK_MANAGER), """
@@ -76,6 +96,7 @@ class RefugeDetailsIT extends AbstractIntegrationTest {
         assertThat(isProblemJson(result)).isTrue();
     }
 
+    /** Un servizio che non esiste nell'enum (qui "SAUNA") deve dare 400. */
     @Test
     void unknownAmenityIsABadRequest() {
         HttpResult result = call(HttpMethod.POST, "/api/v1/refuges", obtainToken(Role.PARK_MANAGER), """
@@ -85,6 +106,12 @@ class RefugeDetailsIT extends AbstractIntegrationTest {
         assertThat(result.status()).isEqualTo(400);
     }
 
+    /**
+     * Converte un array JSON di stringhe in una lista Java.
+     *
+     * @param array il nodo JSON di tipo array
+     * @return i valori nell'ordine dell'array
+     */
     private static List<String> strings(JsonNode array) {
         List<String> values = new ArrayList<>();
         array.forEach(v -> values.add(v.asString()));

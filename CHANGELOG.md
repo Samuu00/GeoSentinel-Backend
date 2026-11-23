@@ -10,6 +10,18 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
   `path` (semplificato a ~5 m), `lengthM` e `trailIds`; 422 `no-route` se un punto è a più di 50 km dai sentieri o
   non sono collegati. La rete si prepara all'avvio.
 
+### Modificato
+- Mailpit tolto dal compose (23/11/2026): le email (reset della password, 2FA) partono dal server SMTP configurato
+  nel `.env`, ad esempio Gmail con `MAIL_SMTP_AUTH` e `MAIL_STARTTLS`.
+- Commenti del codice riscritti in italiano e in forma esplicativa: intestazione di ogni file e Javadoc su classi e
+  metodi.
+- `User.passwordHash` mappato come colonna nullable, coerente con la migrazione V14 (account Google senza password).
+
+### Rimosso
+- Lo stack per un server pubblico: il secondo file di compose con il reverse proxy TLS e i backup giornalieri, la sua
+  configurazione, il profilo Spring dedicato e il suo test di integrazione. GeoSentinel è un progetto di tesi
+  triennale e gira solo in locale; `Dockerfile`, `docker-compose.yml` e CI restano.
+
 ### Sicurezza
 - Audit della 2FA del 10/11 (ADR-0026, V17). Tre piste confermate e corrette, due respinte (motivi nell'ADR):
   - `POST /users/me/mfa/setup` manda un codice all'email dell'account; `POST /users/me/mfa/enable` richiede
@@ -106,7 +118,6 @@ Backend per l'app mobile Kotlin Multiplatform (milestone M7).
 - Notifiche push FCM: registrazione dei dispositivi, SOS agli operatori, aggiornamenti all'escursionista.
 - Compressione gzip, ETag e `304` sul catalogo, `GET /bookings/my` paginato.
 - Contratti di retry, refresh e upload nella descrizione OpenAPI; `MediaUploadIT` con MinIO reale.
-- Profilo `prod`, `docker-compose.prod.yml` con Caddy (TLS) e backup giornalieri.
 - Documentazione: architettura arc42, ADR, guida all'API, runbook, contribuzione, sicurezza.
 
 ### Modificato

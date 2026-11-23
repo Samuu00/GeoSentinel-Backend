@@ -1,3 +1,7 @@
+/*
+ * Controller REST con cui l'utente autenticato gestisce la propria verifica in due passaggi: avvio della
+ * configurazione, attivazione, disattivazione e rigenerazione dei codici di recupero.
+ */
 package it.unical.geosentinel.identity.web;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -20,6 +24,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
+/**
+ * Endpoint sotto {@code /api/v1/users/me/mfa}.
+ */
 @RestController
 @RequestMapping("/api/v1/users/me/mfa")
 @Tag(name = "Two-factor authentication", description = "Setup, confirmation, disabling and recovery codes of the TOTP second factor")
@@ -32,6 +39,11 @@ public class MfaController {
         this.currentUser = currentUser;
     }
 
+    /**
+     * Avvia la configurazione: restituisce segreto e URI otpauth e manda un codice di conferma via email.
+     *
+     * @return 200 con i dati per l'app di autenticazione
+     */
     @PostMapping("/setup")
     @Operation(operationId = "startMfaSetup",
             summary = "Start two-factor setup: returns the secret and the otpauth URI and emails a confirmation code valid 15 minutes (409 if already enabled)",
@@ -41,6 +53,12 @@ public class MfaController {
         return ResponseEntity.ok(MfaSetupResponse.from(mfaService.startSetup(userId)));
     }
 
+    /**
+     * Conferma la configurazione con il codice dell'app e quello ricevuto via email.
+     *
+     * @param request i due codici
+     * @return 200 con i codici di recupero, mostrati una sola volta
+     */
     @PostMapping("/enable")
     @Operation(operationId = "enableMfa",
             summary = "Confirm two-factor setup with a TOTP code and the code emailed by setup: returns the recovery codes once",
@@ -50,6 +68,12 @@ public class MfaController {
         return ResponseEntity.ok(new RecoveryCodesResponse(mfaService.enable(userId, request.code(), request.emailCode())));
     }
 
+    /**
+     * Disattiva la verifica in due passaggi.
+     *
+     * @param request codice TOTP o di recupero
+     * @return 204 senza corpo
+     */
     @PostMapping("/disable")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(operationId = "disableMfa", summary = "Disable two-factor with a TOTP code or a recovery code",
@@ -60,7 +84,13 @@ public class MfaController {
         return ResponseEntity.noContent().build();
     }
 
-    // Solo TOTP: un codice di recupero non rigenera altri codici. I vecchi smettono di valere
+    /**
+     * Rigenera i codici di recupero; i vecchi smettono di valere. Accetta solo un codice TOTP: un codice di
+     * recupero non può servire a generarne altri.
+     *
+     * @param request codice TOTP
+     * @return 200 con i nuovi codici di recupero
+     */
     @PostMapping("/recovery-codes")
     @Operation(operationId = "regenerateRecoveryCodes", summary = "Regenerate the recovery codes with a TOTP code",
             security = @SecurityRequirement(name = "bearerAuth"))

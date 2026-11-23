@@ -1,3 +1,7 @@
+// Servizio applicativo delle emergenze: gestisce il ciclo di vita delle allerte SOS e l'anagrafica delle
+// squadre di soccorso. Apre le transazioni, prende i lock nell'ordine corretto, controlla i ruoli con
+// Spring Security e pubblica gli eventi da cui partono le notifiche push. Le regole sui cambi di stato
+// restano nelle entità SosAlert e RescueTeam.
 package it.unical.geosentinel.emergency.application;
 
 import it.unical.geosentinel.emergency.application.dto.SosCommands.CreateRescueTeamCommand;
@@ -34,12 +38,23 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Casi d'uso delle allerte SOS (lancio, posizione in tempo reale, annullamento, invio della squadra,
+ * chiusura) e delle squadre di soccorso (creazione e ricerca). Lo usano {@code SosController},
+ * {@code RescueTeamController} e, alla cancellazione di un account, {@code UserAccountService}.
+ * <p>
+ * Quando servono più lock, l'ordine è sempre lo stesso: prima l'allerta, poi la squadra. Così due
+ * operazioni concorrenti (per esempio un invio e un annullamento) non possono bloccarsi a vicenda.
+ */
 @Service
 public class SosService {
+    /** Stati in cui un'allerta è considerata aperta. */
     private static final List<SosStatus> ACTIVE_STATUSES = List.of(SosStatus.ACTIVE, SosStatus.DISPATCHED);
+    /** Raggio massimo, in metri, della ricerca delle allerte vicine. */
     private static final double MAX_RADIUS_METERS = 100_000;
-    // ADR-0021: al massimo 3 push agli operatori ogni 15 minuti per escursionista
+    /** Numero massimo di push agli operatori per escursionista dentro {@link #PUSH_WINDOW}. */
     static final int MAX_PUSHES_PER_WINDOW = 3;
+    /** Finestra di tempo su cui si contano le allerte di uno stesso escursionista. */
     static final Duration PUSH_WINDOW = Duration.ofMinutes(15);
     private static final Logger log = LoggerFactory.getLogger(SosService.class);
 
@@ -49,6 +64,13 @@ public class SosService {
     private final GeometryMapper geometryMapper;
     private final Clock clock;
 
+    /**
+     * @param sosAlertRepository repository delle allerte
+     * @param rescueTeamRepository repository delle squadre
+     * @param applicationEventPublisher pubblicatore degli eventi di dominio (notifiche push)
+     * @param geometryMapper convertitore tra geometrie JTS e DTO dell'API
+     * @param clock orologio iniettato, sostituibile nei test
+     */
     public SosService(SosAlertRepository sosAlertRepository, RescueTeamRepository rescueTeamRepository,
                       ApplicationEventPublisher applicationEventPublisher, GeometryMapper geometryMapper, Clock clock) {
         this.sosAlertRepository = sosAlertRepository;
@@ -58,8 +80,23 @@ public class SosService {
         this.clock = clock;
     }
 
-    // Un SOS non si rifiuta mai (ADR-0012): un retry con la stessa chiave (facoltativa, può essere null), o un secondo SOS
-    // mentre il primo è attivo, restituisce l'allerta esistente (created = false) invece di un errore o di un duplicato
+    /**
+     * Lancia un'allerta SOS per l'escursionista.
+     * <p>
+     * Una richiesta d'aiuto non viene mai rifiutata: un retry con la stessa chiave di idempotenza, oppure un
+     * secondo SOS mentre il primo è ancora aperto, restituisce l'allerta esistente con {@code created = false}
+     * invece di un errore o di un duplicato. Le richieste dello stesso escursionista vengono messe in fila da un
+     * advisory lock di PostgreSQL, così due richieste simultanee (un retry, un doppio tocco) non creano due
+     * allerte.
+     * <p>
+     * Per evitare di inondare gli operatori, se l'escursionista ha già lanciato {@link #MAX_PUSHES_PER_WINDOW}
+     * allerte nella {@link #PUSH_WINDOW} la nuova allerta viene salvata ma la push non parte.
+     *
+     * @param hikerId id dell'escursionista autenticato
+     * @param idempotencyKey chiave di idempotenza dell'header, può essere null
+     * @param cmd posizione e note mediche
+     * @return l'allerta e l'indicazione se è stata appena creata
+     */
     @Transactional
     @PreAuthorize("hasRole('HIKER')")
     public SosRaiseResult raiseSos(UUID hikerId, UUID idempotencyKey, RaiseSosCommand cmd) {
@@ -72,8 +109,9 @@ public class SosService {
             return new SosRaiseResult(SosAlertView.from(existing.get(), geometryMapper), false);
         }
 
-        // Contate prima del save, sotto il lock dell'escursionista: un ciclo raise -> cancel -> raise non può
-        // tempestare gli operatori di push (il rate limit non copre il POST dell'SOS, ADR-0021)
+        // Le allerte recenti si contano prima del salvataggio e sotto il lock dell'escursionista: così un ciclo
+        // lancia, annulla, rilancia non può tempestare gli operatori di push. Il rate limit generale dell'API
+        // non si applica al POST dell'SOS, quindi questo è l'unico freno.
         Instant now = clock.instant();
         boolean pushAllowed = sosAlertRepository.countByHikerIdAndCreatedAtAfter(hikerId, now.minus(PUSH_WINDOW))
                 < MAX_PUSHES_PER_WINDOW;
@@ -82,7 +120,8 @@ public class SosService {
                 SosAlert.raise(hikerId, idempotencyKey, cmd.location(), cmd.medicalNotes(), now));
 
         if (!pushAllowed) {
-            // L'allerta resta nella lista degli operatori; notified_at evita che SosNotificationRecovery la rilanci
+            // L'allerta resta comunque visibile nella lista degli operatori. Si imposta notified_at perché
+            // altrimenti SosNotificationRecovery la considererebbe non notificata e invierebbe la push.
             sosAlertRepository.markNotified(saved.getId(), now);
             log.warn("SOS push suppressed for alert {}: too many alerts from the same hiker", saved.getId());
             return new SosRaiseResult(SosAlertView.from(saved, geometryMapper), true);
@@ -97,8 +136,13 @@ public class SosService {
         return new SosRaiseResult(SosAlertView.from(saved, geometryMapper), true);
     }
 
-    // Cancellazione dell'account. Stesso advisory lock di raiseSos: un SOS lanciato in parallelo non sfugge.
-    // Poi l'ordine fisso alert -> team, come in cancelSos
+    /**
+     * Annulla l'eventuale allerta aperta dell'escursionista. Viene chiamato durante la cancellazione
+     * dell'account. Prende lo stesso advisory lock di {@link #raiseSos}, così un SOS lanciato in parallelo non
+     * sfugge all'annullamento; poi blocca allerta e squadra nell'ordine consueto, come {@link #cancelSos}.
+     *
+     * @param hikerId id dell'utente che sta cancellando l'account
+     */
     @Transactional
     public void cancelActiveOf(UUID hikerId) {
         sosAlertRepository.lockHiker(hikerId.getMostSignificantBits() ^ hikerId.getLeastSignificantBits());
@@ -110,6 +154,16 @@ public class SosService {
                 });
     }
 
+    /**
+     * Aggiorna la posizione di un'allerta aperta. L'app la invia periodicamente mentre l'SOS è in corso.
+     *
+     * @param alertId id dell'allerta
+     * @param hikerId id dell'escursionista autenticato, che deve essere il proprietario dell'allerta
+     * @param cmd nuova posizione
+     * @return l'allerta aggiornata
+     * @throws ResourceNotFoundException se l'allerta non esiste o appartiene a un altro escursionista
+     * @throws BusinessRuleViolationException se l'allerta è già chiusa
+     */
     @Transactional
     public SosAlertView updateLiveLocation(UUID alertId, UUID hikerId, UpdateLocationCommand cmd) {
         SosAlert alert = sosAlertRepository.findByIdAndHikerIdForUpdate(alertId, hikerId)
@@ -118,6 +172,14 @@ public class SosService {
         return SosAlertView.from(alert, geometryMapper);
     }
 
+    /**
+     * Annulla un'allerta su richiesta del suo escursionista. Annullare un'allerta già annullata non dà errore.
+     *
+     * @param alertId id dell'allerta
+     * @param hikerId id dell'escursionista autenticato
+     * @throws ResourceNotFoundException se l'allerta non esiste o appartiene a un altro escursionista
+     * @throws BusinessRuleViolationException se l'allerta è già stata risolta
+     */
     @Transactional
     public void cancelSos(UUID alertId, UUID hikerId) {
         SosAlert alert = sosAlertRepository.findByIdAndHikerIdForUpdate(alertId, hikerId)
@@ -126,7 +188,15 @@ public class SosService {
         alert.cancel(clock.instant());
     }
 
-    // l'escursionista legge la propria allerta (la Location del POST punta qui), gli operatori tutte
+    /**
+     * Legge un'allerta per id. Gli operatori e gli amministratori possono leggerle tutte; l'escursionista solo
+     * la propria (l'header Location della risposta al POST punta proprio qui). Il controllo avviene dopo la
+     * lettura, con {@code @PostAuthorize}, confrontando {@code hikerId} con l'utente autenticato.
+     *
+     * @param alertId id dell'allerta
+     * @return l'allerta con la squadra assegnata
+     * @throws ResourceNotFoundException se l'allerta non esiste
+     */
     @Transactional(readOnly = true)
     @PostAuthorize("hasAnyRole('RESCUE_OPERATOR', 'ADMIN') or returnObject.hikerId().toString() == authentication.name")
     public SosAlertView getAlert(UUID alertId) {
@@ -135,6 +205,14 @@ public class SosService {
         return SosAlertView.from(alert, geometryMapper);
     }
 
+    /**
+     * Restituisce l'allerta aperta dell'escursionista. L'app la usa per ritrovare l'SOS in corso, per esempio
+     * dopo un riavvio, e per seguirne lo stato.
+     *
+     * @param hikerId id dell'escursionista autenticato
+     * @return l'allerta aperta
+     * @throws ResourceNotFoundException se non c'è nessuna allerta aperta
+     */
     @Transactional(readOnly = true)
     public SosAlertView getActiveAlertForHiker(UUID hikerId) {
         return sosAlertRepository.findFirstByHikerIdAndStatusIn(hikerId, ACTIVE_STATUSES)
@@ -142,6 +220,12 @@ public class SosService {
                 .orElseThrow(() -> new ResourceNotFoundException("Active SosAlert for hiker", hikerId));
     }
 
+    /**
+     * Elenco paginato delle allerte aperte, per la scheda degli operatori.
+     *
+     * @param pageable pagina e ordinamento richiesti
+     * @return una pagina di allerte ACTIVE o DISPATCHED
+     */
     @Transactional(readOnly = true)
     @PreAuthorize("hasAnyRole('RESCUE_OPERATOR', 'ADMIN')")
     public Page<SosAlertView> findActiveAlerts(Pageable pageable) {
@@ -149,6 +233,17 @@ public class SosService {
                 .map(alert -> SosAlertView.from(alert, geometryMapper));
     }
 
+    /**
+     * Allerte aperte entro un raggio da un punto, dalla più vicina. Raggio e numero di risultati vengono
+     * limitati qui (al massimo {@link #MAX_RADIUS_METERS} metri e 50 allerte) anche se il controller li
+     * valida già.
+     *
+     * @param lon longitudine del centro
+     * @param lat latitudine del centro
+     * @param radiusMeters raggio in metri
+     * @param limit numero massimo di allerte
+     * @return le allerte trovate, ordinate per distanza geodetica
+     */
     @Transactional(readOnly = true)
     @PreAuthorize("hasAnyRole('RESCUE_OPERATOR', 'ADMIN')")
     public List<SosAlertView> findActiveNearby(double lon, double lat, double radiusMeters, int limit) {
@@ -159,7 +254,19 @@ public class SosService {
                 .toList();
     }
 
-    // ordine fisso dei lock: prima l'allerta, poi la squadra (niente deadlock con resolve/cancel)
+    /**
+     * Invia una squadra su un'allerta e avvisa l'escursionista con una push. I lock si prendono in ordine
+     * fisso, prima l'allerta e poi la squadra, per non andare in deadlock con la chiusura o l'annullamento.
+     *
+     * @param operatorId operatore che prende in carico l'allerta
+     * @param alertId id dell'allerta
+     * @param cmd squadra da inviare
+     * @return l'allerta aggiornata
+     * @throws ResourceNotFoundException se allerta o squadra non esistono
+     * @throws it.unical.geosentinel.shared.domain.exception.AlertAlreadyTakenException se un'altra squadra è
+     *         già stata inviata
+     * @throws BusinessRuleViolationException se l'allerta è chiusa o la squadra non è disponibile
+     */
     @Transactional
     @PreAuthorize("hasAnyRole('RESCUE_OPERATOR', 'ADMIN')")
     public SosAlertView dispatchTeam(UUID operatorId, UUID alertId, DispatchTeamCommand cmd) {
@@ -173,6 +280,14 @@ public class SosService {
         return SosAlertView.from(alert, geometryMapper);
     }
 
+    /**
+     * Chiude un'allerta come risolta, libera la squadra e avvisa l'escursionista con una push.
+     *
+     * @param alertId id dell'allerta
+     * @return l'allerta chiusa
+     * @throws ResourceNotFoundException se l'allerta non esiste
+     * @throws BusinessRuleViolationException se l'allerta è già chiusa
+     */
     @Transactional
     @PreAuthorize("hasAnyRole('RESCUE_OPERATOR', 'ADMIN')")
     public SosAlertView resolveAlert(UUID alertId) {
@@ -185,7 +300,15 @@ public class SosService {
         return SosAlertView.from(alert, geometryMapper);
     }
 
-    // anagrafica delle squadre: la gestisce l'amministratore, gli operatori le usano
+    /**
+     * Registra una nuova squadra di soccorso. L'anagrafica delle squadre la gestisce l'amministratore; gli
+     * operatori si limitano a usarle.
+     *
+     * @param cmd dati della nuova squadra
+     * @return la squadra salvata
+     * @throws BusinessRuleViolationException se esiste già una squadra con lo stesso nome (senza distinguere
+     *         maiuscole e minuscole)
+     */
     @Transactional
     @PreAuthorize("hasRole('ADMIN')")
     public RescueTeamView createTeam(CreateRescueTeamCommand cmd){
@@ -202,6 +325,13 @@ public class SosService {
         return RescueTeamView.from(rescueTeamRepository.save(team), geometryMapper);
     }
 
+    /**
+     * Legge una squadra per id.
+     *
+     * @param teamId id della squadra
+     * @return la squadra
+     * @throws ResourceNotFoundException se la squadra non esiste
+     */
     @Transactional(readOnly = true)
     @PreAuthorize("hasAnyRole('RESCUE_OPERATOR', 'ADMIN')")
     public RescueTeamView getTeam(UUID teamId) {
@@ -210,6 +340,16 @@ public class SosService {
                 .orElseThrow(() -> new ResourceNotFoundException("RescueTeam", teamId));
     }
 
+    /**
+     * Squadre disponibili entro un raggio dalla loro base, dalla più vicina. Serve all'operatore per scegliere
+     * chi inviare su un'allerta. Il numero di risultati è limitato a 30.
+     *
+     * @param lon longitudine del centro
+     * @param lat latitudine del centro
+     * @param radiusMeters raggio in metri
+     * @param limit numero massimo di squadre
+     * @return le squadre AVAILABLE trovate, ordinate per distanza
+     */
     @Transactional(readOnly = true)
     @PreAuthorize("hasAnyRole('RESCUE_OPERATOR', 'ADMIN')")
     public List<RescueTeamView> findAvailableTeamsNearby(double lon, double lat, double radiusMeters, int limit) {
@@ -220,8 +360,14 @@ public class SosService {
                 .toList();
     }
 
-    // la squadra si libera chiudendo l'allerta: va bloccata anche lei, sempre dopo l'allerta.
-    // getId() sul proxy lazy non lo inizializza; la query con lock carica lo stato aggiornato
+    /**
+     * Prende il lock sulla squadra assegnata all'allerta, se c'è. Chiudere o annullare un'allerta modifica
+     * anche la squadra, quindi va bloccata pure lei, sempre dopo l'allerta. Chiamare getId() sul proxy lazy non
+     * lo inizializza; è la query con il lock a caricare lo stato aggiornato della squadra nel contesto di
+     * persistenza.
+     *
+     * @param alert allerta già bloccata
+     */
     private void lockAssignedTeam(SosAlert alert) {
         if (alert.getAssignedTeam() != null) {
             rescueTeamRepository.findByIdForUpdate(alert.getAssignedTeam().getId());

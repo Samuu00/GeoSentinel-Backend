@@ -1,3 +1,5 @@
+// DTO dell'API REST dei ticket di manutenzione: corpi delle richieste, con le regole di validazione, e
+// corpo della risposta.
 package it.unical.geosentinel.maintenance.web.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -12,8 +14,14 @@ import java.util.UUID;
 
 import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
+/**
+ * Contenitore dei record di richiesta e risposta usati da {@code MaintenanceController}.
+ */
 public class MaintenanceDtos {
-    // esattamente uno tra trailId, refugeId e hazardReportId: lo verifica il service (422)
+    /**
+     * Corpo di POST /api/v1/maintenance-tickets. Va indicato esattamente uno fra trailId, refugeId e
+     * hazardReportId: il controllo lo fa il servizio, che altrimenti risponde 422.
+     */
     public record CreateTicketRequest(
             @NotBlank(message = "Title is required")
             @Size(min = 3, max = 150, message = "Title must be between 3 and 150 characters")
@@ -30,6 +38,7 @@ public class MaintenanceDtos {
             UUID hazardReportId
     ) {}
 
+    /** Corpo di PUT /api/v1/maintenance-tickets/{id}. */
     public record UpdateTicketRequest(
             @NotBlank(message = "Title is required")
             @Size(min = 3, max = 150, message = "Title must be between 3 and 150 characters")
@@ -42,17 +51,21 @@ public class MaintenanceDtos {
             TicketPriority priority
     ) {}
 
+    /** Corpo di PATCH /api/v1/maintenance-tickets/{id}/assign. */
     public record AssignTicketRequest(
             @NotNull(message = "Operator ID is required")
             UUID operatorId
     ) {}
 
+    /** Corpo di PATCH /api/v1/maintenance-tickets/{id}/status. */
     public record UpdateTicketStatusRequest(
             @NotNull(message = "Status is required")
             TicketStatus status
     ) {}
 
-    // niente version: va nell'ETag
+    /**
+     * Ticket restituito dall'API. La versione non compare nel corpo: viaggia nell'header ETag.
+     */
     public record TicketResponse(
             @Schema(requiredMode = REQUIRED) UUID id,
             @Schema(requiredMode = REQUIRED) String title,

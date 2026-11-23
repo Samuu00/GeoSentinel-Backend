@@ -1,3 +1,8 @@
+/*
+ * Servizio applicativo del reset della password con un codice inviato via email. È diviso in tre passi:
+ * richiesta (nel thread HTTP), emissione del codice (in background) e conferma con la nuova password.
+ * Le risposte e i tempi non rivelano se un'email è registrata.
+ */
 package it.unical.geosentinel.identity.application;
 
 import it.unical.geosentinel.identity.application.port.LoginAttemptLimiter;
@@ -29,13 +34,18 @@ import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
 
-// Reset della password con codice via email. Il codice si salva solo come hash, vale una volta e dopo
-// troppi errori si consuma. Le risposte non dicono se l'email esiste.
+/**
+ * Reset della password con codice via email. Il codice si salva solo come hash BCrypt, vale una volta sola
+ * e si consuma dopo troppi tentativi sbagliati. Lo usano {@code PasswordResetController} e
+ * {@link PasswordResetMailListener}.
+ */
 @Service
 public class PasswordResetService {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
-    // Confrontato al posto di un codice malformato: stessa lunghezza di un codice vero, ma non coincide mai
-    // (il risultato del confronto si scarta perché wellFormed è false)
+    /**
+     * Valore confrontato al posto di un codice malformato: ha la stessa lunghezza di un codice vero, così il
+     * confronto BCrypt costa uguale. Il risultato del confronto viene comunque scartato.
+     */
     private static final String MALFORMED_PLACEHOLDER = "0".repeat(16);
 
     private final UserRepository userRepository;
@@ -48,9 +58,14 @@ public class PasswordResetService {
     private final PasswordEncoder passwordEncoder;
     private final ApplicationEventPublisher events;
     private final Clock clock;
+    /** Validità di un codice dalla sua emissione. */
     private final Duration ttl;
+    /** Tentativi sbagliati dopo cui il codice si consuma. */
     private final int maxAttempts;
-    // Hash fittizio: un confronto vero anche quando il codice non esiste, così il tempo non dice se l'email c'è
+    /**
+     * Hash di un valore casuale: si confronta con questo quando non c'è un codice aperto, così il tempo di
+     * risposta non rivela se l'email esiste.
+     */
     private final String dummyCodeHash;
 
     public PasswordResetService(
@@ -82,9 +97,15 @@ public class PasswordResetService {
         this.dummyCodeHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
-    // Nel thread della richiesta solo il limite (vale anche per le email sconosciute) e l'evento: ricerca dell'utente,
-    // BCrypt e scrittura li fa PasswordResetMailListener in background, così il tempo di risposta è lo stesso
-    // che l'account esista o no
+    /**
+     * Accetta una richiesta di reset. Nel thread della richiesta si fanno solo il controllo del limite (che vale
+     * anche per le email sconosciute) e la pubblicazione dell'evento; la ricerca dell'utente, BCrypt e la
+     * scrittura li fa {@link PasswordResetMailListener} in background. Così il tempo di risposta è lo stesso
+     * che l'account esista o no.
+     *
+     * @param email email indicata dall'utente
+     * @throws RateLimitExceededException se le richieste per quell'email sono troppe
+     */
     public void requestReset(String email) {
         String normalizedEmail = User.normalizeEmail(email);
         limiter.tryAcquire(sha256Hex(normalizedEmail)).ifPresent(retryAfter -> {
@@ -93,8 +114,14 @@ public class PasswordResetService {
         events.publishEvent(new PasswordResetRequested(normalizedEmail));
     }
 
-    // Chiamato dal listener. Il codice in chiaro esce solo dal valore di ritorno, dopo il commit (lo fa il proxy al
-    // ritorno): l'email non parte mai per un codice che non è stato salvato
+    /**
+     * Genera e salva un nuovo codice, invalidando quelli precedenti. Il codice in chiaro esce solo come valore
+     * di ritorno, quindi dopo il commit fatto dal proxy transazionale: l'email non parte mai per un codice che
+     * non è stato salvato.
+     *
+     * @param normalizedEmail email normalizzata
+     * @return il codice da spedire, oppure vuoto se l'email non corrisponde a un account attivo
+     */
     @Transactional
     public Optional<IssuedResetCode> issueCode(String normalizedEmail) {
         Instant now = clock.instant();
@@ -109,15 +136,24 @@ public class PasswordResetService {
         return Optional.of(new IssuedResetCode(user.get().getEmail(), code, ttl));
     }
 
-    // Stesso ordine dei lock di changePassword: prima l'utente, poi i suoi token. noRollbackFor: il codice sbagliato
-    // deve restare contato, anche se poi si risponde 422
+    /**
+     * Imposta la nuova password se il codice è giusto, poi chiude tutte le sessioni dell'utente senza aprirne
+     * una nuova. L'ordine dei lock è quello di {@link AuthService#changePassword}: prima l'utente, poi i token.
+     * Con {@code noRollbackFor} un codice sbagliato resta contato anche se si risponde con un 422.
+     *
+     * @param email email dell'account
+     * @param rawCode codice come l'ha scritto l'utente
+     * @param newPassword nuova password in chiaro
+     * @throws InvalidResetCodeException se non c'è un codice valido o quello inserito è sbagliato
+     */
     @Transactional(noRollbackFor = InvalidResetCodeException.class)
     public void confirmReset(String email, String rawCode, String newPassword) {
         Instant now = clock.instant();
         String code = PasswordResetCode.normalize(rawCode);
         boolean wellFormed = PasswordResetCode.isWellFormed(code);
-        // BCrypt sempre, anche su un codice malformato: saltarlo renderebbe veloce solo il caso "codice aperto",
-        // e il tempo direbbe che l'email esiste. Mai l'input grezzo: oltre 72 byte BCrypt lancia un'eccezione (500)
+        // BCrypt si esegue sempre, anche su un codice malformato: saltarlo renderebbe lento solo il caso con un
+        // codice aperto, e il tempo rivelerebbe che l'email esiste. Non si passa mai l'input grezzo, perché oltre
+        // 72 byte BCrypt lancia un'eccezione e si risponderebbe con un 500
         String candidate = wellFormed ? code : MALFORMED_PLACEHOLDER;
         Optional<User> user = findActiveForUpdate(User.normalizeEmail(email));
 
@@ -126,7 +162,7 @@ public class PasswordResetService {
                 .filter(open -> open.isUsable(now))
                 .orElse(null);
         if (token == null) {
-            // Nessun codice aperto: un confronto vero comunque, poi l'errore
+            // Nessun codice aperto: si fa comunque un confronto vero, poi si risponde con l'errore
             passwordEncoder.matches(candidate, dummyCodeHash);
             throw new InvalidResetCodeException();
         }
@@ -136,35 +172,53 @@ public class PasswordResetService {
             throw new InvalidResetCodeException();
         }
 
-        // Codice giusto: vale una volta. Lo si consuma in memoria prima dell'UPDATE in blocco, così non c'è disallineamento
+        // Codice giusto: vale una volta sola. Si consuma prima in memoria e poi con l'UPDATE in blocco,
+        // così l'entità caricata e il database non sono disallineati
         token.consume(now);
         resetTokens.consumeAllOpenOf(user.get().getId(), now);
 
         user.get().updatePassword(passwordEncoder.encode(newPassword));
-        // Chi ha il codice ha provato di possedere l'email: tutte le sessioni si chiudono, e non se ne apre una nuova
+        // Chi ha il codice ha dimostrato di possedere l'email: si chiudono tutte le sessioni e non se ne apre una
         refreshTokenRepository.revokeAllOfUser(user.get().getId(), now);
         tokenBlacklist.revokeAllIssuedUntil(user.get().getId(), now);
-        // Chi è stato bloccato dai login sbagliati deve poter entrare subito con la password nuova
+        // Chi era stato bloccato dai login sbagliati deve poter entrare subito con la password nuova
         loginAttemptLimiter.reset(sha256Hex(user.get().getEmail()));
-        // ADR-0026: anche i bucket della 2FA. Chi li svuotava con la vecchia password non ce l'ha più
+        // Si azzerano anche i tentativi della verifica in due passaggi: chi li esauriva usando la vecchia
+        // password non la conosce più
         mfaAttemptLimiter.reset(user.get().getId());
     }
 
-    // Codice appena emesso, da spedire. toString senza dati: non finisce nei log per sbaglio
+    /**
+     * Codice appena emesso, da spedire via email.
+     *
+     * @param email destinatario
+     * @param code codice in chiaro, nella forma normalizzata
+     * @param validFor validità del codice
+     */
     public record IssuedResetCode(String email, String code, Duration validFor) {
+        /** Nasconde email e codice, così non finiscono nei log per sbaglio. */
         @Override
         public String toString() {
             return "IssuedResetCode[email=***, code=***]";
         }
     }
 
-    // Lock sull'utente attivo. Vuoto per email sconosciuta, disabilitata o cancellata
+    /**
+     * Cerca un utente attivo per email e prende il lock in scrittura sulla sua riga.
+     *
+     * @param normalizedEmail email normalizzata
+     * @return l'utente bloccato, oppure vuoto se l'email è sconosciuta o l'account è disabilitato o cancellato
+     */
     private Optional<User> findActiveForUpdate(String normalizedEmail) {
         return userRepository.findByEmail(normalizedEmail)
                 .flatMap(found -> userRepository.findByIdForUpdate(found.getId()))
                 .filter(User::isEnabled);
     }
 
+    /**
+     * @param input testo da hashare (qui l'email, usata come chiave dei limiti su Redis)
+     * @return l'hash SHA-256 in esadecimale minuscolo
+     */
     private static String sha256Hex(String input) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

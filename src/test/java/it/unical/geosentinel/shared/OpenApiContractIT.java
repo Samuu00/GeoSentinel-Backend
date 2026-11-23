@@ -1,3 +1,8 @@
+// Test di integrazione del contratto OpenAPI, con l'applicazione avviata su PostGIS e Redis in Testcontainers.
+// Il client dell'app mobile viene generato dal file docs/openapi.json: questo test fallisce se le API cambiano
+// senza che il file venga aggiornato. Dopo una modifica voluta alle API si rigenera il file lanciando
+// "./mvnw verify -Dit.test=OpenApiContractIT -Dopenapi.update=true" e lo si aggiunge al commit.
+// Il test controlla anche due regole che rendono il client generato stabile e corretto.
 package it.unical.geosentinel.shared;
 
 import it.unical.geosentinel.support.AbstractIntegrationTest;
@@ -14,12 +19,19 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Il client Kotlin si genera da docs/openapi.json. Il test fallisce se il contratto cambia senza aggiornare il
-// file: dopo una modifica voluta alle API, `./mvnw verify -Dit.test=OpenApiContractIT -Dopenapi.update=true` e commit
+/**
+ * Confronta il documento OpenAPI generato da springdoc con lo snapshot versionato e ne controlla gli
+ * operationId e i parametri di query.
+ */
 class OpenApiContractIT extends AbstractIntegrationTest {
 
+    /** Percorso dello snapshot del contratto, relativo alla radice del progetto. */
     private static final Path SNAPSHOT = Path.of("docs", "openapi.json");
 
+    /**
+     * Il contratto generato deve coincidere carattere per carattere con lo snapshot. Se la proprietà di sistema
+     * {@code openapi.update} è attiva, il test invece riscrive lo snapshot con il contratto attuale e termina.
+     */
     @Test
     void committedSnapshotMatchesGeneratedContract() throws Exception {
         String generated = generatedContract();
@@ -30,15 +42,19 @@ class OpenApiContractIT extends AbstractIntegrationTest {
         }
 
         assertThat(SNAPSHOT).as("docs/openapi.json missing: run with -Dopenapi.update=true").exists();
-        // \r\n: con core.autocrlf il checkout su Windows può convertire il file
+        // Su Windows, con core.autocrlf attivo, git può convertire i fine riga del file in CRLF al checkout:
+        // si riportano a LF prima del confronto.
         String committed = Files.readString(SNAPSHOT, StandardCharsets.UTF_8).replace("\r\n", "\n");
         assertThat(generated)
                 .as("API contract changed: run with -Dopenapi.update=true and commit docs/openapi.json")
                 .isEqualTo(committed);
     }
 
-    // Un operationId con suffisso numerico (create_4) è un nome generato da springdoc: nel client diventa create4()
-    // e cambia quando si aggiunge un controller
+    /**
+     * Ogni operazione deve avere un operationId esplicito, unico e senza suffisso numerico. Un nome come
+     * {@code create_4} è generato da springdoc per risolvere un conflitto: nel client diventerebbe
+     * {@code create4()} e cambierebbe nome ogni volta che si aggiunge un controller.
+     */
     @Test
     void everyOperationHasStableExplicitId() {
         JsonNode paths = json(call(HttpMethod.GET, "/v3/api-docs", null, null).body()).get("paths");
@@ -52,8 +68,11 @@ class OpenApiContractIT extends AbstractIntegrationTest {
         assertThat(ids).isNotEmpty().doesNotHaveDuplicates().noneMatch(id -> id.matches(".*_\\d+$"));
     }
 
-    // Un oggetto in query (Pageable senza @ParameterObject) diventa ?pageable=... nel client generato, mentre Spring
-    // legge page/size/sort: la paginazione verrebbe ignorata in silenzio
+    /**
+     * Nessun parametro di query deve essere un oggetto. Ad esempio un {@code Pageable} senza
+     * {@code @ParameterObject} diventerebbe nel client un unico parametro {@code ?pageable=...}, mentre Spring
+     * legge {@code page}, {@code size} e {@code sort}: la paginazione verrebbe ignorata senza alcun errore.
+     */
     @Test
     void queryParametersAreScalars() {
         JsonNode paths = json(call(HttpMethod.GET, "/v3/api-docs", null, null).body()).get("paths");
@@ -72,8 +91,14 @@ class OpenApiContractIT extends AbstractIntegrationTest {
         assertThat(objectParams).isEmpty();
     }
 
-    // servers contiene la porta casuale del test; le chiavi sono già ordinate (springdoc.writer-with-order-by-keys).
-    // Il pretty printer usa System.lineSeparator(): su Windows \r\n, in CI \n. Sempre \n, come in .gitattributes
+    /**
+     * Scarica il documento OpenAPI dall'applicazione e lo prepara per il confronto. Toglie la sezione
+     * {@code servers}, che contiene la porta casuale del test; le chiavi sono già ordinate grazie alla proprietà
+     * {@code springdoc.writer-with-order-by-keys}. Il pretty printer usa il separatore di riga del sistema
+     * (CRLF su Windows, LF in CI), quindi si usa sempre LF, come stabilito in {@code .gitattributes}.
+     *
+     * @return il contratto formattato, con LF finale
+     */
     private String generatedContract() {
         ObjectNode doc = (ObjectNode) json(call(HttpMethod.GET, "/v3/api-docs", null, null).body());
         doc.remove("servers");

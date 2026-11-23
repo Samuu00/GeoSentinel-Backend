@@ -1,3 +1,7 @@
+// Test di integrazione del controllo di concorrenza ottimistico sui ticket di manutenzione, con chiamate HTTP
+// vere e PostGIS e Redis in Testcontainers. Per evitare che una modifica sovrascriva in silenzio quella di un
+// altro utente (lost update), il client manda nell'header If-Match la versione che ha letto: il servizio la
+// confronta con quella attuale e, al commit, il campo @Version di JPA fa da ultima difesa.
 package it.unical.geosentinel.maintenance;
 
 import it.unical.geosentinel.identity.domain.Role;
@@ -13,13 +17,25 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Lost update impedito: If-Match confrontato con la versione (expectedVersion) + @Version al commit
+/**
+ * Verifica il rifiuto degli aggiornamenti basati su una versione vecchia, la gestione di aggiornamenti
+ * paralleli e lo svuotamento della cache dei ticket dopo una modifica.
+ */
 class MaintenanceOptimisticLockIT extends AbstractIntegrationTest {
 
+    /** Access token del gestore del parco che crea e modifica il ticket. */
     private String manager;
+
+    /** Id del sentiero a cui è legato il ticket. */
     private UUID trailId;
+
+    /** Id del ticket creato prima di ogni test. */
     private UUID ticketId;
 
+    /**
+     * Crea un sentiero e un ticket ad alta priorità su di esso, e controlla che il ticket appena creato abbia
+     * ETag {@code "0"}, cioè versione 0.
+     */
     @BeforeEach
     void createTicket() {
         manager = obtainToken(Role.PARK_MANAGER);
@@ -32,6 +48,11 @@ class MaintenanceOptimisticLockIT extends AbstractIntegrationTest {
         ticketId = UUID.fromString(json(created.body()).get("id").asString());
     }
 
+    /**
+     * Due aggiornamenti in sequenza con la stessa versione 0: il primo riesce (200), il secondo deve essere
+     * rifiutato con 409 e slug {@code concurrent-modification}. Il ticket deve restare alla versione 1 con il
+     * titolo del primo aggiornamento.
+     */
     @Test
     void secondUpdateWithTheSameVersionIsRejected() {
         assertThat(update("\"0\"", "Primo").status()).isEqualTo(200);
@@ -43,7 +64,11 @@ class MaintenanceOptimisticLockIT extends AbstractIntegrationTest {
         assertThat(currentVersionAndTitle()).isEqualTo(List.of("\"1\"", "Primo"));
     }
 
-    // Stessa versione, in parallelo: uno dei due perde (dal confronto esplicito o da @Version al commit)
+    /**
+     * Due aggiornamenti in parallelo con la stessa versione: esattamente uno vince (200) e l'altro riceve 409,
+     * sia che venga fermato dal confronto esplicito con If-Match sia dal controllo di {@code @Version} al
+     * commit. Alla fine la versione è 1.
+     */
     @RepeatedTest(5)
     void concurrentUpdatesWithTheSameVersionLetOnlyOneWin() throws Exception {
         List<Integer> statuses = runConcurrently(2, i -> update("\"0\"", "Titolo " + i).status());
@@ -52,6 +77,10 @@ class MaintenanceOptimisticLockIT extends AbstractIntegrationTest {
         assertThat(currentVersionAndTitle().get(0)).isEqualTo("\"1\"");
     }
 
+    /**
+     * La lista dei ticket di un sentiero è in cache: dopo aver aggiornato il titolo di un ticket, una nuova
+     * lettura della lista deve mostrare il titolo nuovo e non quello rimasto in cache.
+     */
     @Test
     void cachedTicketsOfTheTrailAreEvictedAfterAnUpdate() {
         String path = "/api/v1/maintenance-tickets/trail/" + trailId;
@@ -64,11 +93,23 @@ class MaintenanceOptimisticLockIT extends AbstractIntegrationTest {
                 .isEqualTo("Frana messa in sicurezza");
     }
 
+    /**
+     * Aggiorna il titolo del ticket mandando la versione indicata nell'header If-Match.
+     *
+     * @param ifMatch il valore dell'header, ad esempio {@code "0"} tra virgolette
+     * @param title   il nuovo titolo
+     * @return la risposta del server
+     */
     private HttpResult update(String ifMatch, String title) {
         return call(HttpMethod.PUT, "/api/v1/maintenance-tickets/" + ticketId, manager,
                 "{\"title\":\"%s\",\"priority\":\"HIGH\"}".formatted(title), Map.of("If-Match", ifMatch));
     }
 
+    /**
+     * Rilegge il ticket dal server.
+     *
+     * @return una lista di due elementi: l'ETag (la versione tra virgolette) e il titolo attuale
+     */
     private List<String> currentVersionAndTitle() {
         HttpResult current = call(HttpMethod.GET, "/api/v1/maintenance-tickets/" + ticketId, manager, null);
         return List.of(current.headers().getETag(), json(current.body()).get("title").asString());

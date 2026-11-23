@@ -1,3 +1,7 @@
+/*
+ * Emissione degli access token JWT. Implementa l'interfaccia AuthService.JwtIssuer, così il livello
+ * application non dipende da Spring Security OAuth2.
+ */
 package it.unical.geosentinel.identity.infrastructure.security;
 
 import it.unical.geosentinel.identity.application.AuthService;
@@ -15,6 +19,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Crea JWT firmati con HMAC-SHA256 usando la chiave e la durata di {@link JwtProperties}.
+ */
 @Service
 public class JwtTokenService implements AuthService.JwtIssuer {
     private final JwtEncoder jwtEncoder;
@@ -27,6 +34,12 @@ public class JwtTokenService implements AuthService.JwtIssuer {
         this.clock = clock;
     }
 
+    /**
+     * Emette un access token con emittente, date, {@code sub} (id dell'utente), {@code jti} casuale e ruolo.
+     *
+     * @param user utente a cui intestare il token
+     * @return il token firmato con il suo {@code jti} e la scadenza
+     */
     @Override
     public IssuedAccessToken issueAccessToken(User user){
         Instant now = Instant.now(clock);
@@ -39,7 +52,8 @@ public class JwtTokenService implements AuthService.JwtIssuer {
                 .expiresAt(expiresAt)
                 .subject(user.getId().toString())
                 .id(jti)
-                // solo i claim necessari: il token è leggibile da chiunque lo intercetti, niente dati personali
+                // Solo i claim necessari: il contenuto del JWT è leggibile da chiunque lo intercetti,
+                // quindi niente dati personali come email o nome
                 .claim("roles", List.of(user.getRole().name()))
                 .build();
 

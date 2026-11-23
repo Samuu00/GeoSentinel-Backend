@@ -1,3 +1,7 @@
+// Test di integrazione dell'idempotenza delle richieste che creano risorse (SOS e prenotazioni), con chiamate
+// HTTP vere e PostGIS e Redis in Testcontainers. In montagna la rete è instabile e l'app ripete le richieste
+// con la stessa Idempotency-Key: questi nuovi tentativi non devono creare duplicati, nemmeno quando arrivano
+// al server tutti insieme.
 package it.unical.geosentinel.shared;
 
 import it.unical.geosentinel.identity.domain.Role;
@@ -14,13 +18,21 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// ADR-0012: i retry del client (stessa Idempotency-Key) non creano duplicati, nemmeno se arrivano insieme
+/**
+ * Verifica che richieste ripetute e concorrenti producano una sola risorsa, e come viene trattata una chiave
+ * riusata con un corpo diverso.
+ */
 class IdempotencyIT extends AbstractIntegrationTest {
 
+    /** Corpo di una richiesta SOS con posizione e nota medica. */
     private static final String SOS_BODY = """
             {"location":{"lat":39.3050,"lon":16.5020},"medicalNotes":"Caviglia"}
             """;
 
+    /**
+     * Dieci invii simultanei dello stesso SOS con la stessa chiave devono creare una sola allerta: una risposta
+     * 201 e nove 200 che restituiscono la stessa allerta.
+     */
     @RepeatedTest(5)
     void tenSimultaneousSosRetriesCreateOneAlert() throws Exception {
         String hiker = obtainToken(Role.HIKER);
@@ -32,7 +44,10 @@ class IdempotencyIT extends AbstractIntegrationTest {
         assertThat(count("sos_alerts")).isEqualTo(1);
     }
 
-    // Senza chiave l'advisory lock per escursionista fa lo stesso lavoro: un SOS non si duplica
+    /**
+     * Anche senza chiave, dieci SOS simultanei dello stesso escursionista devono creare una sola allerta: in
+     * questo caso fa lo stesso lavoro un advisory lock di PostgreSQL preso per escursionista.
+     */
     @RepeatedTest(5)
     void tenSimultaneousSosWithoutKeyCreateOneAlert() throws Exception {
         String hiker = obtainToken(Role.HIKER);
@@ -43,6 +58,7 @@ class IdempotencyIT extends AbstractIntegrationTest {
         assertThat(count("sos_alerts")).isEqualTo(1);
     }
 
+    /** Dieci invii simultanei della stessa prenotazione con la stessa chiave devono creare una sola prenotazione. */
     @RepeatedTest(5)
     void tenSimultaneousBookingRetriesCreateOneBooking() throws Exception {
         String hiker = obtainToken(Role.HIKER);
@@ -55,6 +71,10 @@ class IdempotencyIT extends AbstractIntegrationTest {
         assertThat(count("bookings")).isEqualTo(1);
     }
 
+    /**
+     * Riusare la stessa chiave per una prenotazione diversa (qui con un ospite in più) è un errore del client:
+     * si attende 422 con slug {@code idempotency-key-reused}.
+     */
     @Test
     void sameKeyWithADifferentBookingIsRejected() {
         String hiker = obtainToken(Role.HIKER);
@@ -68,7 +88,10 @@ class IdempotencyIT extends AbstractIntegrationTest {
         assertThat(json(reused.body()).get("type").asString()).endsWith("/idempotency-key-reused");
     }
 
-    // Un SOS non si rifiuta mai: stessa chiave con un body diverso -> l'allerta già creata
+    /**
+     * Un SOS non viene mai rifiutato: se la stessa chiave arriva con un corpo diverso, il server risponde 200
+     * con l'allerta già creata invece di dare errore.
+     */
     @Test
     void sameKeyWithADifferentSosReturnsTheExistingAlert() {
         String hiker = obtainToken(Role.HIKER);
@@ -83,12 +106,24 @@ class IdempotencyIT extends AbstractIntegrationTest {
         assertThat(id(second)).isEqualTo(id(first));
     }
 
+    /**
+     * Controlla che su dieci risposte ci sia una sola creazione (201), nove ripetizioni (200) e un solo id.
+     *
+     * @param results le risposte delle richieste concorrenti
+     */
     private void assertOneCreatedAndNineReplays(List<HttpResult> results) {
         assertThat(results).filteredOn(r -> r.status() == 201).hasSize(1);
         assertThat(results).filteredOn(r -> r.status() == 200).hasSize(9);
         assertThat(results.stream().map(this::id).distinct()).hasSize(1);
     }
 
+    /**
+     * Costruisce il corpo di una prenotazione di una notte, tra dieci giorni.
+     *
+     * @param refugeId l'id del rifugio
+     * @param guests   il numero di ospiti
+     * @return il corpo JSON
+     */
     private String bookingBody(UUID refugeId, int guests) {
         LocalDate checkIn = LocalDate.now(ZoneOffset.UTC).plusDays(10);
         return """
@@ -96,10 +131,22 @@ class IdempotencyIT extends AbstractIntegrationTest {
                 """.formatted(refugeId, checkIn, checkIn.plusDays(1), guests);
     }
 
+    /**
+     * Legge l'id della risorsa dal corpo della risposta.
+     *
+     * @param result la risposta
+     * @return il valore del campo {@code id}
+     */
     private String id(HttpResult result) {
         return json(result.body()).get("id").asString();
     }
 
+    /**
+     * Conta le righe di una tabella.
+     *
+     * @param table il nome della tabella (sempre una costante del test, mai un input esterno)
+     * @return il numero di righe
+     */
     private int count(String table) {
         return jdbcTemplate.queryForObject("SELECT count(*) FROM " + table, Integer.class);
     }

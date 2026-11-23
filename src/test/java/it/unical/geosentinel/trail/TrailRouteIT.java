@@ -1,3 +1,8 @@
+// Test di integrazione della rotta GET /trails/route, che calcola un percorso a piedi tra due punti, con
+// chiamate HTTP vere e PostGIS in Testcontainers. Il motore di routing (GraphHopper) è sostituito da un mock:
+// qui contano la rotta pubblica, l'elenco dei sentieri del parco ricavato dal tracciato, le aree dei sentieri
+// chiusi passate al motore e la gestione degli errori. Le coordinate sono nelle Alpi, lontane da quelle
+// usate negli altri test.
 package it.unical.geosentinel.trail;
 
 import it.unical.geosentinel.identity.domain.Role;
@@ -23,28 +28,42 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-// GET /trails/route (ADR-0028): il motore (GraphHopper) è finto; qui contano la rotta pubblica, i sentieri del parco
-// ricavati dal tracciato, le aree dei sentieri chiusi mandate al motore e gli errori. Coordinate lontane dagli altri
-// test (Alpi)
+/**
+ * Verifica la risposta della ricerca del percorso, il passaggio dei sentieri chiusi al motore e la
+ * traduzione degli errori del motore in risposte HTTP.
+ */
 class TrailRouteIT extends AbstractIntegrationTest {
 
+    /** Motore di routing finto, che sostituisce il bean reale nel contesto Spring. */
     @MockitoBean
     private RoutingEngine routingEngine;
 
+    /** Id del primo sentiero, da ovest a est. */
     private UUID first;
+
+    /** Id del secondo sentiero, che parte dalla fine del primo e va verso nord. */
     private UUID second;
 
-    // il tracciato che "trova il motore": lungo i due sentieri, con uno scarto di qualche metro come tra OSM e database
+    /**
+     * Tracciato restituito dal motore finto: segue i due sentieri con uno scarto di pochi metri, come succede
+     * tra i dati di OpenStreetMap usati dal motore e le geometrie salvate nel database. La lunghezza è 4100 m.
+     */
     private final EngineRoute alongBoth = new EngineRoute(List.of(
             List.of(10.000, 45.00005), List.of(10.005, 45.00005), List.of(10.010, 45.00005),
             List.of(10.01005, 45.015), List.of(10.01005, 45.030)), 4_100);
 
+    /** Inserisce i due sentieri consecutivi prima di ogni test. */
     @BeforeEach
     void insertTrails() {
         first = insertTrail("Primo tratto", "LINESTRING(10.000 45.000, 10.005 45.000, 10.010 45.000)");
         second = insertTrail("Secondo tratto", "LINESTRING(10.010 45.000, 10.010 45.015, 10.010 45.030)");
     }
 
+    /**
+     * Un ospite chiede il percorso: la risposta 200 deve contenere il tracciato del motore, la sua lunghezza e
+     * gli id dei sentieri attraversati nell'ordine di percorrenza. Partenza e arrivo devono arrivare al motore
+     * invariati, in ordine longitudine e latitudine.
+     */
     @Test
     void guestGetsTheEngineRouteWithTheTrailsItFollowsInOrder() {
         when(routingEngine.route(anyDouble(), anyDouble(), anyDouble(), anyDouble(), any())).thenReturn(Optional.of(alongBoth));
@@ -52,7 +71,8 @@ class TrailRouteIT extends AbstractIntegrationTest {
         HttpResult result = route(10.000, 45.000, 10.010, 45.030);
 
         assertThat(result.status()).isEqualTo(200);
-        // la richiesta rivela la posizione: niente cache né ETag, a differenza del resto del catalogo
+        // La richiesta rivela la posizione dell'utente: a differenza del resto del catalogo la risposta non
+        // deve essere messa in cache né avere un ETag.
         assertThat(result.headers().getCacheControl()).contains("no-store");
         assertThat(result.headers().getETag()).isNull();
         JsonNode body = json(result.body());
@@ -63,10 +83,13 @@ class TrailRouteIT extends AbstractIntegrationTest {
         assertThat(coordinates.get(0).get(0).asDouble()).isEqualTo(10.000);
         assertThat(coordinates.get(coordinates.size() - 1).get(1).asDouble()).isEqualTo(45.030);
         assertThat(body.get("lengthM").asDouble()).isEqualTo(4_100);
-        // partenza e arrivo arrivano al motore come sono, in lon/lat
         verify(routingEngine).route(eq(10.000), eq(45.000), eq(10.010), eq(45.030), any());
     }
 
+    /**
+     * Dopo che il gestore chiude il secondo sentiero, la sua geometria deve arrivare al motore come area da
+     * evitare (un MultiPolygon in GeoJSON) e il sentiero non deve comparire tra quelli del percorso.
+     */
     @Test
     void closedTrailIsSentAsAnAreaToAvoidAndLeftOutOfTheTrails() {
         when(routingEngine.route(anyDouble(), anyDouble(), anyDouble(), anyDouble(), any())).thenReturn(Optional.of(alongBoth));
@@ -82,10 +105,12 @@ class TrailRouteIT extends AbstractIntegrationTest {
         verify(routingEngine).route(anyDouble(), anyDouble(), anyDouble(), anyDouble(), avoid.capture());
         JsonNode area = json(avoid.getValue());
         assertThat(area.get("type").asString()).isEqualTo("MultiPolygon");
-        // l'unione può contenere sentieri chiusi di altri test: basta che copra quello chiuso qui ([lon, lat])
+        // L'unione delle aree può comprendere anche sentieri chiusi da altri test: basta che contenga le
+        // coordinate di quello chiuso qui (longitudine 10.01).
         assertThat(avoid.getValue()).contains("[10.01");
     }
 
+    /** Se il motore non trova un percorso, la risposta deve essere 422 con slug {@code no-route}. */
     @Test
     void noRouteFromTheEngineIsA422NoRoute() {
         when(routingEngine.route(anyDouble(), anyDouble(), anyDouble(), anyDouble(), any())).thenReturn(Optional.empty());
@@ -97,9 +122,13 @@ class TrailRouteIT extends AbstractIntegrationTest {
         assertThat(json(result.body()).get("type").asString()).endsWith("/no-route");
     }
 
+    /**
+     * Il percorso deve stare sui sentieri del parco: se la partenza è a più di un chilometro dai sentieri si
+     * attende 422 {@code no-route}, anche se il motore restituirebbe comunque un tracciato.
+     */
     @Test
     void startMoreThanOneKilometerFromTheTrailsIsA422NoRoute() {
-        // il motore aggancia la partenza al sentiero più vicino, qui a circa 4 km
+        // Il motore aggancerebbe la partenza al sentiero più vicino, che qui è a circa 4 km.
         when(routingEngine.route(anyDouble(), anyDouble(), anyDouble(), anyDouble(), any())).thenReturn(Optional.of(alongBoth));
 
         HttpResult result = route(9.950, 45.000, 10.010, 45.030);
@@ -108,6 +137,10 @@ class TrailRouteIT extends AbstractIntegrationTest {
         assertThat(json(result.body()).get("type").asString()).endsWith("/no-route");
     }
 
+    /**
+     * Se il motore non è raggiungibile, la risposta deve essere 503 con slug {@code routing-unavailable} e
+     * l'header Retry-After a 5 secondi, così l'app sa quando riprovare.
+     */
     @Test
     void engineDownIsA503WithRetryAfter() {
         when(routingEngine.route(anyDouble(), anyDouble(), anyDouble(), anyDouble(), any()))
@@ -120,6 +153,15 @@ class TrailRouteIT extends AbstractIntegrationTest {
         assertThat(json(result.body()).get("type").asString()).endsWith("/routing-unavailable");
     }
 
+    /**
+     * Chiede il percorso tra due punti senza autenticazione.
+     *
+     * @param fromLon la longitudine di partenza
+     * @param fromLat la latitudine di partenza
+     * @param toLon   la longitudine di arrivo
+     * @param toLat   la latitudine di arrivo
+     * @return la risposta del server
+     */
     private HttpResult route(double fromLon, double fromLat, double toLon, double toLat) {
         return call(HttpMethod.GET, "/api/v1/trails/route?fromLon=" + fromLon + "&fromLat=" + fromLat
                 + "&toLon=" + toLon + "&toLat=" + toLat, null, null);

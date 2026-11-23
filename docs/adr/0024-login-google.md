@@ -69,7 +69,7 @@ risposta `TokenResponse` (201 per un account nuovo, 200 per uno esistente). Erro
 - **Rischio accettato:** l'account collegato perde la password. Chi la usava dovrà entrare con Google o reimpostarla.
 - **Dipendenza esterna:** se Google non risponde, il login Google fallisce con 503; email e password restano disponibili.
 - **Da fare dopo questo ADR:** migrazione V14, endpoint e test (fasi 1–5 del piano). Lato utente, nella Google Cloud
-  Console: progetto, consent screen in produzione, client OAuth Android (SHA-1), iOS (bundle id) e Web (audience
+  Console: progetto, consent screen pubblicata, client OAuth Android (SHA-1), iOS (bundle id) e Web (audience
   dell'ID token su Android). Lato app: il piano va scritto in `../GeoSentinel-Mobile`.
 - **Non coperto:** verifica del nonce, login con Apple o altri provider, collegamento volontario da un account già aperto
   (una richiesta futura con una propria decisione).

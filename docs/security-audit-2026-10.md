@@ -19,7 +19,7 @@ Ordine di lavoro consigliato: 1, 2, 6, poi le altre.
 Note:
 - Le correzioni 3, 4, 5 e 7 cambiano il comportamento delle API. Vanno quindi aggiornati `docs/openapi.json` (con `-Dopenapi.update=true`) e il `CHANGELOG.md`. Se nascono decisioni nuove (tetto per utente, push SOS accorpate), si scrive un ADR.
 - La V11 serve solo se per la pista 1 si sceglie `password_changed_at`.
-- Le note di hardening minori (credenziali root di MinIO in produzione, backend del compose di sviluppo esposto sulla LAN, 403 invece di 404, `LoginRequest.email` senza `@Size` e altre) sono nella sezione 6 del `REPORT.md` dell'audit.
+- Le note di hardening minori (credenziali root di MinIO usate dal backend, backend del compose di sviluppo esposto sulla LAN, 403 invece di 404, `LoginRequest.email` senza `@Size` e altre) sono nella sezione 6 del `REPORT.md` dell'audit.
 
 ## Esito (06/10)
 

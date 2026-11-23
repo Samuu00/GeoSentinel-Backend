@@ -2,12 +2,12 @@
 
 | Documento | Per chi | Contenuto |
 |---|---|---|
-| [README](../README.md) | Tutti | Cos'è, avvio rapido, collegamento dell'app in sviluppo, deploy |
+| [README](../README.md) | Tutti | Cos'è, avvio rapido, collegamento dell'app in sviluppo |
 | [Architettura](architecture.md) | Sviluppatori | Modello arc42 con diagrammi C4: contesto, container, componenti, dati, runtime, qualità, rischi |
 | [Decisioni (ADR)](adr/README.md) | Sviluppatori | Perché il sistema è fatto così, una decisione per file |
 | [Guida all'API](api-guide.md) | Sviluppatori dell'app | Autenticazione, errori, retry, paginazione, upload, push |
 | [Contratto OpenAPI](openapi.json) | Generatore del client | Fonte di verità di ogni operazione, verificata da un test |
-| [Runbook](operations.md) | Chi avvia e gestisce il sistema | Configurazione, avvio, salute, backup, problemi noti |
+| [Runbook](operations.md) | Chi avvia e gestisce il sistema | Configurazione, avvio in locale, salute, problemi noti |
 | [Contribuire](../CONTRIBUTING.md) | Chi modifica il codice | Ambiente, convenzioni, test, migrazioni, commit |
 | [Sicurezza](../SECURITY.md) | Tutti | Modello di sicurezza, controlli, limiti noti |
 | [Audit di sicurezza 05/10](security-audit-2026-10.md) | Sviluppatori | 7 piste da verificare e correggere, con IT e correzione proposta |

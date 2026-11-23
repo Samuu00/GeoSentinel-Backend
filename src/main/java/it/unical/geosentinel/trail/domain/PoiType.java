@@ -1,10 +1,21 @@
+// Enum della categoria di un punto di interesse (POI) mostrato sulla mappa: ripari, sorgenti, punti
+// panoramici e simili. L'app usa la categoria per scegliere colore e icona del segnaposto.
 package it.unical.geosentinel.trail.domain;
 
+/**
+ * Categoria di un punto di interesse.
+ */
 public enum PoiType {
-    SHELTER,            // Bivacco / Riparo
-    WATER_SOURCE,       // Sorgente / Fontana
-    VIEWPOINT,          // Punto panoramico
-    DANGER_ZONE,        // Zona a rischio geologico / canalone
-    EQUIPMENT_POINT,    // Postazione dotazioni emergenza / defibrillatore
-    INFORMATION         // Bacheca informativa / inizio sentiero
+    /** Bivacco o riparo. */
+    SHELTER,
+    /** Sorgente o fontana. */
+    WATER_SOURCE,
+    /** Punto panoramico. */
+    VIEWPOINT,
+    /** Zona a rischio geologico, ad esempio un canalone. */
+    DANGER_ZONE,
+    /** Postazione con dotazioni di emergenza, ad esempio un defibrillatore. */
+    EQUIPMENT_POINT,
+    /** Bacheca informativa o inizio di un sentiero. */
+    INFORMATION
 }

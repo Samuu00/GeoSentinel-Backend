@@ -1,3 +1,7 @@
+/*
+ * Punto d'ingresso di Spring Security per le richieste non autenticate: risponde 401 con un ProblemDetail
+ * (RFC 9457) e con l'header WWW-Authenticate previsto dall'RFC 6750 per i token Bearer.
+ */
 package it.unical.geosentinel.identity.infrastructure.security;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,6 +20,9 @@ import java.io.IOException;
 import java.net.URI;
 import java.time.Clock;
 
+/**
+ * Risposta 401 in formato ProblemDetail.
+ */
 @Component
 public class ProblemAuthenticationEntryPoint implements AuthenticationEntryPoint {
     private final ProblemDetailWriter problemDetailWriter;
@@ -26,13 +33,21 @@ public class ProblemAuthenticationEntryPoint implements AuthenticationEntryPoint
         this.clock = clock;
     }
 
+    /**
+     * Scrive la risposta 401.
+     *
+     * @param request richiesta rifiutata
+     * @param response risposta da scrivere
+     * @param authException motivo del rifiuto, usato solo per scegliere l'header
+     * @throws IOException se la scrittura della risposta fallisce
+     */
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException authException) throws IOException {
-        // RFC 6750: error="invalid_token" solo se un token è arrivato ed è stato rifiutato; senza token basta "Bearer"
+        // RFC 6750: error="invalid_token" solo se è arrivato un token ed è stato rifiutato; senza token basta "Bearer"
         response.setHeader(HttpHeaders.WWW_AUTHENTICATE, authException instanceof OAuth2AuthenticationException
                 ? "Bearer error=\"invalid_token\"" : "Bearer");
 
-        // messaggio generico: il motivo preciso (firma, scadenza, jti revocato) aiuterebbe solo chi attacca
+        // Messaggio generico: il motivo preciso (firma, scadenza, jti revocato) aiuterebbe solo chi attacca
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED,
                 "Full authentication is required to access this resource");
 

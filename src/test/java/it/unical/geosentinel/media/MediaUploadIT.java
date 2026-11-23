@@ -1,3 +1,9 @@
+// Test di integrazione del caricamento di foto, con chiamate HTTP vere, PostGIS e Redis in Testcontainers e
+// in più un MinIO vero avviato da questa classe. Riproduce il contratto usato dall'app: il backend rilascia
+// una policy di presigned POST, il telefono carica il file direttamente su MinIO, poi il backend conferma il
+// caricamento, ne verifica il contenuto e fornisce un URL firmato per scaricarlo. Il corpo multipart è
+// costruito con MultipartBodyBuilder nello stesso ordine usato dal client Ktor dell'app
+// (submitFormWithBinaryData): prima i campi della policy, poi la parte "file".
 package it.unical.geosentinel.media;
 
 import io.minio.BucketExistsArgs;
@@ -35,17 +41,34 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-// Contratto dell'upload per l'app: presigned POST verso un MinIO vero, poi confirm e download firmato.
-// Il multipart lo costruisce MultipartBodyBuilder come farebbe Ktor (submitFormWithBinaryData): formFields, poi "file"
+/**
+ * Verifica caricamento, conferma, verifica del contenuto, permessi e download delle foto allegate a
+ * segnalazioni, sentieri, rifugi e profili utente.
+ */
 class MediaUploadIT extends AbstractIntegrationTest {
 
+    /** Utente amministratore di MinIO, uguale alla chiave di accesso del profilo di test. */
     private static final String ACCESS_KEY = "test-access-key";
+
+    /** Password dell'amministratore di MinIO, uguale alla chiave segreta del profilo di test. */
     private static final String SECRET_KEY = "test-secret-key";
+
+    /** Bucket in cui l'applicazione salva i file. */
     private static final String BUCKET = "geosentinel-media";
+
+    /** Finto JPEG di 2 KB: firma corretta seguita da byte di riempimento. */
     private static final byte[] JPEG = jpeg(2048);
+
+    /**
+     * Prefisso delle chiavi di staging. Il telefono carica sotto questo prefisso; dopo la verifica il file viene
+     * copiato alla chiave finale, che è la stessa senza prefisso.
+     */
     private static final String STAGING = "staging/";
 
-    // Stessa immagine del compose (le ufficiali minio/minio non si scaricano più)
+    /**
+     * Container MinIO, con la stessa immagine del docker compose di sviluppo (le immagini ufficiali
+     * minio/minio non sono più scaricabili). Parte quando MinIO risponde al controllo di salute.
+     */
     private static final GenericContainer<?> MINIO =
             new GenericContainer<>(DockerImageName.parse("pgsty/minio:RELEASE.2026-08-04T00-00-00Z"))
                     .withCommand("server", "/data")
@@ -54,11 +77,17 @@ class MediaUploadIT extends AbstractIntegrationTest {
                     .withExposedPorts(9000)
                     .waitingFor(Wait.forHttp("/minio/health/live").forPort(9000));
 
+    // Avvio del container una sola volta per JVM, come per PostGIS e Redis nella classe base.
     static {
         MINIO.start();
     }
 
-    // endpoint e publicEndpoint coincidono: il test fa sia l'app sia il telefono
+    /**
+     * Collega l'applicazione al MinIO del test. L'endpoint interno e quello pubblico coincidono, perché qui il
+     * test fa sia la parte del backend sia quella del telefono.
+     *
+     * @param registry il registro delle proprietà fornito da Spring
+     */
     @DynamicPropertySource
     static void minioProperties(DynamicPropertyRegistry registry) {
         registry.add("geosentinel.storage.minio.endpoint", MediaUploadIT::minioUrl);
@@ -66,14 +95,23 @@ class MediaUploadIT extends AbstractIntegrationTest {
         registry.add("geosentinel.storage.minio.bucket", () -> BUCKET);
     }
 
+    /**
+     * Restituisce l'indirizzo di MinIO raggiungibile dall'host.
+     *
+     * @return l'URL con host e porta mappata del container
+     */
     private static String minioUrl() {
         return "http://" + MINIO.getHost() + ":" + MINIO.getMappedPort(9000);
     }
 
+    /** Client MinIO con credenziali di amministratore, usato per preparare il bucket e controllare gli oggetti. */
     private final MinioClient admin = MinioClient.builder()
             .endpoint(minioUrl()).region("us-east-1").credentials(ACCESS_KEY, SECRET_KEY).build();
 
-    // Nel compose il bucket lo crea minio-init: qui lo fa il test
+    /**
+     * Crea il bucket se non esiste. Nell'ambiente di sviluppo lo crea il servizio minio-init del docker
+     * compose; qui se ne occupa il test.
+     */
     @BeforeEach
     void createBucket() throws Exception {
         if (!admin.bucketExists(BucketExistsArgs.builder().bucket(BUCKET).build())) {
@@ -81,6 +119,11 @@ class MediaUploadIT extends AbstractIntegrationTest {
         }
     }
 
+    /**
+     * Un escursionista carica una foto sulla propria segnalazione e la conferma: la foto risulta {@code READY}
+     * con dimensione e checksum. Un altro escursionista la trova tra gli allegati della segnalazione, ottiene un
+     * URL firmato e scarica esattamente gli stessi byte, come JPEG e con disposizione "attachment".
+     */
     @Test
     void hikerUploadsPhotoOnOwnHazardAndAnotherHikerDownloadsIt() {
         String hiker = obtainToken(Role.HIKER);
@@ -96,7 +139,6 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(media.get("sizeBytes").asLong()).isEqualTo(JPEG.length);
         assertThat(media.get("checksum").asString()).isNotBlank();
 
-        // Un altro escursionista vede la foto nella segnalazione e la scarica
         String other = obtainToken(Role.HIKER);
         HttpResult attached = call(HttpMethod.GET,
                 "/api/v1/media/attached?entityType=HAZARD_REPORT&entityId=" + hazardId, other, null);
@@ -114,6 +156,7 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(download.getKey().getFirst(HttpHeaders.CONTENT_DISPOSITION)).startsWith("attachment");
     }
 
+    /** Un gestore del parco carica una foto su un sentiero, e un escursionista la trova tra gli allegati. */
     @Test
     void parkManagerUploadsPhotoOnTrail() {
         String manager = obtainToken(Role.PARK_MANAGER);
@@ -128,6 +171,7 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(json(attached.body())).hasSize(1);
     }
 
+    /** Il gestore di un rifugio carica una foto sul proprio rifugio, e un escursionista la trova tra gli allegati. */
     @Test
     void refugeManagerUploadsPhotoOnOwnRefugeAndAHikerSeesIt() {
         var manager = createUser(Role.PARK_MANAGER);
@@ -144,6 +188,10 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(json(attached.body())).hasSize(1);
     }
 
+    /**
+     * Solo il gestore di un rifugio può caricarvi foto: un escursionista (ruolo sbagliato) e un altro gestore
+     * (rifugio non suo) devono ricevere 403.
+     */
     @Test
     void onlyTheRefugeManagerUploadsPhotosOnARefuge() {
         UUID refugeId = insertRefuge(10, createUser(Role.PARK_MANAGER).getId());
@@ -151,11 +199,15 @@ class MediaUploadIT extends AbstractIntegrationTest {
                 {"originalFilename":"IMG_0001.jpg","contentType":"image/jpeg","sizeBytes":%d,"entityType":"REFUGE","entityId":"%s"}
                 """.formatted(JPEG.length, refugeId);
 
-        // un escursionista: ruolo sbagliato; un altro gestore: non è il suo rifugio
         assertThat(call(HttpMethod.POST, "/api/v1/media/upload-requests", obtainToken(Role.HIKER), body).status()).isEqualTo(403);
         assertThat(call(HttpMethod.POST, "/api/v1/media/upload-requests", obtainToken(Role.PARK_MANAGER), body).status()).isEqualTo(403);
     }
 
+    /**
+     * La policy limita la dimensione a quella dichiarata: un file più grande viene rifiutato da MinIO con 400
+     * {@code EntityTooLarge}. Senza oggetto caricato la conferma dà 422 e l'app deve chiedere un nuovo
+     * caricamento.
+     */
     @Test
     void storageRejectsFileLargerThanDeclared() {
         String hiker = obtainToken(Role.HIKER);
@@ -165,10 +217,13 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(upload.status()).isEqualTo(400);
         assertThat(upload.body()).contains("EntityTooLarge");
 
-        // Nessun oggetto: il confirm risponde 422 e l'app chiede un nuovo upload
         assertThat(confirm(hiker, session).status()).isEqualTo(422);
     }
 
+    /**
+     * La policy è firmata: modificare il Content-Type o la chiave dell'oggetto rispetto a quelli concessi fa
+     * rifiutare il caricamento da MinIO con 403.
+     */
     @Test
     void storageRejectsTamperedContentTypeOrKey() {
         String hiker = obtainToken(Role.HIKER);
@@ -178,6 +233,11 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(postToStorage(session, Map.of("key", "2026/01/other.jpg"), JPEG).status()).isEqualTo(403);
     }
 
+    /**
+     * Un file di testo dichiarato come JPEG passa da MinIO ma alla conferma la firma binaria non corrisponde:
+     * il file va in {@code QUARANTINED} e vengono cancellati sia lo staging sia l'oggetto finale. Una seconda
+     * conferma restituisce lo stesso esito.
+     */
     @Test
     void fileThatIsNotTheDeclaredImageIsQuarantinedAndDeleted() {
         String hiker = obtainToken(Role.HIKER);
@@ -187,19 +247,22 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(postToStorage(session, Map.of(), text).status()).isEqualTo(204);
         assertThat(json(confirm(hiker, session).body()).get("status").asString()).isEqualTo("QUARANTINED");
 
-        // né la copia di staging né l'oggetto finale
+        // Non devono esistere né la copia di staging né l'oggetto finale.
         String stagingKey = session.get("formFields").get("key").asString();
         assertThat(stagingKey).startsWith(STAGING);
         for (String key : new String[]{stagingKey, stagingKey.substring(STAGING.length())}) {
             assertThatThrownBy(() -> admin.statObject(StatObjectArgs.builder().bucket(BUCKET).object(key).build()))
                     .isInstanceOf(ErrorResponseException.class);
         }
-        // Un retry del confirm restituisce lo stesso esito
         assertThat(json(confirm(hiker, session).body()).get("status").asString()).isEqualTo("QUARANTINED");
     }
 
-    // Audit 2026-10, pista 2: la policy resta valida 10 minuti, ma dopo il confirm scrive solo sullo staging.
-    // L'oggetto verificato non cambia e lo staging lo cancella la regola di lifecycle del bucket
+    /**
+     * La policy resta valida per 10 minuti, quindi può essere riusata anche dopo la conferma; però scrive solo
+     * sulla chiave di staging. Un secondo caricamento con contenuto diverso non deve cambiare l'oggetto finale
+     * già verificato (lo staging lo cancella poi la regola di lifecycle del bucket), e una nuova conferma deve
+     * restituire l'esito già registrato senza rileggere lo staging.
+     */
     @Test
     void policyReusedAfterConfirmCannotReplaceTheVerifiedObject() throws Exception {
         String hiker = obtainToken(Role.HIKER);
@@ -214,14 +277,20 @@ class MediaUploadIT extends AbstractIntegrationTest {
         try (var stored = admin.getObject(GetObjectArgs.builder().bucket(BUCKET).object(finalKey).build())) {
             assertThat(stored.readAllBytes()).isEqualTo(JPEG);
         }
-        // un nuovo confirm restituisce l'esito già registrato, senza rileggere lo staging
         JsonNode media = json(confirm(hiker, session).body());
         assertThat(media.get("status").asString()).isEqualTo("READY");
         assertThat(media.get("sizeBytes").asLong()).isEqualTo(JPEG.length);
     }
 
-    // --- M9, foto profilo: media con target USER ---------------------------------------------------------------
+    // ------------------------------------------------------------------------------------------------------------
+    // Foto profilo: file allegati a un utente (target USER)
+    // ------------------------------------------------------------------------------------------------------------
 
+    /**
+     * Una nuova foto profilo sostituisce la precedente, che viene cancellata sia dal database sia da MinIO.
+     * La foto è privata: un altro utente non la legge, non ottiene l'URL di download e non la vede tra gli
+     * allegati (sempre 404), mentre il proprietario sì.
+     */
     @Test
     void newAvatarReplacesThePreviousOneAndOnlyTheOwnerSeesIt() {
         var hiker = createUser(Role.HIKER);
@@ -232,20 +301,19 @@ class MediaUploadIT extends AbstractIntegrationTest {
 
         JsonNode second = uploadAvatar(token, hiker.getId());
         assertThat(avatarOf(token)).isEqualTo(mediaId(second));
-        // la prima non esiste più: né la riga né l'oggetto
+        // La prima foto non esiste più: né la riga nel database né l'oggetto su MinIO.
         assertThat(call(HttpMethod.GET, "/api/v1/media/" + mediaId(first), token, null).status()).isEqualTo(404);
         assertObjectGone(finalKey(first));
 
-        // un altro utente non la legge, non la scarica e non la trova tra gli allegati
         String other = obtainToken(Role.HIKER);
         assertThat(call(HttpMethod.GET, "/api/v1/media/" + mediaId(second), other, null).status()).isEqualTo(404);
         assertThat(call(HttpMethod.GET, "/api/v1/media/" + mediaId(second) + "/download-url", other, null).status()).isEqualTo(404);
         assertThat(call(HttpMethod.GET, "/api/v1/media/attached?entityType=USER&entityId=" + hiker.getId(), other, null).status())
                 .isEqualTo(404);
-        // il proprietario sì
         assertThat(call(HttpMethod.GET, "/api/v1/media/" + mediaId(second) + "/download-url", token, null).status()).isEqualTo(200);
     }
 
+    /** Non si può caricare la foto profilo di un altro utente: la richiesta dà 404, come se l'utente non esistesse. */
     @Test
     void avatarOfAnotherUserIsNotFound() {
         UUID someoneElse = createUser(Role.HIKER).getId();
@@ -255,6 +323,10 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(result.status()).isEqualTo(404);
     }
 
+    /**
+     * Cancellando la foto profilo, il profilo non ne ha più una e l'oggetto sparisce da MinIO; cancellando
+     * l'account, sparisce anche la foto rimasta.
+     */
     @Test
     void deletedAvatarAndDeletedAccountLeaveNothingBehind() {
         var hiker = createUser(Role.HIKER);
@@ -270,7 +342,10 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertObjectGone(finalKey(kept));
     }
 
-    // Due confirm in parallelo: il lock per utente li mette in fila, alla fine resta una sola foto
+    /**
+     * Due conferme di foto profilo in parallelo riescono entrambe, ma il lock per utente le esegue una dopo
+     * l'altra: alla fine resta una sola foto {@code READY}, ed è quella indicata nel profilo.
+     */
     @RepeatedTest(3)
     void concurrentConfirmsLeaveASingleAvatar() throws Exception {
         var hiker = createUser(Role.HIKER);
@@ -291,6 +366,13 @@ class MediaUploadIT extends AbstractIntegrationTest {
         assertThat(avatarOf(token)).isIn(mediaId(sessions[0]), mediaId(sessions[1]));
     }
 
+    /**
+     * Esegue l'intero caricamento di una foto profilo e controlla che arrivi a {@code READY}.
+     *
+     * @param token  l'access token dell'utente
+     * @param userId l'id dell'utente
+     * @return la sessione di caricamento restituita dal backend
+     */
     private JsonNode uploadAvatar(String token, UUID userId) {
         JsonNode session = requestUpload(token, JPEG.length, "USER", userId);
         assertThat(postToStorage(session, Map.of(), JPEG).status()).isEqualTo(204);
@@ -298,26 +380,56 @@ class MediaUploadIT extends AbstractIntegrationTest {
         return session;
     }
 
-    // null se l'utente non ha una foto
+    /**
+     * Legge dal profilo l'id della foto profilo.
+     *
+     * @param token l'access token dell'utente
+     * @return l'id del file, oppure {@code null} se l'utente non ha una foto
+     */
     private String avatarOf(String token) {
         JsonNode avatar = json(call(HttpMethod.GET, "/api/v1/users/me", token, null).body()).get("avatarMediaId");
         return avatar == null || avatar.isNull() ? null : avatar.asString();
     }
 
+    /**
+     * Ricava la chiave finale dell'oggetto togliendo il prefisso di staging.
+     *
+     * @param session la sessione di caricamento
+     * @return la chiave dell'oggetto verificato
+     */
     private static String finalKey(JsonNode session) {
         return session.get("formFields").get("key").asString().substring(STAGING.length());
     }
 
+    /**
+     * Controlla che un oggetto non esista più su MinIO.
+     *
+     * @param key la chiave dell'oggetto
+     */
     private void assertObjectGone(String key) {
         assertThatThrownBy(() -> admin.statObject(StatObjectArgs.builder().bucket(BUCKET).object(key).build()))
                 .isInstanceOf(ErrorResponseException.class);
     }
 
     // ------------------------------------------------------------------------------------------------------------
+    // Utilità per il caricamento
+    // ------------------------------------------------------------------------------------------------------------
 
+    /**
+     * Risposta di MinIO a un caricamento.
+     *
+     * @param status lo stato HTTP
+     * @param body   il corpo, che in caso di errore contiene il codice XML di MinIO
+     */
     private record Upload(int status, String body) {
     }
 
+    /**
+     * Crea una segnalazione di albero caduto.
+     *
+     * @param token l'access token di chi segnala
+     * @return l'id della segnalazione
+     */
     private UUID createHazard(String token) {
         HttpResult result = call(HttpMethod.POST, "/api/v1/hazards", token, """
                 {"type":"FALLEN_TREE","severity":"MEDIUM","description":"Albero sul sentiero","location":{"lat":39.30,"lon":16.40}}
@@ -326,6 +438,15 @@ class MediaUploadIT extends AbstractIntegrationTest {
         return UUID.fromString(json(result.body()).get("id").asString());
     }
 
+    /**
+     * Chiede al backend una sessione di caricamento per un JPEG.
+     *
+     * @param token      l'access token dell'utente
+     * @param size       la dimensione dichiarata in byte
+     * @param entityType il tipo di risorsa a cui allegare il file, ad esempio {@code HAZARD_REPORT}
+     * @param entityId   l'id della risorsa
+     * @return la sessione, con {@code mediaId}, {@code uploadUrl} e {@code formFields} della policy
+     */
     private JsonNode requestUpload(String token, long size, String entityType, UUID entityId) {
         HttpResult result = call(HttpMethod.POST, "/api/v1/media/upload-requests", token, """
                 {"originalFilename":"IMG_0001.jpg","contentType":"image/jpeg","sizeBytes":%d,"entityType":"%s","entityId":"%s"}
@@ -334,16 +455,36 @@ class MediaUploadIT extends AbstractIntegrationTest {
         return json(result.body());
     }
 
+    /**
+     * Chiede al backend di confermare un caricamento.
+     *
+     * @param token   l'access token dell'utente
+     * @param session la sessione di caricamento
+     * @return la risposta del server
+     */
     private HttpResult confirm(String token, JsonNode session) {
         return call(HttpMethod.POST, "/api/v1/media/" + mediaId(session) + "/confirm", token, null);
     }
 
+    /**
+     * Legge l'id del file dalla sessione di caricamento.
+     *
+     * @param session la sessione
+     * @return l'id del file
+     */
     private static String mediaId(JsonNode session) {
         return session.get("mediaId").asString();
     }
 
-    // Come l'app: tutti i formFields (qui con eventuali campi manomessi), poi "file" per ultimo,
-    // con Content-Type della parte uguale a quello dichiarato
+    /**
+     * Carica un file su MinIO come farebbe l'app: tutti i campi della policy (eventualmente sostituiti da
+     * valori manomessi), poi la parte "file" per ultima, con lo stesso Content-Type dichiarato.
+     *
+     * @param session  la sessione di caricamento
+     * @param tampered campi da sovrascrivere per simulare una manomissione (vuoto per un caricamento normale)
+     * @param file     il contenuto del file
+     * @return la risposta di MinIO
+     */
     private Upload postToStorage(JsonNode session, Map<String, String> tampered, byte[] file) {
         Map<String, String> fields = new LinkedHashMap<>();
         session.get("formFields").properties().forEach(e -> fields.put(e.getKey(), e.getValue().asString()));
@@ -361,14 +502,24 @@ class MediaUploadIT extends AbstractIntegrationTest {
                         new String(res.getBody().readAllBytes(), StandardCharsets.UTF_8)));
     }
 
-    // Buffering: MinIO rifiuta un POST policy chunked (EmptyRequestBody), serve il Content-Length
+    /**
+     * Crea il client HTTP verso MinIO. Il corpo viene bufferizzato per mandare l'header Content-Length: MinIO
+     * rifiuta un POST con policy inviato a blocchi (chunked) con l'errore EmptyRequestBody.
+     *
+     * @return il client
+     */
     private static RestClient storageClient() {
         return RestClient.builder()
                 .requestFactory(new BufferingClientHttpRequestFactory(new JdkClientHttpRequestFactory()))
                 .build();
     }
 
-    // Firma JPEG (FF D8 FF E0) seguita da byte di riempimento
+    /**
+     * Costruisce un finto JPEG: la firma FF D8 FF E0 seguita da byte di riempimento.
+     *
+     * @param size la dimensione totale in byte
+     * @return il contenuto del file
+     */
     private static byte[] jpeg(int size) {
         byte[] bytes = new byte[size];
         Arrays.fill(bytes, (byte) 0x42);

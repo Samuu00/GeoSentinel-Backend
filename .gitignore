@@ -5,11 +5,8 @@ target/
 !**/src/test/**/target/
 
 .env
-# .env.prod e simili (segreti di staging/produzione, M7.6)
 .env.*
 !.env.example
-# Backup di docker-compose.prod.yml (BACKUP_DIR di default)
-backups/
 graphify-out/
 
 ### STS ###

@@ -59,7 +59,6 @@ GeoSentinel-Backend/
 ├── .env.example
 ├── pom.xml
 ├── CONTRIBUTING.md, SECURITY.md, CHANGELOG.md
-├── docker-compose.prod.yml + deploy/Caddyfile   # produzione (M7.6)
 ├── tools/                 # osm-import (dati della Calabria), routing (estratto OSM per GraphHopper)
 ├── docs/
 │   ├── README.md          # indice della documentazione
@@ -920,7 +919,7 @@ Fuori da M7: il consenso verificato dei genitori per i 13enni; le API di età de
 - nessun codice era mai valido: `expiresAt.isBefore(expiresAt)` (sempre falso) in `isUsable`;
 - un codice malformato saltava BCrypt solo se esisteva un codice aperto: il tempo rivelava l'email; un codice di 32 caratteri accentati dava 500;
 - `.env.example` con valori `//` (`MAIL_ENABLED=//` → nessun mailer, avvio fallito) e chiavi `MAIL_HOST/PORT/USER/PASSWORD` non collegate a `spring.mail.*`; nessun timeout SMTP;
-- `/actuator/health` a 503 con l'SMTP spento (trovato da `ProdProfileIT`); tag di Mailpit segnaposto (`vX.Y.Z`); import di `infrastructure` nel listener; `@ResponseStatus(NO_CONTENT)` mancante (OpenAPI e client documentavano 200).
+- `/actuator/health` a 503 con l'SMTP spento (trovato da un test d'integrazione); tag di Mailpit segnaposto (`vX.Y.Z`); import di `infrastructure` nel listener; `@ResponseStatus(NO_CONTENT)` mancante (OpenAPI e client documentavano 200).
 
 Limiti chiusi subito dopo (17/10, su richiesta): richiesta asincrona (tempo uguale con o senza account, BCrypt fuori dal thread HTTP), executor dedicato con `traceId`, limite sui login azzerato dal reset.
 
@@ -1030,14 +1029,14 @@ apposta con un dominio proprio.
 #### M7.5 — Media dal telefono
 - [x] **HEIC** (predefinito della fotocamera iOS). **Deciso (30/09): l'app converte in JPEG, backend invariato.** Scelta consigliata: l'app converte in **JPEG** e ridimensiona (lato lungo ≤ 2048 px, qualità ~80%) prima dell'upload: più leggero su rete mobile, visibile ovunque (Android non legge HEIC in tutte le versioni). Il backend resta com'è; se invece si vuole accettare HEIC: `image/heic` nella whitelist di `MediaPolicy` + magic bytes (`ftyp` a offset 4 con brand `heic`/`heix`/`mif1`) + test
 - [x] Contratto dell'upload per il client (Ktor `submitFormWithBinaryData`): tutti i `formFields` senza modifiche (ordine libero), poi `file` per ultimo; `Content-Type` della parte file uguale a quello dichiarato; dopo il 204 di MinIO chiamare `/confirm`; upload scaduto (10 min) → nuova `upload-requests`
-- [x] `MINIO_PUBLIC_ENDPOINT` = indirizzo con cui il **telefono** raggiunge MinIO (la firma include l'host): emulatore Android `http://10.0.2.2:9000`, simulatore iOS `http://localhost:9000`, telefono vero `http://<IP del PC>:9000`, produzione il dominio HTTPS dello storage
+- [x] `MINIO_PUBLIC_ENDPOINT` = indirizzo con cui il **telefono** raggiunge MinIO (la firma include l'host): emulatore Android `http://10.0.2.2:9000`, simulatore iOS `http://localhost:9000`, telefono vero `http://<IP del PC>:9000`
 - [x] `MediaUploadIT` (rimasto facoltativo in M6): con il client mobile diventa il test di regressione del contratto di upload
 
 **Checkpoint:** foto scattata dall'app su emulatore Android e simulatore iOS → `READY` e visibile nella segnalazione; `MediaUploadIT` verde in CI.
 
 **Fatto (01/10, scritto da Claude su richiesta):**
 - Contratto dell'upload nella descrizione del documento OpenAPI (`info.description`, sezione *Media upload contract*): tipi ammessi e conversione HEIC → JPEG, POST multipart senza bearer, `formFields` invariati e `file` per ultimo, `Content-Length` obbligatorio, errori di MinIO (400 `EntityTooLarge`, 403), confirm (`READY` / `QUARANTINED`, 422 senza file, ripetibile), scadenza a `expiresAt`. `docs/openapi.json` rigenerato.
-- `.env.example`: gli indirizzi di `MINIO_PUBLIC_ENDPOINT` per emulatore, simulatore, telefono (firewall di Windows sulla 9000) e produzione; con l'host sbagliato MinIO risponde 403 `SignatureDoesNotMatch`.
+- `.env.example`: gli indirizzi di `MINIO_PUBLIC_ENDPOINT` per emulatore, simulatore e telefono (firewall di Windows sulla 9000); con l'host sbagliato MinIO risponde 403 `SignatureDoesNotMatch`.
 - `media/MediaUploadIT` (5 test): container `pgsty/minio` (stesso tag del compose, `GenericContainer`: nessuna dipendenza nuova), bucket creato dal test, endpoint e public endpoint dal `@DynamicPropertySource`. Upload di un HIKER sulla sua segnalazione → `READY`, un altro HIKER la vede in `/attached` e la scarica (byte identici, `image/jpeg`, `Content-Disposition: attachment`); PARK_MANAGER su un sentiero; file più grande del dichiarato → 400 `EntityTooLarge` da MinIO e confirm 422; `Content-Type` o `key` manomessi → 403; testo dichiarato JPEG → `QUARANTINED`, oggetto cancellato, confirm ripetuto con lo stesso esito.
 - **Trappola trovata:** MinIO rifiuta un POST policy chunked (`400 EmptyRequestBody`): serve il `Content-Length`. Nel contratto per l'app; con Ktor e parti `ByteArray` la lunghezza è nota. Nel test `BufferingClientHttpRequestFactory`.
 - Backend e `MediaPolicy` invariati (HEIC lo converte l'app). `./mvnw clean verify` verde: 42 unit + 98 IT.
@@ -1045,24 +1044,13 @@ apposta con un dominio proprio.
 
 #### M7.6 — Ambiente raggiungibile dai dispositivi
 - [x] **Sviluppo:** documentare in `.env.example` e nel README gli indirizzi per emulatore/simulatore/telefono (vedi M7.5). HTTP in chiaro solo in sviluppo: Android richiede un `network_security_config` che lo permetta verso `10.0.2.2` / IP del PC; iOS `NSAllowsLocalNetworking` in `Info.plist` (configurazione dell'app, non del backend)
-- [x] **Staging per i tester** (iOS rifiuta HTTP fuori dalla rete locale, App Transport Security):
-  - profilo `application-prod.properties`: logging `INFO`, springdoc spento, `server.forward-headers-strategy=native` (senza, dietro il proxy tutti i client hanno lo stesso IP e il rate limit per IP li blocca insieme)
-  - reverse proxy con TLS automatico (es. Caddy) davanti all'app e a MinIO, due sottodomini (`api.` e `media.`); nel compose un profilo `prod` con il proxy e il servizio `backend`
-  - segreti solo da variabili d'ambiente del server, mai file nel repo; `JWT_SECRET` diverso da quello di sviluppo
-  - backup giornaliero di Postgres (`pg_dump` programmato) e del bucket
-- [x] `GET /actuator/health` per il monitoraggio esterno (già pubblico, senza dettagli)
+- [x] `GET /actuator/health` per i controlli (già pubblico, senza dettagli)
 
-**Checkpoint:** l'app di test su un iPhone fisico, fuori dalla rete di casa, fa login, apre un sentiero e carica una foto via HTTPS.
+**Checkpoint:** l'app su emulatore Android, simulatore iOS e telefono nella stessa Wi-Fi raggiunge API e MinIO del PC.
 
 **Fatto (01/10, scritto da Claude su richiesta):**
-- `application-prod.properties`: `server.forward-headers-strategy=native`, springdoc spento in modo esplicito, logging `INFO`. Tomcat legge `X-Forwarded-*` solo da un proxy interno (reti private e loopback); Caddy non si fida degli `X-Forwarded-For` in arrivo e li riscrive con l'IP vero.
-- `docker-compose.prod.yml` (file separato invece di un profilo: nel compose di sviluppo Postgres, Redis e MinIO pubblicano le porte, qui solo Caddy) + `deploy/Caddyfile`: `API_DOMAIN` → backend, `MEDIA_DOMAIN` → MinIO (Host inoltrato invariato, le firme tornano), TLS automatico, redirect HTTP → HTTPS, console MinIO spenta, backend senza porte e con healthcheck, niente `env_file` (solo le chiavi necessarie), segreti obbligatori `${VAR:?}` da `--env-file .env.prod` sul server.
-- Backup: `db-backup` (`pg_dump -Fc` giornaliero in `BACKUP_DIR/db`, file `.tmp` rinominato solo se completo, conservazione `BACKUP_KEEP_DAYS`) e `media-backup` (`mc mirror --remove` in `BACKUP_DIR/media`). Restano sul server: copiarli altrove è compito di chi gestisce il server.
-- README scritto (prima c'era solo il titolo): sviluppo, indirizzi per emulatore/simulatore/telefono, `network_security_config` / `NSAllowsLocalNetworking`, deploy, backup e ripristino. `.gitignore`/`.dockerignore`: `.env.*` (tranne `.env.example`) e `backups/`.
-- Test: `shared/ProdProfileIT` (profilo `prod` sopra `test`): due IP in `X-Forwarded-For` hanno bucket del rate limit separati (senza `native` sarebbero lo stesso bucket di 127.0.0.1), `Location` in https con `X-Forwarded-Proto`, `/v3/api-docs` 404, health senza `components`/`details`. `./mvnw clean verify` verde: 42 unit + 101 IT.
-- Prova dal vivo dello stack prod sul PC (`api.localhost` / `media.localhost`, porte 8088/8443, CA locale di Caddy verificata, non `verify=False`): health via TLS, redirect 308, Swagger 404, register → login → sentieri → segnalazione (`Location` https) → upload presigned via Caddy → `READY` → download con byte identici; `X-Forwarded-For` falsificato non aggira il limite (429 alla 29ª richiesta); dump valido e **ripristinato** in un DB temporaneo (utenti, segnalazione, media, Flyway V9), foto presente nella copia del bucket. Stack e volumi di prova rimossi.
-- Limite noto: su una porta HTTPS diversa da 443 la `Location` perde la porta (Caddy non manda `X-Forwarded-Port`); in produzione si usa la 443.
-- **Deciso (01/10): il progetto (universitario) resta in locale sul PC.** Lo stack prod è pronto e provato ma non si usa; il checkpoint con l'iPhone fisico fuori dalla rete di casa non si applica. L'app si prova su emulatore Android e simulatore iOS con il compose di sviluppo (indirizzi nel README).
+- README scritto (prima c'era solo il titolo): sviluppo, indirizzi per emulatore/simulatore/telefono, `network_security_config` / `NSAllowsLocalNetworking`. `.gitignore`/`.dockerignore`: `.env.*` tranne `.env.example`.
+- **Deciso (01/10): il progetto (tesi triennale) resta in locale sul PC.** L'app si prova su emulatore Android, simulatore iOS e iPhone con `docker-compose.yml` (indirizzi nel README).
 
 #### M7.7 — Test e review
 - [x] `MediaUploadIT` (M7.5). Già fatti: `UserAccountIT` (M7.2), `RegistrationAgeIT` (M7.2.1), `SosPushIT` (M7.4), test del contratto OpenAPI (M7.1), `RateLimitIT` aggiornato (M7.3)
@@ -1074,10 +1062,10 @@ apposta con un dominio proprio.
 - Review di sicurezza e Java del codice di M7 (inline, sul diff da M7.1). Due problemi reali, corretti:
   - **access token degli altri dispositivi validi dopo la cancellazione dell'account e il cambio password** (fino a 15 min): un account cancellato poteva ancora prenotare, lanciare SOS e caricare foto, che `MediaService.deleteAllOf` non avrebbe più visto. Ora `TokenBlacklist.revokeAllIssuedUntil(userId, until)`: chiave Redis `bl:user:<id>` = secondo epoch, TTL = `access-ttl`; `JtiBlacklistValidator` controlla `jti` e revoca per utente con un solo `MGET` (fail-closed). Inclusiva al secondo (`iat` ha la precisione del secondo): la cancellazione revoca fino a `now`, il cambio password fino a `now - 1 s`, così la sessione nuova resta valida;
   - **`changePassword` senza limite sui tentativi**: con un access token rubato si poteva indovinare la password attuale a 60 tentativi al minuto e prendere l'account. Ora lo stesso limite per account del login (`LoginAttemptLimiter`, 10 ogni 15 min, bucket condiviso) → 429 + `Retry-After`.
-- Rivisti senza problemi: payload e log delle push (solo `type` + `alertId`), cancellazione dei token invalidi, `unregister` limitato all'utente, rate limit e cache HTTP (M7.3), contratto media (M7.5), profilo prod (M7.6).
+- Rivisti senza problemi: payload e log delle push (solo `type` + `alertId`), cancellazione dei token invalidi, `unregister` limitato all'utente, rate limit e cache HTTP (M7.3), contratto media (M7.5).
 - Limite accettato: nessun tetto al numero di token push per utente (il rate limit generale ne limita la crescita a 60/min).
 - Test: `RefugeCapacityIT` (2), `UserAccountIT` esteso (token di un altro dispositivo → 401 dopo cancellazione e cambio password, 429 sui tentativi della password attuale). `./mvnw clean verify` verde due volte di fila: 42 unit + 104 IT.
-- Verifiche finali: `/security-review` sulle modifiche di M7.6–M7.7 (revoca per utente fail-closed, header inoltrati solo da Caddy, query con parametri bound): nessuna vulnerabilità. AgentShield: B (80/100), tutti avvisi testuali su `CLAUDE.md`; segreti, permessi, hook e MCP a 100.
+- Verifiche finali: `/security-review` sulle modifiche di M7.6–M7.7 (revoca per utente fail-closed, query con parametri bound): nessuna vulnerabilità. AgentShield: B (80/100), tutti avvisi testuali su `CLAUDE.md`; segreti, permessi, hook e MCP a 100.
 
 **Checkpoint M7:**
 - [x] `./mvnw verify` verde (42 unit + 104 IT, 01/10)
@@ -1220,7 +1208,7 @@ final class MfaSecretCipher { byte[] encrypt(byte[] plain); byte[] decrypt(byte[
 
 ---
 
-### Dopo M9 (21–22/11) — Percorso A→B (fatto; aperti produzione e review)
+### Dopo M9 (21–22/11) — Percorso A→B (fatto; aperta la review)
 
 > Su richiesta dell'app (sua sezione "Dopo il redesign"). Scritto da Claude su richiesta. ADR-0027 (21/11) sostituita
 > dall'ADR-0028 (22/11).
@@ -1258,7 +1246,6 @@ circa 57 gruppi non collegati, e tra due gruppi l'app mostrava una linea dritta.
 - [x] `TrailRouteIT` (5): anche partenza a più di 1 km dal sentiero → 422; `./mvnw verify` verde (194 IT)
 - [x] Dall'app sull'emulatore (prima versione, con le strade): dalla pagina del rifugio, Camigliatello → Lo Scoiattolo
 - [x] Dall'app, solo sentieri: provato sull'iPhone (build `ab7150e` dell'app, 22/11)
-- [ ] Servizio `graphhopper` in `docker-compose.prod.yml` (§7)
 - [ ] Review con la catena di §5 (riga "Percorso A→B")
 
 ---
@@ -1309,7 +1296,7 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 /ecc:orchestrate custom "ecc:database-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-4] Review only: PostGIS native queries (ST_DWithin geography meters, ST_Contains envelope), refuge booking PESSIMISTIC_WRITE + per-night occupancy via generate_series, SOS lock ordering alert-then-team, @Version plus explicit expectedVersion check, transaction-aware typed Redis cache, dedicated async executor with AFTER_COMMIT listener; Acceptance: no overbooking path; no deadlock ordering; cache holds DTOs only"
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-5] Review only: thin REST controllers with record DTOs and JSR-380, MapStruct mappers with GeometryMapper, If-Match/ETag on maintenance PATCH, GlobalExceptionHandler RFC 7807 mapping incl. AccessDenied from @PreAuthorize and lock failures, OpenAPI bearer scheme; Acceptance: every error is application/problem+json; no entity exposed in responses; 201 with Location"
 /ecc:orchestrate custom "ecc:java-reviewer,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-6] Review only: AbstractIntegrationTest singleton PostGIS+Redis Testcontainers with @ServiceConnection, truncate cleanup without @Transactional, concurrency ITs with CountDownLatch for bookings/SOS/optimistic lock, spatial IT with lon/lat regression, ProblemDetail contract IT; Acceptance: mvnw verify green from clean; concurrency tests pass 5/5 repeats; no in-memory DB"
-/ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-7] Review only: stable OpenAPI contract for Kotlin client generation (explicit operationIds, required response fields, committed openapi.json), /users/me profile + account deletion with anonymization and cross-feature cleanup through services, CGNAT-friendly auth rate limit + per-account limit, gzip + conditional GET, FCM push via PushNotifier port with no PII in payload and retry through notified_at, mobile upload contract, prod profile behind TLS proxy with forward headers; Acceptance: generated client compiles without nullable-everything; deleted account cannot log in; push failure is retried; no secrets in repo"
+/ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-7] Review only: stable OpenAPI contract for Kotlin client generation (explicit operationIds, required response fields, committed openapi.json), /users/me profile + account deletion with anonymization and cross-feature cleanup through services, CGNAT-friendly auth rate limit + per-account limit, gzip + conditional GET, FCM push via PushNotifier port with no PII in payload and retry through notified_at, mobile upload contract; Acceptance: generated client compiles without nullable-everything; deleted account cannot log in; push failure is retried; no secrets in repo"
 /ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-8] Review only: TOTP RFC 6238 with javax.crypto (SHA-1, 6 digits, 30 s, ±1 step), AES-256-GCM encrypted secret with fail-fast key, replay protection via last_used_step under user row lock, constant-time compare, SHA-256 hashed single-use recovery codes, stateless login returning 401 mfa-required, MFA enforced on Google login and account linking, dedicated per-account limiter on wrong codes, single email alert per window after 3 wrong login codes, ADMIN-only MFA reset that revokes all sessions and cannot target self, no secrets in logs or caches, cleanup on account deletion; Acceptance: RFC test vectors pass; same code rejected twice; Google login cannot bypass MFA; brute force throttled; password reset alone never disables MFA"
 /ecc:orchestrate custom "ecc:security-reviewer,ecc:java-reviewer" "[Plan: docs/MASTER_PLAN.md#step-9] Review only: profile photo as MediaFile with USER target reusing presigned POST upload and confirm, owner-only visibility with exhaustive switch over MediaTargetType, @PreAuthorize allowing USER for hikers, previous avatars deleted on confirm (rows then objects) under the per-user lock, avatarMediaId in /users/me, cleanup on account deletion; Acceptance: other users get 404 on avatar; only one READY avatar per user; no orphan objects"
 ```
@@ -1327,13 +1314,10 @@ M0–M9 completate e integrate nell'app (2FA e foto profilo comprese), più il p
 
 In ordine di priorità. I dettagli stanno nei checkpoint delle milestone; qui solo l'elenco.
 
-### 7.1 Prima di un rilascio
-1. **GraphHopper in `docker-compose.prod.yml`:** servizio con l'estratto e il volume del grafo, `ROUTING_URL` per il
-   backend, limite di memoria (heap di 1 GB), nessuna porta esposta fuori dalla rete interna. Senza, il percorso
-   risponde 503.
-2. **Immagini fissate per digest**, non solo per tag: soprattutto quelle non ufficiali (`israelhikingmap/graphhopper`,
+### 7.1 Infrastruttura
+1. **Immagini fissate per digest**, non solo per tag: soprattutto quelle non ufficiali (`israelhikingmap/graphhopper`,
    `pgsty/minio`, `pgsty/mc`).
-3. **Osservabilità:** il `traceId` c'è in ogni `ProblemDetail`, ma nessun exporter manda tracce e metriche da qualche
+2. **Osservabilità:** il `traceId` c'è in ogni `ProblemDetail`, ma nessun exporter manda tracce e metriche da qualche
    parte. Da decidere se serve per questa versione.
 
 ### 7.2 Review e verifiche

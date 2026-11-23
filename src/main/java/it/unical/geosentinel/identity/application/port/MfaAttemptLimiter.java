@@ -1,20 +1,48 @@
+/*
+ * Porta del limite dei tentativi sui codici della verifica in due passaggi. L'implementazione usa Redis.
+ */
 package it.unical.geosentinel.identity.application.port;
 
 import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
 
-// Due bucket per account (ADR-0026): chi conosce solo la password svuota quello del login, ma non blocca il titolare
-// nelle operazioni in sessione (cambio password, disattivazione, codici di recupero)
+/**
+ * Limite dei codici di verifica per account, con due contatori separati: uno per il login e uno per le
+ * operazioni in sessione (cambio password, disattivazione, codici di recupero). Così chi conosce solo la
+ * password esaurisce i tentativi del login, ma non blocca il titolare già autenticato.
+ */
 public interface MfaAttemptLimiter {
-    // Optional.empty() = tentativo consentito; altrimenti quanto attendere
+    /**
+     * Consuma un tentativo del login.
+     *
+     * @param userId utente
+     * @return vuoto se il tentativo è consentito, altrimenti quanto attendere
+     */
     Optional<Duration> tryAcquireLogin(UUID userId);
 
+    /**
+     * Consuma un tentativo delle operazioni in sessione.
+     *
+     * @param userId utente
+     * @return vuoto se il tentativo è consentito, altrimenti quanto attendere
+     */
     Optional<Duration> tryAcquireInSession(UUID userId);
 
-    // Azzera entrambi i bucket: dopo un codice giusto, un reset della password o un reset da ADMIN
+    /**
+     * Azzera entrambi i contatori: dopo un codice giusto, un reset della password o un azzeramento da parte
+     * di un amministratore.
+     *
+     * @param userId utente
+     */
     void reset(UUID userId);
 
-    // Errori del login nell'ultima ora (contatore separato dal bucket); ritorna il conteggio dopo l'incremento
+    /**
+     * Conta un errore del login nell'ultima ora. È un contatore separato dal limite e serve a decidere quando
+     * mandare l'email d'avviso.
+     *
+     * @param userId utente
+     * @return il numero di errori dopo l'incremento
+     */
     long recordLoginFailure(UUID userId);
 }

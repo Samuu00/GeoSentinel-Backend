@@ -1,3 +1,6 @@
+// Controller REST dei file, sotto /api/v1/media. Il caricamento avviene in due passi: il client chiede
+// un'autorizzazione, invia il file direttamente allo storage e poi conferma. Le altre rotte restituiscono
+// metadati, URL firmati per il download e permettono di cancellare un file. Tutte richiedono il token.
 package it.unical.geosentinel.media.web;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -38,25 +41,40 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+/**
+ * Espone le operazioni sui media e converte richieste e risposte con {@link MediaMapper}.
+ */
 @RestController
 @RequestMapping("/api/v1/media")
 @Tag(name = "Media", description = "Endpoints for managing media uploads via MinIO/S3 presigned URLs")
 public class MediaController {
-    // Whitelist di ?sort=: un campo sconosciuto finirebbe nell'ORDER BY e diventerebbe un 500
+    /** Campi ammessi nel parametro sort: un campo sconosciuto finirebbe nell'ORDER BY e provocherebbe un 500. */
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt", "sizeBytes");
 
     private final MediaService mediaService;
     private final MediaMapper mediaMapper;
     private final CurrentUser currentUser;
 
+    /**
+     * @param mediaService service dei media
+     * @param mediaMapper  mapper tra DTO REST e oggetti del service
+     * @param currentUser  accesso all'utente autenticato
+     */
     public MediaController(MediaService mediaService, MediaMapper mediaMapper, CurrentUser currentUser) {
         this.mediaService = mediaService;
         this.mediaMapper = mediaMapper;
         this.currentUser = currentUser;
     }
 
+    /**
+     * Primo passo del caricamento: restituisce la policy firmata (URL e campi del form) per inviare il
+     * file direttamente allo storage.
+     *
+     * @param request nome, tipo, dimensione ed eventuale entità a cui allegare il file
+     * @return 201 con la sessione di caricamento; Location punta ai metadati del file
+     */
     @PostMapping("/upload-requests")
-    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime lo status lo decide la ResponseEntity
     @Operation(operationId = "createUploadRequest", summary = "Request an upload: returns a presigned POST policy (URL + form fields) for direct upload to storage", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<UploadSessionResponse> initiateUpload(@Valid @RequestBody InitUploadRequest request) {
         UUID ownerId = currentUser.getRequiredUserId();
@@ -68,6 +86,12 @@ public class MediaController {
         return ResponseEntity.created(location).body(mediaMapper.toResponse(session));
     }
 
+    /**
+     * Secondo passo: conferma che il file è stato inviato. Il server ne verifica dimensione e formato.
+     *
+     * @param id identificativo del file
+     * @return 200 con i metadati, nello stato READY oppure QUARANTINED
+     */
     @PostMapping("/{id}/confirm")
     @Operation(operationId = "confirmUpload", summary = "Confirm upload completion after pushing to storage (size and content are verified)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<MediaResponse> confirmUpload(@PathVariable UUID id) {
@@ -76,6 +100,10 @@ public class MediaController {
         return ResponseEntity.ok(mediaMapper.toResponse(file));
     }
 
+    /**
+     * @param id identificativo del file
+     * @return 200 con i metadati, 404 se il file non è visibile
+     */
     @GetMapping("/{id}")
     @Operation(operationId = "getMedia", summary = "Get media file details by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<MediaResponse> getMedia(@PathVariable UUID id) {
@@ -83,6 +111,10 @@ public class MediaController {
         return ResponseEntity.ok(mediaMapper.toResponse(media));
     }
 
+    /**
+     * @param id identificativo del file
+     * @return 200 con un URL firmato e temporaneo per il download
+     */
     @GetMapping("/{id}/download-url")
     @Operation(operationId = "getMediaDownloadUrl", summary = "Get a temporary presigned GET URL for downloading media", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<DownloadUrlResponse> getDownloadUrl(@PathVariable UUID id) {
@@ -90,6 +122,13 @@ public class MediaController {
         return ResponseEntity.ok(new DownloadUrlResponse(id, url));
     }
 
+    /**
+     * Elenca i file pronti allegati a un'entità.
+     *
+     * @param entityType tipo dell'entità
+     * @param entityId   id dell'entità
+     * @return 200 con i metadati, 404 se l'entità non è visibile
+     */
     @GetMapping("/attached")
     @Operation(operationId = "findAttachedMedia", summary = "Get media attachments linked to a specific entity (TRAIL or HAZARD_REPORT)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<MediaResponse>> getAttachedMedia(
@@ -100,6 +139,12 @@ public class MediaController {
         return ResponseEntity.ok(media.stream().map(mediaMapper::toResponse).toList());
     }
 
+    /**
+     * Elenca i file dell'utente corrente, di default dal più recente.
+     *
+     * @param pageable paginazione; si può ordinare per createdAt o sizeBytes
+     * @return la pagina dei file
+     */
     @GetMapping("/my")
     @Operation(operationId = "findMyMedia", summary = "List current user's uploaded media", security = @SecurityRequirement(name = "bearerAuth"))
     public PagedModel<MediaResponse> getMyMedia(
@@ -110,14 +155,24 @@ public class MediaController {
         return new PagedModel<>(mediaService.getUserMedia(ownerId, pageable).map(mediaMapper::toResponse));
     }
 
+    /**
+     * Cancella un file e il relativo oggetto nello storage; è permesso al proprietario o a un amministratore.
+     *
+     * @param id identificativo del file
+     * @return 204
+     */
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per OpenAPI, a runtime decide la ResponseEntity
+    @ResponseStatus(HttpStatus.NO_CONTENT) // solo per la documentazione OpenAPI: a runtime lo status lo decide la ResponseEntity
     @Operation(operationId = "deleteMedia", summary = "Delete an uploaded media file and purge it from object storage (owner or admin)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<Void> deleteMedia(@PathVariable UUID id) {
         mediaService.deleteMedia(currentUser.getRequiredUserId(), currentUser.isAdmin(), id);
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * @param sort ordinamento richiesto dal client
+     * @throws ResponseStatusException 400 se compare un campo non ammesso
+     */
     static void checkSortable(Sort sort) {
         for (Sort.Order order : sort) {
             if (!SORTABLE_FIELDS.contains(order.getProperty())) {

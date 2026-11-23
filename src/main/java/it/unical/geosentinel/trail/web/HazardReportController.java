@@ -1,3 +1,6 @@
+// Controller REST delle segnalazioni di pericolo, sotto /api/v1/hazards. Tutte le rotte richiedono il
+// token: le segnalazioni contengono posizioni inviate dagli utenti. Il controllo dei ruoli (escursionista
+// per creare, gestore per verificare) è nel service.
 package it.unical.geosentinel.trail.web;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -39,6 +42,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+/**
+ * Espone le operazioni sulle segnalazioni. L'utente corrente si ricava dal JWT tramite {@link CurrentUser}.
+ */
 @RestController
 @RequestMapping("/api/v1/hazards")
 @Tag(name = "Hazard Reports", description = "Endpoints for environmental and trail hazards reporting and management")
@@ -47,12 +53,21 @@ public class HazardReportController {
     private final TrailMapper trailMapper;
     private final CurrentUser currentUser;
 
+    /**
+     * @param hazardReportService service delle segnalazioni
+     * @param trailMapper         mapper tra DTO REST e oggetti del service
+     * @param currentUser         accesso all'utente autenticato
+     */
     public HazardReportController(HazardReportService hazardReportService, TrailMapper trailMapper, CurrentUser currentUser) {
         this.hazardReportService = hazardReportService;
         this.trailMapper = trailMapper;
         this.currentUser = currentUser;
     }
 
+    /**
+     * @param id identificativo della segnalazione
+     * @return 200 con la segnalazione; 404 se non esiste; 403 se è respinta e l'utente non può vederla
+     */
     @GetMapping("/{id}")
     @Operation(operationId = "getHazard", summary = "Get hazard report by ID", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<HazardResponse> getById(@PathVariable UUID id) {
@@ -60,7 +75,13 @@ public class HazardReportController {
         return ResponseEntity.ok(trailMapper.toResponse(view));
     }
 
-    // Le segnalazioni dell'utente corrente, in ogni stato, dalla più recente. "/mine" vince su "/{id}" (path letterale)
+    /**
+     * Elenca le segnalazioni dell'utente corrente in ogni stato, dalla più recente. Spring preferisce il
+     * segmento fisso "/mine" alla variabile "/{id}", quindi le due rotte non si confondono.
+     *
+     * @param pageable paginazione; si può ordinare solo per createdAt
+     * @return la pagina di segnalazioni
+     */
     @GetMapping("/mine")
     @Operation(operationId = "findMyHazards", summary = "List current user's hazard reports, newest first", security = @SecurityRequirement(name = "bearerAuth"))
     public PagedModel<HazardResponse> getMyHazardReports(
@@ -71,7 +92,13 @@ public class HazardReportController {
         return new PagedModel<>(hazardReportService.findMine(reporterId, pageable).map(trailMapper::toResponse));
     }
 
-    // Coda del gestore: le segnalazioni ancora da verificare di tutti, dalla più recente. "/pending" vince su "/{id}"
+    /**
+     * Coda del gestore: le segnalazioni ancora da verificare di tutti gli utenti, dalla più recente. Anche
+     * "/pending" è un segmento fisso e ha la precedenza su "/{id}".
+     *
+     * @param pageable paginazione; si può ordinare solo per createdAt
+     * @return la pagina di segnalazioni in attesa
+     */
     @GetMapping("/pending")
     @Operation(operationId = "findPendingHazards", summary = "List hazard reports awaiting verification (park manager), newest first", security = @SecurityRequirement(name = "bearerAuth"))
     public PagedModel<HazardResponse> getPendingHazardReports(
@@ -81,8 +108,17 @@ public class HazardReportController {
         return new PagedModel<>(hazardReportService.findPending(pageable).map(trailMapper::toResponse));
     }
 
-    // I pericoli attivi (VERIFIED) intorno a un punto, di tutti gli utenti, dal più vicino. Lista come /pois/nearby:
-    // niente Pageable (con una query nativa un ?sort= arriverebbe nell'SQL). "/nearby" vince su "/{id}" (path letterale)
+    /**
+     * Elenca i pericoli attivi ({@code VERIFIED}) di tutti gli utenti attorno a un punto, dal più vicino.
+     * Come per i POI la risposta è una lista con un limite e non una pagina: con una query nativa un
+     * parametro {@code sort} del Pageable finirebbe direttamente nell'SQL.
+     *
+     * @param lon    longitudine del centro
+     * @param lat    latitudine del centro
+     * @param radius raggio in metri, di default 5 km, al massimo 50 km
+     * @param limit  numero massimo di risultati, di default 30, al massimo 50
+     * @return 200 con le segnalazioni
+     */
     @GetMapping("/nearby")
     @Operation(operationId = "findHazardsNearby", summary = "List active (verified) hazards near coordinates, nearest first", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<List<HazardResponse>> findNearby(
@@ -95,6 +131,13 @@ public class HazardReportController {
         return ResponseEntity.ok(views.stream().map(trailMapper::toResponse).toList());
     }
 
+    /**
+     * Elenca le segnalazioni attive entro 100 metri da un sentiero: quelle verificate di tutti e quelle in
+     * attesa solo dell'utente corrente, o tutte se è un gestore.
+     *
+     * @param trailId identificativo del sentiero
+     * @return 200 con le segnalazioni, 404 se il sentiero non esiste
+     */
     @GetMapping("/trail/{trailId}")
     @Operation(operationId = "findActiveHazardsByTrail",
             summary = "List active hazards near a specific trail (buffer 100m), newest first, at most 50",
@@ -106,8 +149,15 @@ public class HazardReportController {
         return ResponseEntity.ok(views.stream().map(trailMapper::toResponse).toList());
     }
 
+    /**
+     * Crea una segnalazione a nome dell'utente corrente e restituisce nell'header Location l'indirizzo
+     * della nuova risorsa.
+     *
+     * @param request dati della segnalazione, validati
+     * @return 201 con la segnalazione creata
+     */
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // solo per OpenAPI, a runtime decide la ResponseEntity
+    @ResponseStatus(HttpStatus.CREATED) // solo per la documentazione OpenAPI: a runtime lo status lo decide la ResponseEntity
     @Operation(operationId = "createHazard", summary = "Submit a hazard report", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<HazardResponse> create(@Valid @RequestBody CreateHazardRequest request) {
         UUID reporterId = currentUser.getRequiredUserId();
@@ -120,6 +170,13 @@ public class HazardReportController {
         return ResponseEntity.created(location).body(trailMapper.toResponse(created));
     }
 
+    /**
+     * Verifica, respinge o chiude una segnalazione.
+     *
+     * @param id      identificativo della segnalazione
+     * @param request stato di destinazione
+     * @return 200 con la segnalazione aggiornata; 422 se la transizione non è ammessa
+     */
     @PatchMapping("/{id}/status")
     @Operation(operationId = "changeHazardStatus", summary = "Verify, reject or resolve a hazard report", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<HazardResponse> changeStatus(
@@ -130,9 +187,18 @@ public class HazardReportController {
         return ResponseEntity.ok(trailMapper.toResponse(updated));
     }
 
-    // Whitelist del sort, come nelle altre liste: un campo qualsiasi darebbe un 500 (proprietà inesistente)
+    /**
+     * Campi ammessi nel parametro sort delle liste paginate. Senza questa whitelist un campo inesistente
+     * provocherebbe un errore 500 al momento della query.
+     */
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt");
 
+    /**
+     * Controlla che l'ordinamento richiesto usi solo campi della whitelist.
+     *
+     * @param sort ordinamento richiesto dal client
+     * @throws ResponseStatusException 400 se compare un campo non ammesso
+     */
     static void checkSortable(Sort sort) {
         for (Sort.Order order : sort) {
             if (!SORTABLE_FIELDS.contains(order.getProperty())) {

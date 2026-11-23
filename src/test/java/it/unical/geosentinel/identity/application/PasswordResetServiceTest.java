@@ -1,3 +1,7 @@
+// Test unitario di PasswordResetService con dipendenze finte di Mockito, senza Spring né database.
+// Riguarda la prima fase del reset della password, la richiesta del codice: nel thread della richiesta HTTP
+// il servizio non deve fare nulla che dipenda dall'esistenza dell'account (né query né BCrypt), così il
+// tempo di risposta è lo stesso per email registrate e non e non si può scoprire chi è iscritto.
 package it.unical.geosentinel.identity.application;
 
 import it.unical.geosentinel.identity.application.port.MfaAttemptLimiter;
@@ -26,22 +30,41 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-// La richiesta non deve fare nel thread HTTP nulla che dipenda dall'esistenza dell'account (né DB né BCrypt):
-// è ciò che rende il tempo di risposta uguale per email registrate e non
+/**
+ * Verifica che la richiesta di reset si limiti a controllare il rate limit e a pubblicare un evento, lasciando
+ * il lavoro che dipende dall'account al listener in background.
+ */
 class PasswordResetServiceTest {
+
+    /** Repository degli utenti: non deve essere mai interrogato durante la richiesta. */
     private final UserRepository users = mock(UserRepository.class);
+
+    /** Repository dei token di reset: non deve essere mai usato durante la richiesta. */
     private final PasswordResetTokenRepository resetTokens = mock(PasswordResetTokenRepository.class);
+
+    /** Limitatore delle richieste di reset per email. */
     private final PasswordResetLimiter limiter = mock(PasswordResetLimiter.class);
+
+    /** Encoder delle password: non deve calcolare hash durante la richiesta. */
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+
+    /** Publisher degli eventi applicativi, su cui si verifica l'evento di richiesta. */
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+
+    /** Servizio sotto test, con orologio fisso, codici validi 15 minuti e al massimo 5 tentativi. */
     private final PasswordResetService service = new PasswordResetService(
             users, resetTokens, mock(RefreshTokenRepository.class), mock(TokenBlacklist.class), limiter,
             mock(LoginAttemptLimiter.class), mock(MfaAttemptLimiter.class), passwordEncoder, events,
             Clock.fixed(Instant.parse("2026-10-17T10:00:00Z"), ZoneOffset.UTC), Duration.ofMinutes(15), 5);
 
+    /**
+     * Con il rate limit non superato, la richiesta deve pubblicare un {@link PasswordResetRequested} con
+     * l'email normalizzata (spazi tolti, minuscole) e non deve toccare né i repository né l'encoder.
+     */
     @Test
     void requestOnlyChecksTheLimitAndPublishes() {
-        clearInvocations(passwordEncoder); // il costruttore calcola l'hash fittizio
+        // Il costruttore del servizio calcola un hash fittizio con l'encoder: quella chiamata non va contata.
+        clearInvocations(passwordEncoder);
         when(limiter.tryAcquire(anyString())).thenReturn(Optional.empty());
 
         service.requestReset(" Hiker@GeoSentinel.dev ");
@@ -50,6 +73,10 @@ class PasswordResetServiceTest {
         verifyNoInteractions(users, resetTokens, passwordEncoder);
     }
 
+    /**
+     * Con il rate limit superato, la richiesta deve lanciare una {@link RateLimitExceededException} senza
+     * pubblicare alcun evento, quindi senza inviare email.
+     */
     @Test
     void limitedRequestPublishesNothing() {
         when(limiter.tryAcquire(anyString())).thenReturn(Optional.of(Duration.ofMinutes(20)));

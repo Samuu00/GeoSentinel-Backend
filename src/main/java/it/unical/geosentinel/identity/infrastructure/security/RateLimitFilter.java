@@ -1,3 +1,8 @@
+/*
+ * Filtro HTTP che applica il rate limit a tutte le richieste dell'API, con limiti diversi per gli endpoint di
+ * autenticazione, per il refresh e per il resto. Quando il limite è superato risponde 429 con un ProblemDetail
+ * e l'header Retry-After.
+ */
 package it.unical.geosentinel.identity.infrastructure.security;
 
 import jakarta.servlet.FilterChain;
@@ -21,6 +26,10 @@ import java.io.IOException;
 import java.time.Clock;
 import java.net.URI;
 
+/**
+ * Rate limit per richiesta basato su {@link RedisRateLimiter}. Non è un bean: lo crea e lo inserisce nella
+ * catena dei filtri {@code SecurityConfig}, dopo l'autenticazione del bearer token.
+ */
 public class RateLimitFilter extends OncePerRequestFilter {
     private static final String AUTH_PATH = "/api/v1/auth";
     private static final String REFRESH_PATH = "/api/v1/auth/refresh";
@@ -28,9 +37,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final RedisRateLimiter redisRateLimiter;
     private final ProblemDetailWriter problemDetailWriter;
     private final Clock clock;
-    // fail-closed su /auth/**: se Redis è giù, login e refresh restano comunque limitati
+    /** Politica degli endpoint di autenticazione, fail-closed: con Redis giù il login resta comunque limitato. */
     private final RateLimitPolicy loginPolicy;
+    /** Politica del refresh, anch'essa fail-closed. */
     private final RateLimitPolicy refreshPolicy;
+    /** Politica di tutte le altre rotte, fail-open. */
     private final RateLimitPolicy generalPolicy;
 
     public RateLimitFilter(RedisRateLimiter redisRateLimiter, ProblemDetailWriter problemDetailWriter, Clock clock,
@@ -43,19 +54,34 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.generalPolicy = RateLimitPolicy.perMinute(properties.generalPerMinute());
     }
 
-    // Un SOS non riceve mai un 429. L'abuso resta limitato: raiseSos restituisce l'allerta già attiva invece di crearne un'altra
+    /**
+     * Esclude dal limite l'invio di un SOS, che non deve mai ricevere un 429. L'abuso resta contenuto perché
+     * l'invio restituisce l'allerta già attiva invece di crearne un'altra.
+     *
+     * @param request richiesta corrente
+     * @return {@code true} per {@code POST /api/v1/sos}
+     */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         return "POST".equals(request.getMethod()) && "/api/v1/sos".equals(request.getRequestURI());
     }
 
+    /**
+     * Sceglie la politica in base al percorso, consuma un gettone e lascia passare la richiesta oppure risponde 429.
+     *
+     * @param request richiesta corrente
+     * @param response risposta
+     * @param filterChain resto della catena dei filtri
+     * @throws ServletException se un filtro successivo fallisce
+     * @throws IOException se la scrittura della risposta fallisce
+     */
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
         String path = request.getRequestURI();
         RateLimitPolicy policy;
         String prefix;
-        // Un bucket per policy: con una chiave condivisa le GET pubbliche ricaricherebbero il bucket del login,
-        // e i refresh (frequenti sotto CGNAT) consumerebbero i tentativi di login
+        // Un bucket per politica: con una chiave condivisa le GET pubbliche consumerebbero il bucket del login,
+        // e i refresh (frequenti quando molti utenti condividono l'IP) consumerebbero i tentativi di login
         if (path.equals(REFRESH_PATH)) {
             policy = refreshPolicy;
             prefix = "rl:refresh:";
@@ -67,8 +93,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
             prefix = "rl:";
         }
 
-        // chiave per utente se autenticato, altrimenti per IP (getRemoteAddr: X-Forwarded-For solo dietro proxy fidato).
-        // Il filtro gira dopo BearerTokenAuthenticationFilter: con il bearer anche le GET pubbliche contano per utente
+        // Chiave per utente se la richiesta è autenticata, altrimenti per IP. Si usa getRemoteAddr: l'header
+        // X-Forwarded-For va considerato solo dietro un proxy fidato. Il filtro gira dopo
+        // BearerTokenAuthenticationFilter, quindi con il bearer anche le GET pubbliche contano per utente
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         String rateLimitKey = (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof Jwt jwt)
                 ? prefix + "user:" + jwt.getSubject()
@@ -78,7 +105,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         response.setHeader("X-RateLimit-Remaining", String.valueOf(decision.remainingTokens()));
 
         if (!decision.allowed()) {
-            // arrotondato per eccesso: per difetto il client ritenterebbe troppo presto e riceverebbe un altro 429
+            // Arrotondato per eccesso: per difetto il client riproverebbe troppo presto e riceverebbe un altro 429
             long retryAfterSeconds = Math.max(1, Math.ceilDiv(decision.retryAfterMillis(), 1000));
             response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds));
 

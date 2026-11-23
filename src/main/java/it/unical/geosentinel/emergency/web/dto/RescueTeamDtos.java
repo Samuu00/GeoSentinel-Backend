@@ -1,3 +1,5 @@
+// DTO dell'API REST delle squadre di soccorso: il corpo della richiesta di creazione, con le regole di
+// validazione, e il corpo della risposta.
 package it.unical.geosentinel.emergency.web.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -12,7 +14,14 @@ import java.util.UUID;
 
 import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
+/**
+ * Contenitore dei record di richiesta e risposta usati da {@code RescueTeamController}.
+ */
 public class RescueTeamDtos {
+    /**
+     * Corpo di POST /api/v1/rescue-teams. I limiti di lunghezza corrispondono a quelli delle colonne del
+     * database.
+     */
     public record CreateRescueTeamRequest(
             @NotBlank(message = "Team name is required")
             @Size(min = 2, max = 100, message = "Team name must be between 2 and 100 characters")
@@ -31,6 +40,10 @@ public class RescueTeamDtos {
             String contactNumber
     ) {}
 
+    /**
+     * Squadra restituita dall'API. {@code @Schema(requiredMode = REQUIRED)} marca i campi come obbligatori
+     * nello schema OpenAPI, così il client generato dell'app li tratta come non nulli.
+     */
     public record RescueTeamResponse(
             @Schema(requiredMode = REQUIRED) UUID id,
             @Schema(requiredMode = REQUIRED) String name,

@@ -1,3 +1,7 @@
+// Configurazione della documentazione OpenAPI generata da springdoc (attiva solo nel profilo local).
+// Oltre ai metadati dell'API e allo schema di sicurezza bearer, aggiunge a ogni operazione le risposte
+// di errore RFC 7807 che può restituire. Il documento prodotto è il contratto da cui l'app mobile genera
+// il proprio client, quindi la sua forma conta quanto il codice.
 package it.unical.geosentinel.shared.config;
 
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
@@ -29,12 +33,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 
+/**
+ * Definisce le informazioni generali dell'API, lo schema di autenticazione {@code bearerAuth} e un
+ * {@link OpenApiCustomizer} che documenta in modo uniforme le risposte di errore.
+ */
 @Configuration
 @OpenAPIDefinition(
         info = @Info(
                 title = "GeoSentinel API",
                 version = "1.0",
-                // contratto dei retry e del refresh per il client mobile
+                // La descrizione documenta per il client mobile i comportamenti che lo schema da solo non
+                // esprime: quando ritentare, come fare il refresh dei token, GET condizionali e upload.
                 description = """
                         Enterprise Outdoor Emergency and Trail Management System API
 
@@ -80,11 +89,21 @@ import java.util.TreeSet;
 )
 public class OpenApiConfig {
 
+    /** Nome dello schema condiviso delle risposte di errore in components/schemas. */
     private static final String PROBLEM_SCHEMA = "ProblemDetail";
+    /** Content type delle risposte di errore secondo la RFC 7807. */
     private static final String PROBLEM_JSON = "application/problem+json";
 
-    // Un solo punto per le risposte di errore, invece di @ApiResponse ripetute su ogni endpoint: ogni
-    // operazione riceve le risposte RFC 7807 che può davvero dare. Quelle già dichiarate (AuthController) restano
+    /**
+     * Customizer che aggiunge a ogni operazione le risposte di errore che può restituire davvero, invece
+     * di ripetere {@code @ApiResponse} su ogni endpoint. Le risposte già dichiarate a mano in un
+     * controller (ad esempio in AuthController) non vengono sovrascritte. Le regole sono:
+     * 400 sempre; 401 e 403 solo sulle rotte protette; 404 sulle rotte con una variabile di percorso;
+     * 409 sulle scritture autenticate; 428 se c'è un header di precondizione obbligatorio; 429 e 500
+     * sempre.
+     *
+     * @return il customizer registrato da springdoc
+     */
     @Bean
     public OpenApiCustomizer problemDetailResponses() {
         return openApi -> {
@@ -104,11 +123,11 @@ public class OpenApiConfig {
                 if (path.contains("{")) {
                     addIfMissing(operation, "404", "Resource not found or not visible to the caller (not-found)");
                 }
-                // solo scritture autenticate: login e refresh non possono dare 409
+                // Il 409 riguarda solo le scritture autenticate: login e refresh non possono restituirlo.
                 if (secured && method != PathItem.HttpMethod.GET) {
                     addIfMissing(operation, "409", "Conflict: concurrent modification, lock timeout or state conflict");
                 }
-                // header obbligatori (Idempotency-Key sulle prenotazioni, If-Match sui ticket): 428 se mancano
+                // Idempotency-Key sulle prenotazioni e If-Match sui ticket: se mancano la risposta è 428.
                 if (hasHeader(operation, "Idempotency-Key", true) || hasHeader(operation, "If-Match", true)) {
                     addIfMissing(operation, "428", "Missing Idempotency-Key or If-Match header (precondition-required)");
                 }
@@ -119,13 +138,27 @@ public class OpenApiConfig {
         };
     }
 
+    /**
+     * Controlla se l'operazione dichiara un certo header tra i parametri.
+     *
+     * @param operation    operazione OpenAPI
+     * @param name         nome dell'header, confrontato senza distinguere maiuscole e minuscole
+     * @param requiredOnly se {@code true} conta solo un header obbligatorio
+     * @return {@code true} se l'header è presente (e obbligatorio, quando richiesto)
+     */
     private static boolean hasHeader(Operation operation, String name, boolean requiredOnly) {
         return operation.getParameters() != null && operation.getParameters().stream()
                 .anyMatch(p -> "header".equals(p.getIn()) && name.equalsIgnoreCase(p.getName())
                         && (!requiredOnly || Boolean.TRUE.equals(p.getRequired())));
     }
 
-    // ADR-0012: con Idempotency-Key un retry risponde 200 con la risorsa già creata (stesso body del 201)
+    /**
+     * Documenta la risposta 200 delle creazioni idempotenti: se l'operazione accetta un
+     * {@code Idempotency-Key} e ha un 201, un ritentativo con la stessa chiave risponde 200 con la
+     * risorsa creata dalla prima richiesta, quindi con lo stesso body del 201.
+     *
+     * @param operation operazione da completare
+     */
     private static void documentIdempotentReplay(Operation operation) {
         ApiResponse created = operation.getResponses().get("201");
         if (hasHeader(operation, "Idempotency-Key", false) && created != null && !operation.getResponses().containsKey("200")) {
@@ -135,6 +168,14 @@ public class OpenApiConfig {
         }
     }
 
+    /**
+     * Aggiunge una risposta di errore con lo schema ProblemDetail, a meno che lo status non sia già
+     * documentato.
+     *
+     * @param operation   operazione da completare
+     * @param status      codice HTTP come stringa
+     * @param description descrizione della risposta, con lo slug tra parentesi
+     */
     private static void addIfMissing(Operation operation, String status, String description) {
         if (operation.getResponses() == null) {
             operation.setResponses(new ApiResponses());
@@ -148,10 +189,15 @@ public class OpenApiConfig {
                         .schema(new Schema<>().$ref("#/components/schemas/" + PROBLEM_SCHEMA)))));
     }
 
-    // Lo schema del JSON che esce davvero: ProblemDetail di Spring con le properties portate al primo livello
-    // (ProblemDetailJacksonMixin) da GlobalExceptionHandler e ProblemDetailWriter
-    // type, title e status ci sono sempre. Gli slug sono elencati nella descrizione e non come enum: un client
-    // generato con un enum rigido fallirebbe la deserializzazione al primo slug nuovo
+    /**
+     * Costruisce lo schema del JSON di errore così come esce davvero dal server: il ProblemDetail di
+     * Spring con le proprietà aggiuntive portate al primo livello (lo fanno GlobalExceptionHandler e
+     * ProblemDetailWriter con ProblemDetailJacksonMixin). {@code type}, {@code title} e {@code status}
+     * ci sono sempre. Gli slug sono elencati nella descrizione e non come enum: un client generato con
+     * un enum rigido fallirebbe la deserializzazione al primo slug nuovo.
+     *
+     * @return lo schema OpenAPI del ProblemDetail
+     */
     private static Schema<?> problemDetailSchema() {
         return new ObjectSchema()
                 .description("RFC 7807 problem details")
@@ -168,7 +214,8 @@ public class OpenApiConfig {
                 .addProperty("traceId", new StringSchema().example("4bf92f3577b34da6a3ce929d0e0e4736"))
                 .addProperty("errors", new ArraySchema()
                         .description("Only for validation-error")
-                        // title: nome della classe nel client generato (altrimenti ProblemDetailErrorsInner)
+                        // Il title diventa il nome della classe nel client generato; senza, il
+                        // generatore la chiamerebbe ProblemDetailErrorsInner.
                         .items(new ObjectSchema()
                                 .title("FieldError")
                                 .required(List.of("field", "message"))
@@ -176,7 +223,14 @@ public class OpenApiConfig {
                                 .addProperty("message", new StringSchema())));
     }
 
-    // Una sola fonte: le costanti di ProblemTypes, in ordine alfabetico (la reflection non garantisce l'ordine)
+    /**
+     * Ricava l'elenco degli slug dalle costanti di {@link ProblemTypes}, che restano l'unica fonte.
+     * L'elenco è ordinato alfabeticamente perché la reflection non garantisce l'ordine dei campi, e il
+     * documento generato deve essere sempre identico.
+     *
+     * @return gli slug in ordine alfabetico
+     * @throws IllegalStateException se una costante non è leggibile via reflection
+     */
     private static List<String> problemSlugs() {
         return Arrays.stream(ProblemTypes.class.getFields())
                 .filter(f -> Modifier.isStatic(f.getModifiers()) && f.getType() == URI.class)
@@ -192,7 +246,13 @@ public class OpenApiConfig {
                 .toList();
     }
 
-    // Gli schemi della paginazione (PagedModel di Spring Data) non sono record nostri: content e page ci sono sempre
+    /**
+     * Marca come obbligatori tutti i campi degli schemi della paginazione ({@code PagedModel} di Spring
+     * Data e {@code PageMetadata}). Non sono record del progetto, quindi non si possono annotare con
+     * {@code @Schema}, ma {@code content} e {@code page} sono sempre presenti.
+     *
+     * @param schemas schemi del documento, può essere {@code null}
+     */
     private static void requirePageFields(Map<String, Schema> schemas) {
         if (schemas == null) {
             return;

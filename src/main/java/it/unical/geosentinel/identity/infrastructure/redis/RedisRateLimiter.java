@@ -1,3 +1,7 @@
+/*
+ * Motore di rate limit condiviso da tutti i limitatori del backend. Implementa un token bucket con uno script
+ * Lua eseguito in modo atomico su Redis, così il limite vale anche con più istanze del backend.
+ */
 package it.unical.geosentinel.identity.infrastructure.redis;
 
 import org.slf4j.Logger;
@@ -12,10 +16,15 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * Token bucket su Redis. Lo script {@code scripts/token_bucket.lua} legge il bucket, lo ricarica in base al
+ * tempo trascorso, consuma i gettoni richiesti e restituisce l'esito, tutto in un'unica operazione atomica.
+ * Lo usano {@code RateLimitFilter} e i limitatori per account.
+ */
 @Component
 public class RedisRateLimiter {
     private static final Logger log = LoggerFactory.getLogger(RedisRateLimiter.class);
-    // Retry-After suggerito quando Redis non risponde e la policy è fail-closed
+    /** Retry-After suggerito quando Redis non risponde e la politica è fail-closed. */
     private static final long UNAVAILABLE_RETRY_AFTER_MILLIS = 1000;
 
     private final StringRedisTemplate redisTemplate;
@@ -28,14 +37,31 @@ public class RedisRateLimiter {
         this.tokenBucketScript.setResultType(List.class);
     }
 
+    /**
+     * Consuma un gettone.
+     *
+     * @param key chiave Redis del bucket
+     * @param policy politica da applicare
+     * @return la decisione
+     */
     public RateLimitDecision tryConsume(String key, RateLimitPolicy policy) { return tryConsume(key, policy, 1); }
 
-    // L'orario lo legge lo script da Redis (TIME): tutte le istanze usano lo stesso orologio
+    /**
+     * Consuma uno o più gettoni. L'orario lo legge lo script da Redis (comando TIME), così tutte le istanze del
+     * backend usano lo stesso orologio. Se Redis non risponde o lo script restituisce un risultato inatteso, la
+     * decisione dipende da {@link RateLimitPolicy#failClosed()}.
+     *
+     * @param key chiave Redis del bucket
+     * @param policy politica da applicare
+     * @param requestedTokens gettoni da consumare
+     * @return la decisione
+     * @throws IllegalArgumentException se {@code requestedTokens} non è tra 1 e la capacità
+     */
     @SuppressWarnings("unchecked")
     public RateLimitDecision tryConsume(String key, RateLimitPolicy policy, int requestedTokens) {
         Objects.requireNonNull(key, "Rate limit key cannot be null");
         Objects.requireNonNull(policy, "Rate limit policy cannot be null");
-        // oltre la capacità il bucket non si riempirebbe mai: Retry-After infinito
+        // Oltre la capacità il bucket non avrebbe mai abbastanza gettoni: il Retry-After sarebbe infinito
         if (requestedTokens < 1 || requestedTokens > policy.capacity()) {
             throw new IllegalArgumentException("requestedTokens must be between 1 and capacity");
         }
@@ -54,6 +80,7 @@ public class RedisRateLimiter {
                 return unavailable(policy);
             }
 
+            // Lo script restituisce [consentito (1 o 0), gettoni rimasti, attesa in millisecondi]
             boolean allowed = result.get(0) == 1L;
             long remaining = result.get(1);
             long retryAfterMillis = result.get(2);
@@ -66,8 +93,13 @@ public class RedisRateLimiter {
         }
     }
 
-    // Cancella il bucket: alla prossima richiesta lo script lo ricrea pieno. Best effort: con Redis giù il bucket
-    // si svuota comunque da solo al ritmo della policy
+    /**
+     * Cancella il bucket: alla richiesta successiva lo script lo ricrea pieno. È best effort: se Redis non
+     * risponde l'errore si registra e basta, perché il bucket si ricarica comunque da solo al ritmo della
+     * politica.
+     *
+     * @param key chiave Redis del bucket
+     */
     public void reset(String key) {
         Objects.requireNonNull(key, "Rate limit key cannot be null");
         try {
@@ -77,8 +109,14 @@ public class RedisRateLimiter {
         }
     }
 
-    // Redis non disponibile: fail-open di default (niente denial of service per un guasto del limiter),
-    // fail-closed per le policy che proteggono dal brute force
+    /**
+     * Decisione da prendere quando Redis non è disponibile: di norma si lascia passare (fail-open), perché un
+     * guasto del limitatore non deve bloccare tutto il servizio; le politiche che proteggono dal brute force
+     * invece rifiutano (fail-closed).
+     *
+     * @param policy politica in uso
+     * @return la decisione di ripiego
+     */
     private static RateLimitDecision unavailable(RateLimitPolicy policy) {
         return policy.failClosed()
                 ? RateLimitDecision.rejected(UNAVAILABLE_RETRY_AFTER_MILLIS)

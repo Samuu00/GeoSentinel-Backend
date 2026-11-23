@@ -1,3 +1,8 @@
+// Test di integrazione delle notifiche push (Firebase Cloud Messaging) legate agli SOS, con chiamate HTTP
+// vere e PostGIS e Redis in Testcontainers. Il PushNotifier reale è sostituito da uno finto che registra i
+// messaggi inviati e può simulare errori. Si controllano: registrazione dei dispositivi, destinatari scelti in
+// base al ruolo, messaggi senza dati personali, recupero dopo un invio fallito, cancellazione dei token
+// rifiutati da FCM e dei dispositivi di un account cancellato.
 package it.unical.geosentinel.notification;
 
 import it.unical.geosentinel.emergency.infrastructure.notification.SosNotificationRecovery;
@@ -27,40 +32,53 @@ import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// Push FCM con un PushNotifier finto: destinatari per ruolo, payload senza dati personali,
-// recupero dopo un invio fallito, pulizia dei token rifiutati e dei dispositivi di un account cancellato
+/**
+ * Verifica l'intero percorso delle notifiche push degli SOS, dalla registrazione del dispositivo all'invio.
+ */
 @Import(SosPushIT.FakePushConfig.class)
 class SosPushIT extends AbstractIntegrationTest {
 
+    /** Notificatore finto, che sostituisce quello reale verso FCM. */
     @Autowired
     private FakePushNotifier push;
 
+    /** Job di recupero delle notifiche perse, chiamato a mano perché nei test i job pianificati sono spenti. */
     @Autowired
     private SosNotificationRecovery recovery;
 
+    /** Svuota i messaggi registrati e azzera gli errori simulati prima di ogni test. */
     @BeforeEach
     void resetPush() {
         push.reset();
     }
 
+    /**
+     * Lo stesso token del telefono registrato prima da un utente e poi da un altro passa al secondo (con la
+     * piattaforma aggiornata) invece di dare 409. Il primo utente non può più toglierlo: la sua richiesta dà
+     * comunque 204 ma non ha effetto. Il secondo utente invece può toglierlo.
+     */
     @Test
     void deviceTokenIsRegisteredMovedBetweenUsersAndUnregisteredOnlyByItsOwner() {
         String first = obtainToken(Role.HIKER);
         String second = obtainToken(Role.HIKER);
 
         assertThat(registerDevice(first, "shared-phone-token", "ANDROID").status()).isEqualTo(204);
-        // stesso telefono, altro account: il token passa al secondo utente (upsert, niente 409)
+        // Stesso telefono, altro account: il token viene spostato al secondo utente.
         assertThat(registerDevice(second, "shared-phone-token", "IOS").status()).isEqualTo(204);
         assertThat(deviceCount()).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject("SELECT platform FROM device_tokens", String.class)).isEqualTo("IOS");
 
-        // il primo utente non può più toglierlo (204 idempotente, nessun effetto)
+        // La rimozione è idempotente: 204 anche quando il token non appartiene a chi chiede, senza effetti.
         assertThat(call(HttpMethod.DELETE, "/api/v1/devices/shared-phone-token", first, null).status()).isEqualTo(204);
         assertThat(deviceCount()).isEqualTo(1);
         assertThat(call(HttpMethod.DELETE, "/api/v1/devices/shared-phone-token", second, null).status()).isEqualTo(204);
         assertThat(deviceCount()).isZero();
     }
 
+    /**
+     * Piattaforma sconosciuta, token mancante o più lungo di 1024 caratteri devono dare 400; una
+     * registrazione senza autenticazione deve dare 401.
+     */
     @Test
     void invalidDeviceRegistrationIsRejected() {
         String token = obtainToken(Role.HIKER);
@@ -70,6 +88,11 @@ class SosPushIT extends AbstractIntegrationTest {
         assertThat(registerDevice(null, "some-token", "ANDROID").status()).isEqualTo(401);
     }
 
+    /**
+     * Un nuovo SOS deve essere notificato con un solo invio ai soli operatori di soccorso attivi: non a quelli
+     * disattivati né agli escursionisti. Il messaggio contiene solo tipo e id dell'allerta; titolo e testo non
+     * devono riportare note mediche né coordinate.
+     */
     @Test
     void raisedSosIsPushedOnlyToActiveOperatorsWithoutPersonalData() throws InterruptedException {
         registerDevice(tokenFor(createUser(Role.RESCUE_OPERATOR)), "operator-phone", "ANDROID");
@@ -92,8 +115,11 @@ class SosPushIT extends AbstractIntegrationTest {
         assertThat(sent.message().title() + sent.message().body()).doesNotContain("diabetic", "39.3", "16.5");
     }
 
-    // Audit 2026-10, pista 3: raise -> cancel ripetuti creano sempre l'allerta, ma al massimo 3 push in 15 minuti.
-    // Le allerte senza push risultano notificate, così SosNotificationRecovery non le rilancia
+    /**
+     * Cinque cicli di SOS lanciato e subito annullato creano sempre l'allerta, ma gli operatori ricevono al
+     * massimo 3 push ogni 15 minuti, così un utente non può tempestarli di notifiche. Le allerte non notificate
+     * per questo limite risultano comunque segnate come notificate, perché il job di recupero non le rilanci.
+     */
     @Test
     void raiseCancelCyclesPushOperatorsAtMostThreeTimes() throws InterruptedException {
         registerDevice(tokenFor(createUser(Role.RESCUE_OPERATOR)), "operator-phone", "ANDROID");
@@ -114,6 +140,10 @@ class SosPushIT extends AbstractIntegrationTest {
         assertThat(pushedTypes("operator-phone")).hasSize(3);
     }
 
+    /**
+     * Se l'invio fallisce, l'allerta resta non notificata; al giro successivo del job di recupero, con FCM di
+     * nuovo disponibile, viene notificata con un solo invio.
+     */
     @Test
     void failedPushLeavesAlertUnnotifiedAndRecoveryDeliversItLater() {
         registerDevice(tokenFor(createUser(Role.RESCUE_OPERATOR)), "operator-phone", "ANDROID");
@@ -129,6 +159,10 @@ class SosPushIT extends AbstractIntegrationTest {
         assertThat(push.sent).hasSize(1);
     }
 
+    /**
+     * I token che FCM dichiara non più validi (per esempio app disinstallata) devono essere cancellati, mentre
+     * l'allerta risulta notificata perché almeno un dispositivo l'ha ricevuta.
+     */
     @Test
     void tokensRejectedByFcmAreDeleted() {
         registerDevice(tokenFor(createUser(Role.RESCUE_OPERATOR)), "operator-phone", "ANDROID");
@@ -143,6 +177,11 @@ class SosPushIT extends AbstractIntegrationTest {
                 .containsExactly("operator-phone");
     }
 
+    /**
+     * Se nessun dispositivo ha ricevuto l'allerta, questa resta da notificare e il token rifiutato viene
+     * cancellato. Al giro successivo non c'è più nessun dispositivo a cui inviarla: l'allerta viene segnata
+     * come notificata, per non riprovare all'infinito (gli operatori la vedono comunque nella loro lista).
+     */
     @Test
     void alertIsRetriedWhenNoDeviceReceivedItButNotForeverWhenNoDeviceIsLeft() {
         registerDevice(tokenFor(createUser(Role.RESCUE_OPERATOR)), "uninstalled-app", "IOS");
@@ -150,15 +189,17 @@ class SosPushIT extends AbstractIntegrationTest {
         UUID alertId = insertUnnotifiedAlert();
 
         recovery.redeliverMissed();
-        // nessun dispositivo raggiunto: si riprova; il token rifiutato è già cancellato
         assertThat(notifiedAt(alertId)).isNull();
         assertThat(deviceCount()).isZero();
 
-        // al giro dopo non c'è più nessun dispositivo: l'allerta resta nella lista degli operatori, niente loop
         recovery.redeliverMissed();
         assertThat(notifiedAt(alertId)).isNotNull();
     }
 
+    /**
+     * L'escursionista che ha lanciato l'SOS deve ricevere una push quando gli viene inviata una squadra e una
+     * quando l'allerta è risolta. Ogni messaggio contiene solo il tipo e l'id dell'allerta.
+     */
     @Test
     void hikerIsPushedWhenTeamIsDispatchedAndWhenAlertIsResolved() throws InterruptedException {
         String hiker = obtainToken(Role.HIKER);
@@ -180,6 +221,7 @@ class SosPushIT extends AbstractIntegrationTest {
                 .allSatisfy(s -> assertThat(s.message().data()).containsEntry("alertId", alertId).hasSize(2));
     }
 
+    /** La cancellazione dell'account elimina anche i dispositivi registrati dall'utente. */
     @Test
     void deletedAccountLosesItsDevices() {
         String hiker = obtainToken(Role.HIKER);
@@ -189,12 +231,24 @@ class SosPushIT extends AbstractIntegrationTest {
         assertThat(deviceCount()).isZero();
     }
 
+    /**
+     * Registra un dispositivo per le notifiche push.
+     *
+     * @param accessToken l'access token dell'utente, oppure {@code null} per una chiamata anonima
+     * @param deviceToken il token FCM del dispositivo
+     * @param platform    la piattaforma, ad esempio {@code ANDROID} o {@code IOS}
+     * @return la risposta del server
+     */
     private HttpResult registerDevice(String accessToken, String deviceToken, String platform) {
         return call(HttpMethod.POST, "/api/v1/devices", accessToken,
                 "{\"token\":\"%s\",\"platform\":\"%s\"}".formatted(deviceToken, platform));
     }
 
-    // allerta di 2 minuti fa mai notificata: la trova SosNotificationRecovery
+    /**
+     * Inserisce un'allerta attiva creata due minuti fa e mai notificata, che il job di recupero considera persa.
+     *
+     * @return l'id dell'allerta
+     */
     private UUID insertUnnotifiedAlert() {
         return jdbcTemplate.queryForObject("""
                 INSERT INTO sos_alerts (id, hiker_id, location, location_updated_at, status, created_at)
@@ -204,14 +258,31 @@ class SosPushIT extends AbstractIntegrationTest {
                 """, UUID.class, createUser(Role.HIKER).getId());
     }
 
+    /**
+     * Legge l'istante di notifica di un'allerta.
+     *
+     * @param alertId l'id dell'allerta
+     * @return il valore di {@code notified_at}, oppure {@code null} se non è ancora stata notificata
+     */
     private Timestamp notifiedAt(UUID alertId) {
         return jdbcTemplate.queryForObject("SELECT notified_at FROM sos_alerts WHERE id = ?", Timestamp.class, alertId);
     }
 
+    /**
+     * Conta i dispositivi registrati.
+     *
+     * @return il numero di righe in {@code device_tokens}
+     */
     private int deviceCount() {
         return jdbcTemplate.queryForObject("SELECT count(*) FROM device_tokens", Integer.class);
     }
 
+    /**
+     * Elenca i tipi dei messaggi inviati a un dispositivo.
+     *
+     * @param deviceToken il token del dispositivo
+     * @return i valori del campo {@code type}, nell'ordine di invio
+     */
     private List<String> pushedTypes(String deviceToken) {
         return push.sent.stream()
                 .filter(s -> s.tokens().contains(deviceToken))
@@ -219,7 +290,13 @@ class SosPushIT extends AbstractIntegrationTest {
                 .toList();
     }
 
-    // i listener girano su sos-notify-*: si aspetta al più 10 s
+    /**
+     * Aspetta che una condizione diventi vera, controllandola ogni 100 ms per al massimo 10 secondi. Serve
+     * perché i listener delle notifiche girano su thread separati (pool sos-notify).
+     *
+     * @param condition la condizione da attendere
+     * @throws InterruptedException se il thread viene interrotto durante l'attesa
+     */
     private static void awaitTrue(BooleanSupplier condition) throws InterruptedException {
         for (int i = 0; i < 100 && !condition.getAsBoolean(); i++) {
             Thread.sleep(100);
@@ -227,8 +304,18 @@ class SosPushIT extends AbstractIntegrationTest {
         assertThat(condition.getAsBoolean()).isTrue();
     }
 
+    /**
+     * Configurazione di test che registra {@link FakePushNotifier} come bean principale, al posto del
+     * notificatore reale.
+     */
     @TestConfiguration
     static class FakePushConfig {
+
+        /**
+         * Crea il notificatore finto.
+         *
+         * @return una nuova istanza, condivisa da tutti i test della classe
+         */
         @Bean
         @Primary
         FakePushNotifier fakePushNotifier() {
@@ -236,19 +323,42 @@ class SosPushIT extends AbstractIntegrationTest {
         }
     }
 
+    /**
+     * Implementazione finta di {@link PushNotifier}: registra ogni invio, può fallire a comando e può
+     * dichiarare non validi alcuni token, come farebbe FCM. Le collezioni sono thread-safe perché gli invii
+     * arrivano dai thread dei listener asincroni.
+     */
     static class FakePushNotifier implements PushNotifier {
+
+        /**
+         * Un invio registrato.
+         *
+         * @param tokens  i token dei dispositivi destinatari
+         * @param message il messaggio inviato
+         */
         record Sent(List<String> tokens, PushMessage message) {}
 
+        /** Invii effettuati, nell'ordine in cui sono avvenuti. */
         final List<Sent> sent = new CopyOnWriteArrayList<>();
+
+        /** Token che il finto FCM rifiuta come non più validi. */
         final Set<String> invalidTokens = ConcurrentHashMap.newKeySet();
+
+        /** Se {@code true}, ogni invio lancia un'eccezione, come se FCM non fosse raggiungibile. */
         volatile boolean failing;
 
+        /** Riporta il notificatore allo stato iniziale. */
         void reset() {
             sent.clear();
             invalidTokens.clear();
             failing = false;
         }
 
+        /**
+         * Registra l'invio e restituisce quanti dispositivi lo hanno ricevuto e quali token sono stati rifiutati.
+         *
+         * @throws IllegalStateException se {@link #failing} è attivo
+         */
         @Override
         public Result send(Collection<String> tokens, PushMessage message) {
             if (failing) {

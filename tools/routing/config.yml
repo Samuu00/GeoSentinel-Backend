@@ -1,23 +1,36 @@
-# GraphHopper 10 per il percorso A→B (ADR-0028). Un solo profilo a piedi, senza CH né LM: il backend manda a ogni
-# richiesta un custom model con le aree dei sentieri CLOSED, che con CH non si potrebbe. La Calabria è piccola:
-# Dijkstra/A* senza preparazione risponde in decine di millisecondi.
+# Configurazione di GraphHopper 10, il motore che calcola i percorsi a piedi da un punto a un altro.
+# C'è un solo profilo a piedi e nessuna preparazione CH o LM: a ogni richiesta il backend invia un custom
+# model con le aree dei sentieri chiusi da evitare, cosa che con CH non si può fare. La Calabria è piccola,
+# quindi Dijkstra e A* senza preparazione rispondono comunque in decine di millisecondi.
+
+# Parametri del motore.
 graphhopper:
+  # Il file OSM arriva dalla riga di comando del container (--input), non da qui.
   datareader.file: ""
+  # Cartella del grafo costruito, dentro il volume del container.
   graph.location: /graph/calabria-gh
+  # Profilo "hike" basato sul modello predefinito di GraphHopper per l'escursionismo.
   profiles:
     - name: hike
       custom_model_files: [hike.json]
   profiles_ch: []
   profiles_lm: []
-  # Senza quote (niente download SRTM): niente average_slope né foot_elevation.json
+  # Attributi salvati nel grafo. Non si usano le quote (nessun download dei dati SRTM), quindi mancano
+  # average_slope e il modello foot_elevation.json.
   graph.encoded_values: foot_access, hike_rating, foot_priority, foot_network, foot_average_speed
+  # Le isole di strade con meno di 200 nodi vengono scartate, perché non porterebbero da nessuna parte.
   prepare.min_network_size: 200
   prepare.subnetworks.threads: 1
+  # Partenza e arrivo non vengono agganciati a gallerie, ponti o traghetti.
   routing.snap_preventions_default: tunnel, bridge, ferry
+  # Distanza massima in metri fra due punti del percorso, alta per non porre limiti dentro la regione.
   routing.non_ch.max_waypoint_distance: 1000000
-  # A piedi si tolgono solo le autostrade (il pedone non può entrarci); sentieri, strade e mulattiere restano
+  # A piedi si escludono solo le autostrade, dove i pedoni non possono entrare; sentieri, strade e
+  # mulattiere restano.
   import.osm.ignored_highways: motorway,motorway_link
+  # Il grafo è tenuto interamente in memoria.
   graph.dataaccess.default_type: RAM_STORE
+# Server HTTP: l'API sulla porta 8989 e la porta di amministrazione 8990, senza log delle richieste.
 server:
   application_connectors:
     - type: http
@@ -29,6 +42,7 @@ server:
     - type: http
       port: 8990
       bind_host: 0.0.0.0
+# Log sulla console con l'ora in UTC.
 logging:
   appenders:
     - type: console

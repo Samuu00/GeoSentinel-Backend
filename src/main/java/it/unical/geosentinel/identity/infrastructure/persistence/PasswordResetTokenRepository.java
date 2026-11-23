@@ -1,3 +1,6 @@
+/*
+ * Repository Spring Data JPA dei codici di reset della password.
+ */
 package it.unical.geosentinel.identity.infrastructure.persistence;
 
 import it.unical.geosentinel.identity.domain.PasswordResetToken;
@@ -10,22 +13,48 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Accesso alla tabella {@code password_reset_tokens}. I metodi {@code @Modifying} vanno chiamati dentro una
+ * transazione.
+ */
 public interface PasswordResetTokenRepository extends JpaRepository<PasswordResetToken, UUID> {
-    // L'ultimo codice ancora aperto: quello vale, i precedenti sono stati consumati alla richiesta
+    /**
+     * Restituisce l'ultimo codice non consumato dell'utente: è l'unico che vale, perché all'emissione di un
+     * codice nuovo i precedenti vengono consumati.
+     *
+     * @param userId utente
+     * @return il codice aperto più recente, se c'è
+     */
     Optional<PasswordResetToken> findFirstByUserIdAndConsumedAtIsNullOrderByCreatedAtDesc(UUID userId);
 
-    // Alla richiesta di un nuovo codice: tutti gli aperti dell'utente si consumano in un solo UPDATE.
-    // Chiamarlo in una @Transactional: @Modifying lo richiede
+    /**
+     * Consuma con un solo UPDATE tutti i codici aperti dell'utente (all'emissione di un codice nuovo e dopo un
+     * reset riuscito).
+     *
+     * @param userId utente
+     * @param now istante di consumo
+     * @return il numero di codici consumati
+     */
     @Modifying
     @Query("UPDATE PasswordResetToken p SET p.consumedAt = :now WHERE p.user.id = :userId AND p.consumedAt IS NULL")
     int consumeAllOpenOf(@Param("userId") UUID userId, @Param("now") Instant now);
 
-    // Pulizia notturna: via i codici scaduti prima di cutoff (il job passa now - 1 giorno)
+    /**
+     * Cancella i codici scaduti prima di {@code cutoff}; il job notturno passa l'istante attuale meno un giorno.
+     *
+     * @param cutoff limite di scadenza
+     * @return il numero di righe cancellate
+     */
     @Modifying
     @Query("DELETE FROM PasswordResetToken p WHERE p.expiresAt < :cutoff")
     int deleteExpiredBefore(@Param("cutoff") Instant cutoff);
 
-    // Cancellazione dell'account (UserAccountService.deleteAccount)
+    /**
+     * Cancella tutti i codici dell'utente, durante la cancellazione dell'account.
+     *
+     * @param userId utente
+     * @return il numero di righe cancellate
+     */
     @Modifying
     @Query("DELETE FROM PasswordResetToken p WHERE p.user.id = :userId")
     int deleteAllOf(@Param("userId") UUID userId);

@@ -1,3 +1,6 @@
+// Test unitario dell'entità MaintenanceTicket (ticket di manutenzione di un sentiero) e della sua
+// rappresentazione in cache. Controlla le transizioni di stato ammesse e che la lista dei ticket sopravviva
+// alla serializzazione JSON usata per Redis. Non usa Spring né database.
 package it.unical.geosentinel.maintenance;
 
 import it.unical.geosentinel.maintenance.application.dto.MaintenanceTicketCommands.TicketView;
@@ -18,12 +21,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+/**
+ * Verifica il ciclo di vita di {@link MaintenanceTicket} e la serializzazione in cache di {@link TicketView}.
+ */
 class MaintenanceTicketTest {
 
+    /**
+     * Crea un ticket aperto ad alta priorità su un sentiero finto.
+     *
+     * @return un ticket nello stato iniziale
+     */
     private MaintenanceTicket newTicket() {
         return MaintenanceTicket.forTrail("Frana", null, TicketPriority.HIGH, mock(Trail.class));
     }
 
+    /**
+     * Assegnare un ticket aperto lo porta in {@code ASSIGNED}; riassegnare un ticket già in lavorazione deve
+     * cambiare solo l'assegnatario, lasciando lo stato {@code IN_PROGRESS}.
+     */
     @Test
     void reassigningInProgressTicketKeepsStatus() {
         MaintenanceTicket ticket = newTicket();
@@ -35,6 +50,11 @@ class MaintenanceTicketTest {
         assertThat(ticket.getStatus()).isEqualTo(TicketStatus.IN_PROGRESS);
     }
 
+    /**
+     * Un ticket appena aperto non si può risolvere senza essere passato dalla lavorazione; una volta risolto
+     * registra l'istante di risoluzione e non si può più annullare. Le transizioni vietate lanciano una
+     * {@link BusinessRuleViolationException}.
+     */
     @Test
     void openTicketCannotBeResolvedAndResolvedCannotBeCancelled() {
         MaintenanceTicket ticket = newTicket();
@@ -46,7 +66,11 @@ class MaintenanceTicketTest {
         assertThatThrownBy(ticket::cancel).isInstanceOf(BusinessRuleViolationException.class);
     }
 
-    // Stesso serializer di MaintenanceCacheConfig: la lista generica deve tornare una lista di TicketView
+    /**
+     * Usa lo stesso tipo di serializer configurato in {@code MaintenanceCacheConfig} per una lista generica.
+     * Il risultato atteso è che la lista riletta contenga di nuovo oggetti {@link TicketView} uguali agli
+     * originali, e non mappe generiche.
+     */
     @Test
     void ticketListRoundTripsThroughTypedCacheSerializer() {
         JsonMapper mapper = JsonMapper.builder().build();

@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+    File di build Maven del backend GeoSentinel.
+    Eredita versioni e plugin da Spring Boot, elenca le librerie usate (web, sicurezza, JPA con PostGIS,
+    Redis, Flyway, MinIO, Firebase, documentazione OpenAPI) e configura MapStruct, che genera in
+    compilazione i convertitori tra DTO e oggetti dei servizi.
+-->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
@@ -6,7 +12,8 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>4.1.1</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <!-- Il progetto padre si scarica dal repository Maven, non da una cartella vicina. -->
+        <relativePath/>
     </parent>
     <groupId>it.unical</groupId>
     <artifactId>GeoSentinel-Backend</artifactId>
@@ -26,6 +33,7 @@
         <tag/>
         <url/>
     </scm>
+    <!-- Versione di Java e versioni delle librerie che non sono gestite dal padre di Spring Boot. -->
     <properties>
         <java.version>21</java.version>
         <mapstruct.version>1.6.3</mapstruct.version>
@@ -69,9 +77,10 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
-        <!-- traceId/spanId nell'MDC per ogni richiesta (letti da GlobalExceptionHandler per i ProblemDetail).
-             In Boot 4 servono entrambi: il modulo di Boot (autoconfigurazione) e il bridge, che nel modulo è opzionale.
-             Niente exporter OTLP: le tracce non escono dall'app -->
+        <!-- Tracciamento delle richieste: ogni richiesta riceve traceId e spanId nell'MDC dei log, e
+             GlobalExceptionHandler li inserisce nelle risposte di errore. Servono entrambe le dipendenze:
+             il modulo di Spring Boot con l'autoconfigurazione e il bridge verso OpenTelemetry, che nel
+             modulo è facoltativo. Non c'è un exporter OTLP, quindi le tracce non escono dall'applicazione. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
@@ -91,19 +100,22 @@
             <version>${mapstruct.version}</version>
         </dependency>
 
+        <!-- Client di MinIO, l'object storage in cui si salvano le foto. -->
         <dependency>
             <groupId>io.minio</groupId>
             <artifactId>minio</artifactId>
             <version>9.0.3</version>
         </dependency>
 
+        <!-- Client HTTP usato dal client di MinIO, dichiarato con una versione esplicita. -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp-jvm</artifactId>
             <version>5.3.2</version>
         </dependency>
 
-        <!-- Push FCM (M7.4), Android e iOS. Serve solo FirebaseMessaging: Firestore e Cloud Storage (gRPC) esclusi -->
+        <!-- SDK Firebase Admin per le notifiche push su Android e iOS. Serve solo FirebaseMessaging, quindi si
+             escludono Firestore e Cloud Storage, che porterebbero con sé molte dipendenze (fra cui gRPC). -->
         <dependency>
             <groupId>com.google.firebase</groupId>
             <artifactId>firebase-admin</artifactId>
@@ -119,8 +131,9 @@
                 </exclusion>
             </exclusions>
         </dependency>
-        <!-- FirebaseOptions usa JacksonFactory di default, che arrivava solo tramite gli artefatti esclusi sopra:
-             senza, compila ma l'avvio con le push accese va in NoClassDefFoundError. Stessa versione di google-http-client -->
+        <!-- FirebaseOptions usa di default JacksonFactory, che arrivava solo attraverso gli artefatti esclusi
+             sopra: senza questa dipendenza il progetto compila, ma l'avvio con le push accese fallisce con
+             NoClassDefFoundError. La versione è la stessa di google-http-client. -->
         <dependency>
             <groupId>com.google.http-client</groupId>
             <artifactId>google-http-client-jackson2</artifactId>
@@ -150,6 +163,7 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
+        <!-- Dipendenze dei soli test: Testcontainers avvia PostgreSQL con PostGIS in un container. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-cache-test</artifactId>
@@ -205,6 +219,8 @@
                             <version>${mapstruct.version}</version>
                         </path>
                     </annotationProcessorPaths>
+                    <!-- I mapper generati da MapStruct diventano bean Spring, e un campo di destinazione
+                         non mappato è un errore di compilazione invece di un valore lasciato null. -->
                     <compilerArgs>
                         <arg>-Amapstruct.defaultComponentModel=spring</arg>
                         <arg>-Amapstruct.unmappedTargetPolicy=ERROR</arg>
@@ -213,6 +229,7 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <!-- Esegue i test di integrazione (classi *IT) nella fase verify. -->
                 <artifactId>maven-failsafe-plugin</artifactId>
             </plugin>
             <plugin>

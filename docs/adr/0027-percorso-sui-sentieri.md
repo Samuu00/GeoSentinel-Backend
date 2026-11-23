@@ -25,7 +25,7 @@ di tolleranza ci sono 58 gruppi di sentieri collegati (il più grande ne ha 214)
 
 ## Alternative scartate
 
-- **pgRouting:** nuova immagine del database (compose, produzione, Testcontainers), una migrazione e la topologia da
+- **pgRouting:** nuova immagine del database (compose e Testcontainers), una migrazione e la topologia da
   ricostruire a ogni cambio. Per 67k vertici il grafo in memoria basta, si testa senza Docker e non tocca lo schema.
 - **Servizio esterno** (OpenRouteService, GraphHopper): la posizione dell'utente uscirebbe dal backend, serve una chiave
   e il percorso userebbe sentieri che il parco non gestisce né chiude.
