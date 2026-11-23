@@ -88,7 +88,7 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
   - estendono `AbstractIntegrationTest`, senza `@Transactional`; fixture con `insertTrail/insertRefuge/insertTeam`, utenti con `createUser/obtainToken(Role)`;
   - i job `@Scheduled` sono spenti (`geosentinel.scheduling.enabled=false`): un test che li riguarda chiama il metodo del job direttamente;
   - concorrenza con `runConcurrently(n, task)` + `@RepeatedTest(5)` e richieste HTTP reali (`call(...)`), non MockMvc;
-  - rate limit (M7.3, `geosentinel.rate-limit.*`): 30 req/min per IP su login/register/logout, 120 su refresh, 60 sul resto; in più 10 login sbagliati ogni 15 min **per account**. Tutto azzerato da `FLUSHALL` prima di ogni test. Per provare il 429 del filtro: `exhaustAuthRateLimit()` (si ferma a bucket vuoto, mai un conteggio fisso: il bucket si ricarica durante il ciclo);
+  - rate limit (M7.3, `geosentinel.rate-limit.*`): 30 req/min per IP su login/register/logout, 120 su refresh, 60 sul resto e 60 per IP sulle richieste con un token rifiutato (contate in `ProblemAuthenticationEntryPoint`); IP da `ClientIp` (IPv6 per rete /64); in più 10 tentativi di login ogni 15 min **per account e IP** e 100 all'ora per account, azzerati da un login riuscito. Tutto azzerato da `FLUSHALL` prima di ogni test. Per provare il 429 del filtro: `exhaustAuthRateLimit()` (si ferma a bucket vuoto, mai un conteggio fisso: il bucket si ricarica durante il ciclo);
   - `Content-Type` degli errori: confrontare tipo e sottotipo (`isProblemJson`), dai filtri arriva `;charset=UTF-8`.
   - password e token di prova mai letterali nel JSON dei test (`"password":"valore"`): gitleaks in CI li prende per segreti (`generic-api-key`). Passarli con `%s` da una costante (`TEST_PASSWORD`). Un falso positivo già pubblicato va in `.gitleaksignore` (fingerprint), senza riscrivere la storia.
 
@@ -211,7 +211,7 @@ Ogni feature ha `domain/`, `application/`, `infrastructure/`, `web/`.
 - Test: `BookingControllerTest` (MockMvc standalone + `GlobalExceptionHandler`: 428/400 sull'header), `RefugeBookingServiceTest` esteso (retry → `created = false`, capacità solo gestore/admin). Verdi.
 - Master plan aggiornato: tabella endpoint (rotte reali di refuge), M4.2, M2.2 (`CurrentUser.isAdmin`), M5.1 (428), V4.
 
-**Limite per account sul login (26/09, scritto da Claude su richiesta):** porta `LoginAttemptLimiter` + `RedisLoginAttemptLimiter` (`rl:login:{sha256(email)}`, 10 / 15 min, fail-closed), controllo come prima istruzione di `AuthService.login`, `RateLimitExceededException` → 429 + `Retry-After`. Test: `AuthServiceLoginLimitTest`.
+**Limite per account sul login (26/09, scritto da Claude su richiesta):** porta `LoginAttemptLimiter` + `RedisLoginAttemptLimiter` (`rl:login:{sha256(email)}:{ip}` 10 / 15 min e `rl:login:{sha256(email)}` 100 / ora, fail-closed), controllo come prima istruzione di `AuthService.login`, azzerato dopo login, login Google e cambio password riusciti (solo dopo il secondo fattore), `RateLimitExceededException` → 429 + `Retry-After`. Test: `AuthServiceLoginLimitTest`, `RedisLoginAttemptLimiterTest`, `RateLimitIT`.
 
 **Pulizia refresh token (26/09, scritta da Claude su richiesta):** `RefreshTokenRepository.deleteExpired` cancella per `family_expires_at` (non `expires_at`: si perderebbe la reuse detection dei token vecchi di una sessione ancora viva); `RefreshTokenCleanupJob` ogni notte alle 03:30 UTC; `@EnableScheduling` in `shared/config/SchedulingConfig`. In V2: indice su `refresh_tokens(family_expires_at)`.
 

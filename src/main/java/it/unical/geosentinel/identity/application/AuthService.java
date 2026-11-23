@@ -193,6 +193,8 @@ public class AuthService {
         // Il cambio apre una sessione nuova, quindi chiede il secondo fattore come il login. Altrimenti un access
         // token rubato più la password diventerebbero una sessione lunga che chiude fuori il titolare
         mfaService.verifyStepUp(userId, mfaCode);
+        // Password e secondo fattore giusti: il titolare non deve consumare i tentativi riservati agli errori
+        loginAttemptLimiter.reset(sha256Hex(user.getEmail()));
 
         Instant now = clock.instant();
         user.updatePassword(passwordEncoder.encode(newPassword));
@@ -209,9 +211,10 @@ public class AuthService {
      * Il limite per account (chiave = hash dell'email, mai l'email in chiaro su Redis) ferma il credential
      * stuffing, cioè molti IP che provano la stessa email, che il limite per IP non vede. Si controlla per
      * primo: il comportamento è identico per account esistenti e non (niente enumerazione) e non si paga il
-     * costo di BCrypt. Limite noto: un attaccante può rallentare il login di una vittima tempestandone l'email;
-     * il token bucket lo attenua perché ricarica un tentativo a intervalli regolari invece di bloccare.
-     * Con {@code noRollbackFor} un codice MFA sbagliato lascia committati il contatore e l'evento d'avviso.
+     * costo di BCrypt. Il tentativo si consuma prima di sapere se la password è giusta; dopo un login riuscito
+     * (password e secondo fattore) il limite si azzera, così chi entra spesso non viene bloccato. Il limite è a due
+     * livelli (account e IP, più uno largo per account, vedi {@code RedisLoginAttemptLimiter}): chi sbaglia da un
+     * solo IP blocca soltanto se stesso. Con {@code noRollbackFor} un codice MFA sbagliato lascia committati il contatore e l'evento d'avviso.
      *
      * @param email email inserita
      * @param rawPassword password inserita
@@ -236,6 +239,8 @@ public class AuthService {
         }
         // Il secondo fattore si chiede solo dopo la password: la risposta mfa-required la vede solo chi la conosce
         mfaService.verifyLogin(user.get(), mfaCode);
+        // Solo qui, dopo anche il secondo fattore: un codice MFA sbagliato non deve restituire i tentativi
+        loginAttemptLimiter.reset(sha256Hex(normalizedEmail));
         return createAuthSession(user.get(), null);
     }
 
@@ -380,7 +385,8 @@ public class AuthService {
     public GoogleSignIn loginWithGoogle(GoogleIdentity google, LocalDate birthDate, String mfaCode) {
         // Limite per account sul subject Google, come quello sull'email nel login con password:
         // è lo stesso credential stuffing, su un altro canale
-        loginAttemptLimiter.tryAcquire(sha256Hex("google:" + google.subject())).ifPresent(retryAfter -> {
+        String googleKey = sha256Hex("google:" + google.subject());
+        loginAttemptLimiter.tryAcquire(googleKey).ifPresent(retryAfter -> {
             throw new RateLimitExceededException(retryAfter);
         });
 
@@ -400,6 +406,7 @@ public class AuthService {
         if (linked.isPresent()) {
             User user = lockEnabled(linked.get().getUser().getId());
             mfaService.verifyLogin(user, mfaCode);
+            loginAttemptLimiter.reset(googleKey);
             return new GoogleSignIn(createAuthSession(user, null), false);
         }
 
@@ -430,6 +437,7 @@ public class AuthService {
             // Anche i telefoni di chi aveva registrato l'email smettono di ricevere le notifiche push dell'account
             deviceService.deleteAllOf(user.getId());
             tokenBlacklist.revokeAllIssuedUntil(user.getId(), now.minusSeconds(1));
+            loginAttemptLimiter.reset(googleKey);
             return new GoogleSignIn(createAuthSession(user, null), false);
         }
 
@@ -442,6 +450,7 @@ public class AuthService {
         user.confirmAge(now);
         User saved = userRepository.save(user);
         userIdentityRepository.save(new UserIdentity(saved, IdentityProvider.GOOGLE, google.subject(), email, now));
+        loginAttemptLimiter.reset(googleKey);
         return new GoogleSignIn(createAuthSession(saved, null), true);
     }
 

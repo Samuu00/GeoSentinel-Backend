@@ -127,6 +127,36 @@ class RateLimitIT extends AbstractIntegrationTest {
     }
 
     /**
+     * I login riusciti azzerano il limite per account: dodici accessi di fila con la password giusta (più dei
+     * dieci tentativi del secchio) ricevono tutti 200, perché il limite serve a fermare gli errori.
+     */
+    @Test
+    void successfulLoginsDoNotUseUpTheAccountAttempts() {
+        String email = createUser(Role.HIKER).getEmail();
+        String body = "{\"email\":\"%s\",\"password\":\"%s\"}".formatted(email, TEST_PASSWORD);
+
+        for (int i = 0; i < 12; i++) {
+            assertThat(call(HttpMethod.POST, "/api/v1/auth/login", null, body).status()).isEqualTo(200);
+        }
+    }
+
+    /**
+     * Le richieste con un token rifiutato non arrivano al filtro del rate limit, quindi vengono contate dal
+     * punto d'ingresso dei 401: superato il limite al minuto, dallo stesso IP si riceve 429 invece di 401.
+     */
+    @Test
+    void rejectedTokensBeyondTheIpLimitGet429() {
+        for (long i = 0; i < limits.generalPerMinute(); i++) {
+            assertThat(call(HttpMethod.GET, "/api/v1/users/me", "token-non-valido", null).status()).isEqualTo(401);
+        }
+
+        HttpResult blocked = call(HttpMethod.GET, "/api/v1/users/me", "token-non-valido", null);
+
+        assertThat(blocked.status()).isEqualTo(429);
+        assertThat(Long.parseLong(blocked.headers().getFirst(HttpHeaders.RETRY_AFTER))).isPositive();
+    }
+
+    /**
      * Invia una registrazione vuota, rifiutata subito con 400 ma conteggiata dal rate limit.
      *
      * @return la risposta del server

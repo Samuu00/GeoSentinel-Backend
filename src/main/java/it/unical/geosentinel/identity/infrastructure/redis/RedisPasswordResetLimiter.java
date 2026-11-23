@@ -10,11 +10,11 @@ import java.time.Duration;
 import java.util.Optional;
 
 /**
- * Token bucket per account con chiavi {@code rl:pwreset::<hash dell'email>}.
+ * Token bucket per account con chiavi {@code rl:pwreset:<hash dell'email>}.
  */
 @Component
 public class RedisPasswordResetLimiter implements PasswordResetLimiter {
-    private static final String KEY_PREFIX = "rl:pwreset::";
+    private static final String KEY_PREFIX = "rl:pwreset:";
     /** 3 richieste all'ora per account, fail-closed. */
     private static final RateLimitPolicy POLICY = new RateLimitPolicy(3, 3.0 / 3600, true);
     private final RedisRateLimiter redisRateLimiter;

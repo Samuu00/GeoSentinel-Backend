@@ -201,7 +201,9 @@ Le GET pubbliche di `/trails` e `/pois` hanno un `ETag` debole e `Cache-Control:
 in `If-None-Match` si riceve `304 Not Modified` senza body. Tutte le altre risposte sono `no-store`.
 
 I limiti sono 30 richieste al minuto per IP su login, registrazione e logout, 120 sul refresh e 60 per utente
-su tutto il resto. In più ogni account ha 10 tentativi di login (o di password attuale) ogni 15 minuti.
+su tutto il resto; le richieste con un token rifiutato (401) hanno un limite di 60 al minuto per IP, oltre il
+quale si riceve 429. In più ogni account ha 10 tentativi di login (o di password attuale) ogni 15 minuti da uno
+stesso IP e 100 all'ora in tutto; un accesso riuscito li azzera.
 
 ## Upload delle foto
 

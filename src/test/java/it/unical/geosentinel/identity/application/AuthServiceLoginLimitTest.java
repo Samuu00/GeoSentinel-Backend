@@ -104,5 +104,7 @@ class AuthServiceLoginLimitTest {
         // BCrypt viene calcolato anche quando l'account non esiste, così il tempo di risposta è lo stesso e
         // non rivela quali email sono registrate.
         verify(passwordEncoder).matches(any(), any());
+        // Un tentativo sbagliato non restituisce i tentativi: il limite si azzera solo dopo un login riuscito.
+        verify(limiter, never()).reset(anyString());
     }
 }

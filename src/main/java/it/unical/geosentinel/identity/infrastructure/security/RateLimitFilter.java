@@ -93,36 +93,53 @@ public class RateLimitFilter extends OncePerRequestFilter {
             prefix = "rl:";
         }
 
-        // Chiave per utente se la richiesta è autenticata, altrimenti per IP. Si usa getRemoteAddr: l'header
-        // X-Forwarded-For va considerato solo dietro un proxy fidato. Il filtro gira dopo
-        // BearerTokenAuthenticationFilter, quindi con il bearer anche le GET pubbliche contano per utente
+        // Chiave per utente se la richiesta è autenticata, altrimenti per IP (vedi ClientIp: IPv6 per rete /64).
+        // Il filtro gira dopo BearerTokenAuthenticationFilter, quindi con il bearer anche le GET pubbliche contano
+        // per utente. Su login, registrazione, refresh, Google e reset della password il bearer viene ignorato
+        // (SecurityConfig.TOKENLESS_AUTH_PATHS), quindi lì la chiave è sempre l'IP e non si aggira con altri token
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         String rateLimitKey = (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof Jwt jwt)
                 ? prefix + "user:" + jwt.getSubject()
-                : prefix + "ip:" + request.getRemoteAddr();
+                : prefix + "ip:" + ClientIp.of(request);
 
         RateLimitDecision decision = redisRateLimiter.tryConsume(rateLimitKey, policy);
         response.setHeader("X-RateLimit-Remaining", String.valueOf(decision.remainingTokens()));
 
         if (!decision.allowed()) {
-            // Arrotondato per eccesso: per difetto il client riproverebbe troppo presto e riceverebbe un altro 429
-            long retryAfterSeconds = Math.max(1, Math.ceilDiv(decision.retryAfterMillis(), 1000));
-            response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds));
-
-            ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-                    HttpStatus.TOO_MANY_REQUESTS,
-                    "Too many requests. Please retry after " + retryAfterSeconds + " seconds."
-            );
-            problemDetail.setType(ProblemTypes.RATE_LIMIT_EXCEEDED);
-            problemDetail.setTitle("Too Many Requests");
-            problemDetail.setInstance(URI.create(request.getRequestURI()));
-            problemDetail.setProperty("timestamp", clock.instant());
-            problemDetail.setProperty("retryAfterSeconds", retryAfterSeconds);
-
-            problemDetailWriter.write(response, problemDetail);
+            writeTooManyRequests(request, response, decision.retryAfterMillis(), problemDetailWriter, clock);
             return;
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Scrive la risposta 429 con l'header Retry-After e un ProblemDetail. La usa anche
+     * {@link ProblemAuthenticationEntryPoint} per i token non validi.
+     *
+     * @param request richiesta rifiutata
+     * @param response risposta da scrivere
+     * @param retryAfterMillis attesa calcolata dal token bucket, in millisecondi
+     * @param problemDetailWriter scrittore del ProblemDetail
+     * @param clock orologio per il timestamp
+     * @throws IOException se la scrittura della risposta fallisce
+     */
+    static void writeTooManyRequests(HttpServletRequest request, HttpServletResponse response, long retryAfterMillis,
+                                     ProblemDetailWriter problemDetailWriter, Clock clock) throws IOException {
+        // Arrotondato per eccesso: per difetto il client riproverebbe troppo presto e riceverebbe un altro 429
+        long retryAfterSeconds = Math.max(1, Math.ceilDiv(retryAfterMillis, 1000));
+        response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds));
+
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too many requests. Please retry after " + retryAfterSeconds + " seconds."
+        );
+        problemDetail.setType(ProblemTypes.RATE_LIMIT_EXCEEDED);
+        problemDetail.setTitle("Too Many Requests");
+        problemDetail.setInstance(URI.create(request.getRequestURI()));
+        problemDetail.setProperty("timestamp", clock.instant());
+        problemDetail.setProperty("retryAfterSeconds", retryAfterSeconds);
+
+        problemDetailWriter.write(response, problemDetail);
     }
 }
