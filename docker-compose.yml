@@ -114,7 +114,7 @@ services:
   # della Calabria. L'estratto si prepara con tools/routing/build_extract.sh; il grafo viene costruito al
   # primo avvio (un paio di minuti) e salvato nel volume.
   graphhopper:
-    image: israelhikingmap/graphhopper:10.2
+    image: israelhikingmap/graphhopper:11.0
     container_name: geosentinel-graphhopper
     restart: unless-stopped
     command: ["--input", "/osm/calabria.osm.pbf", "--config", "/config/config.yml"]
