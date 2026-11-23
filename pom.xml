@@ -11,7 +11,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.2.0</version>
         <!-- Il progetto padre si scarica dal repository Maven, non da una cartella vicina. -->
         <relativePath/>
     </parent>
@@ -37,7 +37,7 @@
     <properties>
         <java.version>21</java.version>
         <mapstruct.version>1.6.3</mapstruct.version>
-        <springdoc.version>3.1.1</springdoc.version>
+        <springdoc.version>3.2.1</springdoc.version>
     </properties>
     <dependencies>
         <dependency>
@@ -104,14 +104,14 @@
         <dependency>
             <groupId>io.minio</groupId>
             <artifactId>minio</artifactId>
-            <version>9.0.3</version>
+            <version>9.0.4</version>
         </dependency>
 
         <!-- Client HTTP usato dal client di MinIO, dichiarato con una versione esplicita. -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp-jvm</artifactId>
-            <version>5.3.2</version>
+            <version>5.5.1</version>
         </dependency>
 
         <!-- SDK Firebase Admin per le notifiche push su Android e iOS. Serve solo FirebaseMessaging, quindi si
@@ -119,7 +119,7 @@
         <dependency>
             <groupId>com.google.firebase</groupId>
             <artifactId>firebase-admin</artifactId>
-            <version>9.11.0</version>
+            <version>9.12.0</version>
             <exclusions>
                 <exclusion>
                     <groupId>com.google.cloud</groupId>
