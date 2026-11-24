@@ -1,261 +1,1 @@
-/*
- * Configurazione di Spring Security per l'API: autenticazione stateless con access token JWT firmati HS256,
- * gerarchia dei ruoli, rotte pubbliche e protette, header di cache, risposte d'errore in formato ProblemDetail
- * e filtro del rate limit.
- */
-package it.unical.geosentinel.identity.infrastructure.security;
-
-import com.nimbusds.jose.jwk.source.ImmutableSecret;
-import it.unical.geosentinel.identity.infrastructure.redis.RedisRateLimiter;
-import it.unical.geosentinel.shared.web.ProblemDetailWriter;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.core.convert.converter.Converter;
-import org.springframework.http.HttpMethod;
-import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
-import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
-import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
-import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
-import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.crypto.factory.PasswordEncoderFactories;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.JwtEncoder;
-import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
-import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
-import org.springframework.security.oauth2.jwt.JwtValidators;
-import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
-import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
-import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
-import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
-import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
-import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.header.writers.CacheControlHeadersWriter;
-import org.springframework.security.web.header.writers.DelegatingRequestMatcherHeaderWriter;
-import org.springframework.security.web.header.writers.StaticHeadersWriter;
-import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
-import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
-import org.springframework.security.web.util.matcher.AndRequestMatcher;
-import org.springframework.security.web.util.matcher.OrRequestMatcher;
-import org.springframework.security.web.util.matcher.RequestMatcher;
-
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.time.Clock;
-import java.time.Duration;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
-
-/**
- * Definisce i bean di sicurezza (codifica delle password, encoder e decoder dei JWT, conversione dei ruoli) e
- * la catena dei filtri HTTP. Con {@code @EnableMethodSecurity} i controller possono usare anche
- * {@code @PreAuthorize}.
- */
-@Configuration
-@EnableWebSecurity
-@EnableMethodSecurity
-@EnableConfigurationProperties({JwtProperties.class, RateLimitProperties.class})
-public class SecurityConfig {
-    /**
-     * Rotte di autenticazione che non usano l'access token. Per queste il bearer viene ignorato: se il client
-     * ne allegasse uno scaduto, {@code BearerTokenAuthenticationFilter} risponderebbe 401 anche se la rotta è
-     * pubblica.
-     */
-    private static final Set<String> TOKENLESS_AUTH_PATHS = Set.of(
-            "/api/v1/auth/register",
-            "/api/v1/auth/login",
-            "/api/v1/auth/refresh",
-            "/api/v1/auth/google",
-            "/api/v1/auth/password-reset/request",
-            "/api/v1/auth/password-reset/confirm");
-
-    /**
-     * GET pubbliche del catalogo (sentieri e POI) servite con ETag da {@code HttpCacheConfig}. Per queste si
-     * manda {@code Cache-Control: no-cache}, che permette all'app di conservare la risposta ma la obbliga a
-     * rivalidarla con {@code If-None-Match}; il {@code no-store} predefinito impedirebbe sia la cache del client
-     * sia l'ETag, perché {@code ShallowEtagHeaderFilter} salta le risposte no-store. Tutte le altre rotte restano
-     * no-store perché contengono dati personali. Fa eccezione il calcolo del percorso tra due punti, che resta
-     * no-store e senza ETag perché la richiesta contiene la posizione dell'utente.
-     */
-    private static final RequestMatcher PUBLIC_CATALOG = new AndRequestMatcher(
-            new OrRequestMatcher(
-                    PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/trails/**"),
-                    PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/pois/**")),
-            new NegatedRequestMatcher(PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/trails/route")));
-
-    private final JtiBlacklistValidator jtiBlacklistValidator;
-    private final ProblemAuthenticationEntryPoint authenticationEntryPoint;
-    private final ProblemAccessDeniedHandler accessDeniedHandler;
-    private final RedisRateLimiter redisRateLimiter;
-    private final ProblemDetailWriter problemDetailWriter;
-
-    public SecurityConfig(
-            JtiBlacklistValidator jtiBlacklistValidator,
-            ProblemAuthenticationEntryPoint authenticationEntryPoint,
-            ProblemAccessDeniedHandler accessDeniedHandler,
-            RedisRateLimiter rateLimiter,
-            ProblemDetailWriter problemDetailWriter
-    ) {
-        this.jtiBlacklistValidator = jtiBlacklistValidator;
-        this.authenticationEntryPoint = authenticationEntryPoint;
-        this.accessDeniedHandler = accessDeniedHandler;
-        this.redisRateLimiter = rateLimiter;
-        this.problemDetailWriter = problemDetailWriter;
-    }
-
-    /**
-     * Encoder delegante: salva l'hash con il prefisso dell'algoritmo (oggi {@code {bcrypt}}), così in futuro si
-     * può cambiare algoritmo senza invalidare le password esistenti.
-     *
-     * @return l'encoder delle password
-     */
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return PasswordEncoderFactories.createDelegatingPasswordEncoder();
-    }
-
-    /**
-     * Gerarchia dei ruoli usata nelle espressioni di sicurezza: l'amministratore include gestore del parco e
-     * operatore del soccorso, che a loro volta includono l'escursionista.
-     *
-     * @return la gerarchia dei ruoli
-     */
-    @Bean
-    public RoleHierarchy roleHierarchy() {
-        return RoleHierarchyImpl.withDefaultRolePrefix()
-                .role("ADMIN").implies("RESCUE_OPERATOR")
-                .role("ADMIN").implies("PARK_MANAGER")
-                .role("PARK_MANAGER").implies("HIKER")
-                .role("RESCUE_OPERATOR").implies("HIKER")
-                .build();
-    }
-
-    /**
-     * @param jwtProperties configurazione con la chiave HMAC
-     * @return l'encoder che firma gli access token
-     */
-    @Bean
-    public JwtEncoder jwtEncoder(JwtProperties jwtProperties) {
-        byte[] secretBytes = jwtProperties.secret().getBytes(StandardCharsets.UTF_8);
-        return new NimbusJwtEncoder(new ImmutableSecret<>(secretBytes));
-    }
-
-    /**
-     * Crea il decoder che verifica firma HS256, scadenza, emittente e revoca (tramite
-     * {@link JtiBlacklistValidator}) di ogni access token ricevuto.
-     *
-     * @param jwtProperties configurazione con chiave ed emittente
-     * @return il decoder dei JWT
-     */
-    @Bean
-    public JwtDecoder jwtDecoder(JwtProperties jwtProperties) {
-        byte[] secretBytes = jwtProperties.secret().getBytes(StandardCharsets.UTF_8);
-        SecretKeySpec secretKeySpec = new SecretKeySpec(secretBytes, "HmacSHA256");
-
-        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(secretKeySpec)
-                .macAlgorithm(MacAlgorithm.HS256)
-                .build();
-
-        // Tolleranza sull'orario a zero invece dei 60 secondi predefiniti: emittente e verificatore sono lo stesso
-        // processo, con lo stesso orologio. Con 60 secondi un token revocato tornerebbe valido subito dopo exp,
-        // quando le chiavi della blacklist su Redis sono già scadute
-        decoder.setJwtValidator(JwtValidators.createDefaultWithValidators(List.of(
-                new JwtTimestampValidator(Duration.ZERO),
-                new JwtIssuerValidator(jwtProperties.issuer()),
-                jtiBlacklistValidator
-        )));
-        return decoder;
-    }
-
-    /**
-     * Converte il claim {@code roles} del JWT nelle authority di Spring Security, aggiungendo il prefisso
-     * {@code ROLE_}.
-     *
-     * @return il convertitore da JWT ad autenticazione
-     */
-    @Bean
-    public JwtAuthenticationConverter jwtAuthenticationConverter() {
-        Converter<Jwt, Collection<GrantedAuthority>> authoritiesConverter = jwt -> {
-            List<String> roles = jwt.getClaimAsStringList("roles");
-            if (roles == null || roles.isEmpty()) {
-                return Collections.emptyList();
-            }
-            return roles.stream()
-                    .map(role -> (GrantedAuthority) new SimpleGrantedAuthority("ROLE_" + role))
-                    .toList();
-        };
-
-        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(authoritiesConverter);
-        return converter;
-    }
-
-    /**
-     * Costruisce la catena dei filtri: niente CSRF (l'API non usa cookie) e niente sessioni lato server, regole
-     * di accesso per rotta, autenticazione con JWT, gestori d'errore e rate limit subito dopo l'autenticazione
-     * del bearer (così può contare le richieste per utente). I bean arrivano come parametri: chiamare
-     * {@code jwtDecoder(...)} qui creerebbe un secondo decoder, diverso da quello registrato.
-     *
-     * @param http builder di Spring Security
-     * @param jwtDecoder decoder dei JWT
-     * @param jwtAuthenticationConverter convertitore dei ruoli
-     * @param clock orologio dell'applicazione
-     * @param rateLimitProperties limiti al minuto
-     * @return la catena dei filtri
-     * @throws Exception se la configurazione non è valida
-     */
-    @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http, JwtDecoder jwtDecoder,
-                                           JwtAuthenticationConverter jwtAuthenticationConverter, Clock clock,
-                                           RateLimitProperties rateLimitProperties) throws Exception {
-        RateLimitFilter rateLimitFilter = new RateLimitFilter(redisRateLimiter, problemDetailWriter, clock, rateLimitProperties);
-        DefaultBearerTokenResolver defaultResolver = new DefaultBearerTokenResolver();
-        BearerTokenResolver bearerTokenResolver = request ->
-                TOKENLESS_AUTH_PATHS.contains(request.getRequestURI()) ? null : defaultResolver.resolve(request);
-        http
-                .csrf(AbstractHttpConfigurer::disable)
-                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .headers(headers -> headers
-                        .cacheControl(HeadersConfigurer.CacheControlConfig::disable)
-                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(
-                                PUBLIC_CATALOG, new StaticHeadersWriter("Cache-Control", "no-cache")))
-                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(
-                                new NegatedRequestMatcher(PUBLIC_CATALOG), new CacheControlHeadersWriter()))
-                )
-                .authorizeHttpRequests(auth -> auth
-                        // Il logout non è pubblico: serve l'access token da mettere nella blacklist
-                        .requestMatchers(HttpMethod.POST, TOKENLESS_AUTH_PATHS.toArray(String[]::new)).permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/trails/**", "/api/v1/pois/**").permitAll()
-                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/actuator/health").permitAll()
-                        .anyRequest().authenticated()
-                    )
-                .oauth2ResourceServer(oauth2 -> oauth2
-                        .bearerTokenResolver(bearerTokenResolver)
-                        .jwt(jwt -> jwt
-                                .decoder(jwtDecoder)
-                                .jwtAuthenticationConverter(jwtAuthenticationConverter)
-                        )
-                        .authenticationEntryPoint(authenticationEntryPoint)
-                        .accessDeniedHandler(accessDeniedHandler)
-                )
-                .exceptionHandling(ex -> ex
-                        .authenticationEntryPoint(authenticationEntryPoint)
-                        .accessDeniedHandler(accessDeniedHandler)
-                )
-                .addFilterAfter(rateLimitFilter, BearerTokenAuthenticationFilter.class);
-
-        return http.build();
-
-    }
-}
+/* * Configurazione di Spring Security per l'API: autenticazione stateless con access token JWT firmati HS256, * gerarchia dei ruoli, rotte pubbliche e protette, header di cache, risposte d'errore in formato ProblemDetail * e filtro del rate limit. */package it.unical.geosentinel.identity.infrastructure.security;import com.nimbusds.jose.jwk.source.ImmutableSecret;import it.unical.geosentinel.identity.infrastructure.redis.RedisRateLimiter;import it.unical.geosentinel.shared.web.ProblemDetailWriter;import org.springframework.boot.context.properties.EnableConfigurationProperties;import org.springframework.context.annotation.Bean;import org.springframework.context.annotation.Configuration;import org.springframework.core.convert.converter.Converter;import org.springframework.http.HttpMethod;import org.springframework.security.access.hierarchicalroles.RoleHierarchy;import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;import org.springframework.security.config.annotation.web.builders.HttpSecurity;import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;import org.springframework.security.config.http.SessionCreationPolicy;import org.springframework.security.core.GrantedAuthority;import org.springframework.security.core.authority.SimpleGrantedAuthority;import org.springframework.security.crypto.factory.PasswordEncoderFactories;import org.springframework.security.crypto.password.PasswordEncoder;import org.springframework.security.oauth2.jose.jws.MacAlgorithm;import org.springframework.security.oauth2.jwt.Jwt;import org.springframework.security.oauth2.jwt.JwtDecoder;import org.springframework.security.oauth2.jwt.JwtEncoder;import org.springframework.security.oauth2.jwt.JwtIssuerValidator;import org.springframework.security.oauth2.jwt.JwtTimestampValidator;import org.springframework.security.oauth2.jwt.JwtValidators;import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;import org.springframework.security.web.SecurityFilterChain;import org.springframework.security.web.header.writers.CacheControlHeadersWriter;import org.springframework.security.web.header.writers.DelegatingRequestMatcherHeaderWriter;import org.springframework.security.web.header.writers.StaticHeadersWriter;import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;import org.springframework.security.web.util.matcher.NegatedRequestMatcher;import org.springframework.security.web.util.matcher.AndRequestMatcher;import org.springframework.security.web.util.matcher.OrRequestMatcher;import org.springframework.security.web.util.matcher.RequestMatcher;import javax.crypto.spec.SecretKeySpec;import java.nio.charset.StandardCharsets;import java.time.Clock;import java.time.Duration;import java.util.Collection;import java.util.Collections;import java.util.List;import java.util.Set;/** * Definisce i bean di sicurezza (codifica delle password, encoder e decoder dei JWT, conversione dei ruoli) e * la catena dei filtri HTTP. Con {@code @EnableMethodSecurity} i controller possono usare anche * {@code @PreAuthorize}. */@Configuration@EnableWebSecurity@EnableMethodSecurity@EnableConfigurationProperties({JwtProperties.class, RateLimitProperties.class})public class SecurityConfig {    /**     * Rotte di autenticazione che non usano l'access token. Per queste il bearer viene ignorato: se il client     * ne allegasse uno scaduto, {@code BearerTokenAuthenticationFilter} risponderebbe 401 anche se la rotta è     * pubblica.     */    private static final Set<String> TOKENLESS_AUTH_PATHS = Set.of(            "/api/v1/auth/register",            "/api/v1/auth/login",            "/api/v1/auth/refresh",            "/api/v1/auth/google",            "/api/v1/auth/password-reset/request",            "/api/v1/auth/password-reset/confirm");    /**     * GET pubbliche del catalogo (sentieri e POI) servite con ETag da {@code HttpCacheConfig}. Per queste si     * manda {@code Cache-Control: no-cache}, che permette all'app di conservare la risposta ma la obbliga a     * rivalidarla con {@code If-None-Match}; il {@code no-store} predefinito impedirebbe sia la cache del client     * sia l'ETag, perché {@code ShallowEtagHeaderFilter} salta le risposte no-store. Tutte le altre rotte restano     * no-store perché contengono dati personali. Fa eccezione il calcolo del percorso tra due punti, che resta     * no-store e senza ETag perché la richiesta contiene la posizione dell'utente.     */    private static final RequestMatcher PUBLIC_CATALOG = new AndRequestMatcher(            new OrRequestMatcher(                    PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/trails/**"),                    PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/pois/**")),            new NegatedRequestMatcher(PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/v1/trails/route")));    private final JtiBlacklistValidator jtiBlacklistValidator;    private final ProblemAuthenticationEntryPoint authenticationEntryPoint;    private final ProblemAccessDeniedHandler accessDeniedHandler;    private final RedisRateLimiter redisRateLimiter;    private final ProblemDetailWriter problemDetailWriter;    public SecurityConfig(            JtiBlacklistValidator jtiBlacklistValidator,            ProblemAuthenticationEntryPoint authenticationEntryPoint,            ProblemAccessDeniedHandler accessDeniedHandler,            RedisRateLimiter rateLimiter,            ProblemDetailWriter problemDetailWriter    ) {        this.jtiBlacklistValidator = jtiBlacklistValidator;        this.authenticationEntryPoint = authenticationEntryPoint;        this.accessDeniedHandler = accessDeniedHandler;        this.redisRateLimiter = rateLimiter;        this.problemDetailWriter = problemDetailWriter;    }    /**     * Encoder delegante: salva l'hash con il prefisso dell'algoritmo (oggi {@code {bcrypt}}), così in futuro si     * può cambiare algoritmo senza invalidare le password esistenti.     *     * @return l'encoder delle password     */    @Bean    public PasswordEncoder passwordEncoder() {        return PasswordEncoderFactories.createDelegatingPasswordEncoder();    }    /**     * Gerarchia dei ruoli usata nelle espressioni di sicurezza: l'amministratore include gestore del parco e     * operatore del soccorso, che a loro volta includono l'escursionista.     *     * @return la gerarchia dei ruoli     */    @Bean    public RoleHierarchy roleHierarchy() {        return RoleHierarchyImpl.withDefaultRolePrefix()                .role("ADMIN").implies("RESCUE_OPERATOR")                .role("ADMIN").implies("PARK_MANAGER")                .role("PARK_MANAGER").implies("HIKER")                .role("RESCUE_OPERATOR").implies("HIKER")                .build();    }    /**     * @param jwtProperties configurazione con la chiave HMAC     * @return l'encoder che firma gli access token     */    @Bean    public JwtEncoder jwtEncoder(JwtProperties jwtProperties) {        byte[] secretBytes = jwtProperties.secret().getBytes(StandardCharsets.UTF_8);        return new NimbusJwtEncoder(new ImmutableSecret<>(secretBytes));    }    /**     * Crea il decoder che verifica firma HS256, scadenza, emittente e revoca (tramite     * {@link JtiBlacklistValidator}) di ogni access token ricevuto.     *     * @param jwtProperties configurazione con chiave ed emittente     * @return il decoder dei JWT     */    @Bean    public JwtDecoder jwtDecoder(JwtProperties jwtProperties) {        byte[] secretBytes = jwtProperties.secret().getBytes(StandardCharsets.UTF_8);        SecretKeySpec secretKeySpec = new SecretKeySpec(secretBytes, "HmacSHA256");        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(secretKeySpec)                .macAlgorithm(MacAlgorithm.HS256)                .build();        // Tolleranza sull'orario a zero invece dei 60 secondi predefiniti: emittente e verificatore sono lo stesso        // processo, con lo stesso orologio. Con 60 secondi un token revocato tornerebbe valido subito dopo exp,        // quando le chiavi della blacklist su Redis sono già scadute        decoder.setJwtValidator(JwtValidators.createDefaultWithValidators(List.of(                new JwtTimestampValidator(Duration.ZERO),                new JwtIssuerValidator(jwtProperties.issuer()),                jtiBlacklistValidator        )));        return decoder;    }    /**     * Converte il claim {@code roles} del JWT nelle authority di Spring Security, aggiungendo il prefisso     * {@code ROLE_}.     *     * @return il convertitore da JWT ad autenticazione     */    @Bean    public JwtAuthenticationConverter jwtAuthenticationConverter() {        Converter<Jwt, Collection<GrantedAuthority>> authoritiesConverter = jwt -> {            List<String> roles = jwt.getClaimAsStringList("roles");            if (roles == null || roles.isEmpty()) {                return Collections.emptyList();            }            return roles.stream()                    .map(role -> (GrantedAuthority) new SimpleGrantedAuthority("ROLE_" + role))                    .toList();        };        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();        converter.setJwtGrantedAuthoritiesConverter(authoritiesConverter);        return converter;    }    /**     * Costruisce la catena dei filtri: niente CSRF (l'API non usa cookie) e niente sessioni lato server, regole     * di accesso per rotta, autenticazione con JWT, gestori d'errore e rate limit subito dopo l'autenticazione     * del bearer (così può contare le richieste per utente). I bean arrivano come parametri: chiamare     * {@code jwtDecoder(...)} qui creerebbe un secondo decoder, diverso da quello registrato.     *     * @param http builder di Spring Security     * @param jwtDecoder decoder dei JWT     * @param jwtAuthenticationConverter convertitore dei ruoli     * @param clock orologio dell'applicazione     * @param rateLimitProperties limiti al minuto     * @return la catena dei filtri     * @throws Exception se la configurazione non è valida     */    @Bean    public SecurityFilterChain filterChain(HttpSecurity http, JwtDecoder jwtDecoder,                                           JwtAuthenticationConverter jwtAuthenticationConverter, Clock clock,                                           RateLimitProperties rateLimitProperties) throws Exception {        RateLimitFilter rateLimitFilter = new RateLimitFilter(redisRateLimiter, problemDetailWriter, clock, rateLimitProperties);        DefaultBearerTokenResolver defaultResolver = new DefaultBearerTokenResolver();        BearerTokenResolver bearerTokenResolver = request ->                TOKENLESS_AUTH_PATHS.contains(request.getRequestURI()) ? null : defaultResolver.resolve(request);        http                .csrf(AbstractHttpConfigurer::disable)                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))                .headers(headers -> headers                        .cacheControl(HeadersConfigurer.CacheControlConfig::disable)                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(                                PUBLIC_CATALOG, new StaticHeadersWriter("Cache-Control", "no-cache")))                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(                                new NegatedRequestMatcher(PUBLIC_CATALOG), new CacheControlHeadersWriter()))                )                .authorizeHttpRequests(auth -> auth                        // Il logout non è pubblico: serve l'access token da mettere nella blacklist                        .requestMatchers(HttpMethod.POST, TOKENLESS_AUTH_PATHS.toArray(String[]::new)).permitAll()                        .requestMatchers(HttpMethod.GET, "/api/v1/trails/**", "/api/v1/pois/**").permitAll()                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/actuator/health").permitAll()                        .anyRequest().authenticated()                    )                .oauth2ResourceServer(oauth2 -> oauth2                        .bearerTokenResolver(bearerTokenResolver)                        .jwt(jwt -> jwt                                .decoder(jwtDecoder)                                .jwtAuthenticationConverter(jwtAuthenticationConverter)                        )                        .authenticationEntryPoint(authenticationEntryPoint)                        .accessDeniedHandler(accessDeniedHandler)                )                .exceptionHandling(ex -> ex                        .authenticationEntryPoint(authenticationEntryPoint)                        .accessDeniedHandler(accessDeniedHandler)                )                .addFilterAfter(rateLimitFilter, BearerTokenAuthenticationFilter.class);        return http.build();    }}

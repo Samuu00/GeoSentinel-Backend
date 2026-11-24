@@ -1250,6 +1250,36 @@ circa 57 gruppi non collegati, e tra due gruppi l'app mostrava una linea dritta.
 
 ---
 
+### Dopo M9 (23–24/11) — Pulizia per la tesi e rate limit del login (fatto)
+
+> Scritto da Claude su richiesta. Il progetto è una tesi triennale e gira solo in locale.
+
+**Fatto:**
+- **Mailpit tolto** dal compose: le email partono dall'SMTP configurato nel `.env` (es. Gmail).
+- **Commenti riscritti** in italiano in forma esplicativa: intestazione di ogni file, Javadoc su classi, metodi e
+  test. Codice invariato (controllato togliendo i commenti e confrontando con il commit precedente).
+- **`User.passwordHash`** mappato come colonna nullable, coerente con V14 (account Google senza password).
+- **Produzione tolta:** `docker-compose.prod.yml`, `deploy/Caddyfile`, `application-prod.properties` e
+  `ProdProfileIT` eliminati; documentazione ripulita. CI, `Dockerfile` e `docker-compose.yml` restano.
+- **Rate limit del login** (24/11):
+  - il limite per account si azzera dopo un accesso riuscito (login, login con Google, cambio password; solo dopo il
+    secondo fattore), quindi chi entra spesso non riceve 429;
+  - due livelli in `RedisLoginAttemptLimiter`: 10 tentativi ogni 15 minuti per account e IP, 100 all'ora per account
+    su tutti gli IP; chi sbaglia la password di una vittima da un IP blocca solo quell'IP. Resta fail-closed;
+  - `ClientIp`: chiave del client condivisa, IPv6 per rete /64;
+  - token rifiutati contati per IP in `ProblemAuthenticationEntryPoint` (oltre 60 al minuto → 429);
+  - prefisso `rl:pwreset:` corretto;
+  - il "bypass del limite per IP con i token" segnalato in review era un falso positivo: su login, registrazione,
+    refresh, Google e reset il bearer è già ignorato (`TOKENLESS_AUTH_PATHS`).
+
+**Checkpoint:**
+- [x] `ClientIpTest` (4), `RedisLoginAttemptLimiterTest` (3), `AuthServiceLoginLimitTest` (nessun reset su password
+  sbagliata), `RateLimitIT` (12 login riusciti di fila → 200; token non validi oltre il limite → 429)
+- [x] `./mvnw clean verify` verde (24/11: 87 unit + 193 IT); backend ricostruito nel compose, health `UP` anche
+  dall'IP della rete locale
+
+---
+
 ## 4. Ordine di esecuzione e dipendenze
 
 > Ordine pianificato all'inizio. Quello reale è stato: feature (M1.3, M2, M3, M4, M5.2) prima dell'infrastruttura, poi M0.2 → M1.1 → M0.4 → M0.5 → M6 → verifiche dal vivo di M3/M4 → M5.3. Lezione: con `ddl-auto=validate` l'app non parte finché non esistono tutte le migrazioni, quindi M0.2 + M1.1 vanno fatti presto.
@@ -1304,13 +1334,13 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M9 completate e integrate nell'app (2FA e foto profilo comprese), più il percorso A→B con GraphHopper (22/11). Prossimo lavoro: §7.
+M0–M9 completate e integrate nell'app (2FA e foto profilo comprese), più il percorso A→B con GraphHopper (22/11) e la pulizia per la tesi con il rate limit del login (23–24/11). Prossimo lavoro: §7.
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.
 4. Spunta i checkpoint e passa al task successivo.
 
-## 7. Cosa manca (aggiornato al 22/11)
+## 7. Cosa manca (aggiornato al 24/11)
 
 In ordine di priorità. I dettagli stanno nei checkpoint delle milestone; qui solo l'elenco.
 
@@ -1334,4 +1364,15 @@ In ordine di priorità. I dettagli stanno nei checkpoint delle milestone; qui so
 2. **Aree dei sentieri chiusi rifatte a ogni richiesta:** con più traffico, una cache invalidata al cambio di stato
    del sentiero.
 3. **Dislivello:** fuori dal costo (niente SRTM). Si aggiunge `foot_elevation.json` quando serve.
+
+### 7.4 Segnalati durante la riscrittura dei commenti (23/11, da valutare)
+1. **`MediaService.deleteAllOf`:** l'oggetto viene cancellato dallo storage prima del commit della riga (manca il
+   flush); se il commit fallisce resta una riga senza file.
+2. **Documentazione OpenAPI indietro rispetto al codice:** la `summary` di `MediaController.getAttachedMedia` cita
+   solo `TRAIL` e `HAZARD_REPORT` (accetta anche `REFUGE` e `USER`); la `@Schema` di `RouteResponse` parla ancora del
+   vertice più vicino; la `summary` di un `@Operation` in `AuthController` cita un numero di ADR.
+3. **Metodi mai usati in produzione:** `RefugeRepository.findByManagerId` e `HazardReportRepository.findByStatus`
+   (versione non paginata).
+4. **`SosService.findAvailableTeamsNearby`:** il raggio è limitato solo nel controller (`@Max(150000)`), non nel
+   service come in `findActiveNearby`.
 
