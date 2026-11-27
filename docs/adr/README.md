@@ -27,8 +27,8 @@ del vecchio (`Sostituito da ADR-XXXX`). Il modello è in [`template.md`](templat
 | [0019](0019-periodo-di-grazia-refresh.md) | Periodo di grazia sul refresh token appena ruotato | 2026-10-02 | Accettato |
 | [0020](0020-percorso-nei-sentieri-della-mappa.md) | Percorso semplificato nei sentieri della mappa e bbox per intersezione | 2026-10-04 | Accettato |
 | [0021](0021-limiti-per-utente-sos-e-prenotazioni.md) | Limiti per utente sulle push SOS e sulle prenotazioni | 2026-10-06 | Accettato |
-| [0022](0022-calcolo-frane-worker-cpp.md) | Calcolo del rischio frane in un worker C++ (MPI + pthread) con il database come contratto | 2026-10-17 | Proposto |
-| [0023](0023-modello-frane.md) | Modello delle frane: pendio indefinito con Monte Carlo e automa cellulare | 2026-10-17 | Proposto |
+| 0022 | Calcolo del rischio frane in un worker C++ (MPI + pthread) | 2026-10-17 | Ritirato il 26/11: progetto a parte (testo nel commit `592bad9`) |
+| 0023 | Modello delle frane: pendio indefinito con Monte Carlo e automa cellulare | 2026-10-17 | Ritirato il 26/11: progetto a parte (testo nel commit `592bad9`) |
 | [0024](0024-login-google.md) | Login con Google tramite ID token nativo | 2026-10-17 | Accettato |
 | [0025](0025-verifica-in-due-passaggi.md) | Verifica in due passaggi con TOTP | 2026-10-19 | Accettato |
 | [0026](0026-rafforzamento-2fa.md) | Rafforzamento della 2FA dopo l'audit del 10/11 | 2026-11-10 | Accettato |

@@ -31,6 +31,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -94,7 +95,7 @@ public class RefugeBookingService {
         if (!checkOut.isAfter(checkIn)) {
             throw new BusinessRuleViolationException("Check-out date must be strictly after check-in date");
         }
-        if (java.time.temporal.ChronoUnit.DAYS.between(checkIn, checkOut) > 14) {
+        if (ChronoUnit.DAYS.between(checkIn, checkOut) > 14) {
             throw new BusinessRuleViolationException("A single booking cannot exceed 14 consecutive nights");
         }
     }
@@ -199,18 +200,23 @@ public class RefugeBookingService {
     /**
      * Calcola i posti liberi di un rifugio per ogni notte dell'intervallo. Le prenotazioni sovrapposte si
      * leggono con una sola query e il conteggio per notte si fa in memoria. L'intervallo segue le stesse
-     * regole di una prenotazione (al massimo 14 notti).
+     * regole di una prenotazione (al massimo 14 notti). Il totale è quello che pagherebbe una prenotazione
+     * fatta adesso: prezzo attuale × notti × ospiti.
      *
      * @param refugeId rifugio
      * @param from     prima notte
      * @param to       giorno di fine, escluso
-     * @return capacità totale e posti liberi per notte, in ordine di data
+     * @param guests   ospiti su cui calcolare il totale, positivo
+     * @return capacità totale, posti liberi per notte in ordine di data e totale
      * @throws BusinessRuleViolationException se l'intervallo non è valido
      * @throws ResourceNotFoundException      se il rifugio non esiste
      */
     @Transactional(readOnly = true)
-    public AvailabilityView availability(UUID refugeId, LocalDate from, LocalDate to) {
+    public AvailabilityView availability(UUID refugeId, LocalDate from, LocalDate to, int guests) {
         validateBookingDates(from, to);
+        if (guests <= 0) {
+            throw new BusinessRuleViolationException("Guests must be a positive integer");
+        }
         Refuge refuge = refugeRepository.findById(refugeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Refuge", refugeId));
 
@@ -230,7 +236,8 @@ public class RefugeBookingService {
             availablePerNight.put(currentNight, availableBeds);
             current = current.plusDays(1);
         }
-        return new AvailabilityView(refuge.getId(), refuge.getCapacity(), from, to, availablePerNight);
+        return new AvailabilityView(refuge.getId(), refuge.getCapacity(), from, to, availablePerNight, guests,
+                refuge.totalPriceCents(ChronoUnit.DAYS.between(from, to), guests));
     }
 
     /**
@@ -335,6 +342,33 @@ public class RefugeBookingService {
                     }
                 });
         refuge.changeCapacity(capacity);
+        return RefugeView.from(refuge, geometryMapper);
+    }
+
+    /**
+     * Imposta o toglie il prezzo a persona per notte di un rifugio. Le prenotazioni già fatte conservano il
+     * totale di allora. Il rifugio si blocca come in {@link #book}: una prenotazione in corso usa il prezzo
+     * di prima o quello nuovo, mai uno a metà.
+     *
+     * @param actorId            utente che chiede la modifica
+     * @param actorIsAdmin       {@code true} se l'utente è un amministratore
+     * @param refugeId           rifugio
+     * @param pricePerNightCents nuovo prezzo in centesimi, oppure {@code null} per toglierlo
+     * @return la vista aggiornata
+     * @throws ResourceNotFoundException      se il rifugio non esiste
+     * @throws AccessDeniedException          se l'utente non è il gestore del rifugio né un amministratore
+     * @throws BusinessRuleViolationException se il prezzo è fuori dall'intervallo
+     */
+    @Transactional
+    @PreAuthorize("hasRole('PARK_MANAGER')")
+    public RefugeView updatePrice(UUID actorId, boolean actorIsAdmin, UUID refugeId, Integer pricePerNightCents) {
+        Refuge refuge = refugeRepository.findByIdForUpdate(refugeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Refuge", refugeId));
+        // Stessa regola della capacità: il ruolo non basta, serve essere il gestore di questo rifugio o un ADMIN.
+        if (!actorIsAdmin && !refuge.isManagedBy(actorId)) {
+            throw new AccessDeniedException("Only the refuge manager can change its price");
+        }
+        refuge.changePrice(pricePerNightCents);
         return RefugeView.from(refuge, geometryMapper);
     }
 }

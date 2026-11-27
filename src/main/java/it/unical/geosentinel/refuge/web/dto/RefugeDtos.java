@@ -75,6 +75,7 @@ public class RefugeDtos {
      * @param season      periodo di apertura, può essere {@code null}
      * @param phone       telefono, può essere {@code null}
      * @param amenities   servizi, sempre presente (eventualmente vuota) e nell'ordine dell'enum
+     * @param pricePerNightCents prezzo a persona per notte in centesimi di euro, {@code null} se non impostato
      */
     public record RefugeResponse(
             @Schema(requiredMode = REQUIRED) UUID id,
@@ -86,7 +87,8 @@ public class RefugeDtos {
             Integer altitudeM,
             String season,
             String phone,
-            @Schema(requiredMode = REQUIRED) List<RefugeAmenity> amenities
+            @Schema(requiredMode = REQUIRED) List<RefugeAmenity> amenities,
+            Integer pricePerNightCents
     ) {}
     /**
      * Corpo della richiesta di modifica dei posti letto.
@@ -101,6 +103,17 @@ public class RefugeDtos {
             Integer capacity
     ) {}
     /**
+     * Corpo della richiesta di modifica del prezzo. Il campo è facoltativo: {@code null} (o assente) toglie il
+     * prezzo. È sempre un intero in centesimi di euro, mai un decimale.
+     *
+     * @param pricePerNightCents prezzo a persona per notte, da 0 a 100000 centesimi (1000 €)
+     */
+    public record UpdateRefugePriceRequest(
+            @Min(value = 0, message = "Price must be at least 0")
+            @Max(value = 100000, message = "Price must be at most 100000 cents")
+            Integer pricePerNightCents
+    ) {}
+    /**
      * Disponibilità di un rifugio per notte.
      *
      * @param refugeId              rifugio
@@ -109,12 +122,17 @@ public class RefugeDtos {
      * @param to                    giorno di fine, escluso
      * @param availableBedsPerNight posti liberi per notte; in JSON le chiavi sono date ISO-8601
      *                              (ad esempio "2026-10-01")
+     * @param guests                ospiti su cui è calcolato il totale
+     * @param totalPriceCents       prezzo attuale × notti × ospiti in centesimi, {@code null} se il rifugio non
+     *                              ha un prezzo. È una stima: fa fede il totale copiato sulla prenotazione
      */
     public record AvailableResponse(
             @Schema(requiredMode = REQUIRED) UUID refugeId,
             @Schema(requiredMode = REQUIRED) Integer totalCapacity,
             @Schema(requiredMode = REQUIRED) LocalDate from,
             @Schema(requiredMode = REQUIRED) LocalDate to,
-            @Schema(requiredMode = REQUIRED) Map<LocalDate, Integer> availableBedsPerNight
+            @Schema(requiredMode = REQUIRED) Map<LocalDate, Integer> availableBedsPerNight,
+            @Schema(requiredMode = REQUIRED) Integer guests,
+            Integer totalPriceCents
     ) {}
 }

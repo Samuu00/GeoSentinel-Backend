@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MigrationIT extends AbstractIntegrationTest {
 
     /**
-     * Legge lo storico di Flyway e si aspetta tutte e sole le migrazioni versionate, da 1 a 17, nell'ordine
+     * Legge lo storico di Flyway e si aspetta tutte e sole le migrazioni versionate, da 1 a 18, nell'ordine
      * di installazione. I dati di esempio non devono comparire.
      */
     @Test
@@ -27,7 +27,7 @@ class MigrationIT extends AbstractIntegrationTest {
 
         // Le migrazioni ripetibili con i dati di esempio (cartella db/seed) sono attive solo nel profilo
         // "local": nel profilo di test lo storico contiene soltanto quelle versionate.
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18");
     }
 
     /**

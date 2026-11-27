@@ -17,6 +17,7 @@ import it.unical.geosentinel.shared.domain.exception.BusinessRuleViolationExcept
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -53,6 +54,13 @@ public class Booking extends AuditableEntity{
     @Column(name = "status", nullable = false)
     @Enumerated(EnumType.STRING)
     private BookingStatus status;
+    /**
+     * Totale in centesimi, copiato dal prezzo del rifugio al momento della prenotazione e mai ricalcolato:
+     * se il gestore cambia il prezzo dopo, chi ha già prenotato paga quello di allora. {@code null} se il
+     * rifugio non aveva un prezzo e per le prenotazioni precedenti a V18.
+     */
+    @Column(name = "total_price_cents", updatable = false)
+    private Integer totalPriceCents;
 
     /** Costruttore richiesto da JPA. */
     protected Booking() {}
@@ -73,6 +81,8 @@ public class Booking extends AuditableEntity{
         this.guests = validateGuests(guests);
         validateDates(checkIn, checkOut);
         this.status = BookingStatus.CONFIRMED;
+        // Il totale lo calcola il rifugio dal suo prezzo attuale, mai il client.
+        this.totalPriceCents = refuge.totalPriceCents(ChronoUnit.DAYS.between(checkIn, checkOut), guests);
     }
 
     /**
@@ -100,8 +110,9 @@ public class Booking extends AuditableEntity{
     }
 
     /**
-     * Crea una nuova prenotazione confermata. Il controllo dei posti disponibili non avviene qui ma nel
-     * service, con il rifugio bloccato da un lock pessimistico.
+     * Crea una nuova prenotazione confermata, con il totale copiato dal prezzo attuale del rifugio. Il
+     * controllo dei posti disponibili non avviene qui ma nel service, con il rifugio bloccato da un lock
+     * pessimistico (lo stesso lock con cui il gestore cambia il prezzo).
      *
      * @param refuge         rifugio
      * @param userId         utente che prenota
@@ -152,4 +163,5 @@ public class Booking extends AuditableEntity{
     public LocalDate getCheckOut() { return checkOut; }
     public Integer getGuests() { return guests; }
     public BookingStatus getStatus() { return status; }
+    public Integer getTotalPriceCents() { return totalPriceCents; }
 }

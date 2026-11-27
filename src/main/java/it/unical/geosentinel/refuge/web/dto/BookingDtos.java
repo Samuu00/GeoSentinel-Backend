@@ -49,6 +49,8 @@ public class BookingDtos {
      * @param checkOut giorno di partenza
      * @param guests   numero di ospiti
      * @param status   stato
+     * @param totalPriceCents totale in centesimi copiato al momento della prenotazione, {@code null} se il
+     *                        rifugio non aveva un prezzo
      */
     public record BookingResponse(
             @Schema(requiredMode = REQUIRED) UUID id,
@@ -57,6 +59,7 @@ public class BookingDtos {
             @Schema(requiredMode = REQUIRED) LocalDate checkIn,
             @Schema(requiredMode = REQUIRED) LocalDate checkOut,
             @Schema(requiredMode = REQUIRED) int guests,
-            @Schema(requiredMode = REQUIRED) BookingStatus status
+            @Schema(requiredMode = REQUIRED) BookingStatus status,
+            Integer totalPriceCents
     ) {}
 }

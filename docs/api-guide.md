@@ -97,7 +97,7 @@ sono chiuse e gli arriva un'email. Email sconosciuta o senza 2FA → 404; un `AD
 | Sentieri | `GET /trails?bbox=`, `/trails/nearby`, `/trails/{id}`; `POST`, `PUT /{id}`, `PATCH /{id}/status` | lettura pubblica, scrittura `PARK_MANAGER` |
 | POI | `GET /pois/{id}`, `/pois/nearby`, `/pois/trail/{trailId}`; `POST` | lettura pubblica, scrittura `PARK_MANAGER` |
 | Segnalazioni | `POST /hazards`; `GET /hazards/{id}`, `/hazards/trail/{trailId}`, `/hazards/mine`, `/hazards/nearby`, `/hazards/pending`; `PATCH /{id}/status` | creazione `HIKER`, verifica e `/pending` `PARK_MANAGER` |
-| Rifugi | `GET /refuges/{id}`, `/nearby`, `/{id}/availability`; `POST`; `PATCH /{id}/capacity` | lettura autenticata, scrittura del gestore del rifugio o `ADMIN` |
+| Rifugi | `GET /refuges/{id}`, `/nearby`, `/{id}/availability?guests=`; `POST`; `PATCH /{id}/capacity`, `PATCH /{id}/price` | lettura autenticata, scrittura del gestore del rifugio o `ADMIN` |
 | Prenotazioni | `POST /bookings`; `GET /bookings/my`, `/{id}`; `DELETE /{id}` | `HIKER`, solo le proprie |
 | Ticket | `/maintenance-tickets` (creazione, ricerca, modifica, assegnazione, stati, per sentiero) | `PARK_MANAGER` |
 | SOS | `POST /sos`; `PUT /{id}/location`; `DELETE /{id}`; `GET /sos/active` | escursionista, sulla propria allerta |
@@ -107,6 +107,12 @@ sono chiuse e gli arriva un'email. Email sconosciuta o senza 2FA → 404; un `AD
 | Profilo | `GET`, `PATCH`, `DELETE /users/me`; `POST /users/me/password` | autenticato; la cancellazione solo per `HIKER` |
 | Verifica in due passaggi | `POST /users/me/mfa/setup`, `/enable`, `/disable`, `/recovery-codes`; `POST /admin/mfa-resets` | autenticato; il reset solo `ADMIN` |
 | Dispositivi | `POST /devices`; `DELETE /devices/{token}` | autenticato |
+
+Gli importi sono sempre interi in **centesimi di euro** (`pricePerNightCents`, `totalPriceCents`), mai decimali, e li
+calcola solo il server: il client non manda mai un totale. Il prezzo di un rifugio è a persona per notte; la
+prenotazione ne copia il totale (prezzo × notti × ospiti) e lo conserva anche se il gestore cambia il prezzo dopo.
+Il `totalPriceCents` della disponibilità è una stima al prezzo attuale. `null` vuol dire nessun prezzo (si paga in
+rifugio).
 
 Una risorsa che non si può vedere risponde 404, non 403, così l'API non rivela che esiste. Vale per
 prenotazioni, SOS e media di altri utenti e per le segnalazioni rifiutate.

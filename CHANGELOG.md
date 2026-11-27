@@ -6,11 +6,18 @@ Le versioni non sono ancora taggate in git: i numeri raggruppano le milestone de
 ## [Non rilasciato]
 
 ### Aggiunto
+- Prezzo dei rifugi (M10, migrazione V18): `PATCH /refuges/{id}/price` (`updateRefugePrice`, gestore del rifugio o
+  `ADMIN`) imposta il prezzo a persona per notte in centesimi di euro (0–100000, `null` lo toglie). `RefugeResponse`
+  ha `pricePerNightCents`, `BookingResponse` ha `totalPriceCents` (prezzo × notti × ospiti, copiato alla
+  prenotazione e mai ricalcolato), `GET /refuges/{id}/availability` accetta `guests` (1–20, default 1) e restituisce
+  `guests` e `totalPriceCents`. Tutti i campi di prezzo sono `null` per i rifugi senza prezzo.
 - `GET /trails/route` (`findRoute`, ADR-0027): percorso a piedi più breve sui sentieri aperti tra due punti, con
   `path` (semplificato a ~5 m), `lengthM` e `trailIds`; 422 `no-route` se un punto è a più di 50 km dai sentieri o
   non sono collegati. La rete si prepara all'avvio.
 
 ### Modificato
+- Un numero con decimali in un campo intero del JSON (prezzo, ospiti, posti letto, quota) dà 400 invece di essere
+  troncato in silenzio (`spring.jackson.deserialization.accept-float-as-int=false`).
 - Mailpit tolto dal compose (23/11/2026): le email (reset della password, 2FA) partono dal server SMTP configurato
   nel `.env`, ad esempio Gmail con `MAIL_SMTP_AUTH` e `MAIL_STARTTLS`.
 - Commenti del codice riscritti in italiano e in forma esplicativa: intestazione di ogni file e Javadoc su classi e

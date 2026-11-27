@@ -123,4 +123,35 @@ class RefugeBookingServiceTest {
         service.updateCapacity(UUID.randomUUID(), true, refugeId, 5);
         assertThat(refuge.getCapacity()).isEqualTo(5);
     }
+
+    /** Il prezzo, come la capacità, lo cambia solo il gestore del rifugio: per gli altri 403 e prezzo invariato. */
+    @Test
+    void onlyTheRefugeManagerCanChangePrice() {
+        assertThatThrownBy(() -> service.updatePrice(UUID.randomUUID(), false, refugeId, 3500))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThat(refuge.getPricePerNightCents()).isNull();
+
+        service.updatePrice(refuge.getManagerId(), false, refugeId, 3500);
+        assertThat(refuge.getPricePerNightCents()).isEqualTo(3500);
+    }
+
+    /** Un amministratore può cambiare o togliere il prezzo di qualsiasi rifugio. */
+    @Test
+    void adminCanChangePriceOfAnyRefuge() {
+        service.updatePrice(UUID.randomUUID(), true, refugeId, 4000);
+        assertThat(refuge.getPricePerNightCents()).isEqualTo(4000);
+        service.updatePrice(UUID.randomUUID(), true, refugeId, null);
+        assertThat(refuge.getPricePerNightCents()).isNull();
+    }
+
+    /**
+     * Un ritentativo arrivato dopo un cambio di prezzo restituisce la prenotazione con il totale di allora
+     * (qui nessun prezzo), non uno ricalcolato.
+     */
+    @Test
+    void retryAfterAPriceChangeKeepsTheOriginalTotal() {
+        refuge.changePrice(5000);
+        BookingResult result = service.book(USER, KEY, new BookingCommand(refugeId, CHECK_IN, CHECK_IN.plusDays(2), 2));
+        assertThat(result.booking().totalPriceCents()).isNull();
+    }
 }

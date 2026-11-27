@@ -70,6 +70,7 @@ public class RefugeBookingCommands {
      * @param season      periodo di apertura
      * @param phone       telefono
      * @param amenities   servizi, nell'ordine dell'enum
+     * @param pricePerNightCents prezzo a persona per notte in centesimi, {@code null} se non impostato
      */
     public record RefugeView(
             UUID id,
@@ -81,7 +82,8 @@ public class RefugeBookingCommands {
             Integer altitudeM,
             String season,
             String phone,
-            List<RefugeAmenity> amenities
+            List<RefugeAmenity> amenities,
+            Integer pricePerNightCents
     ) {
         /**
          * Costruisce la vista a partire dall'entità.
@@ -92,7 +94,8 @@ public class RefugeBookingCommands {
          */
         public static RefugeView from(Refuge r, GeometryMapper geo) {
             return new RefugeView(r.getId(), r.getName(), geo.toDto(r.getLocation()), r.getCapacity(), r.getManagerId(),
-                    r.getDescription(), r.getAltitudeM(), r.getSeason(), r.getPhone(), List.copyOf(r.getAmenities()));
+                    r.getDescription(), r.getAltitudeM(), r.getSeason(), r.getPhone(), List.copyOf(r.getAmenities()),
+                    r.getPricePerNightCents());
         }
     }
     /**
@@ -105,6 +108,7 @@ public class RefugeBookingCommands {
      * @param checkOut giorno di partenza
      * @param guests   numero di ospiti
      * @param status   stato
+     * @param totalPriceCents totale copiato alla prenotazione, {@code null} se il rifugio non aveva un prezzo
      */
     public record BookingView(
             UUID id,
@@ -113,7 +117,8 @@ public class RefugeBookingCommands {
             LocalDate checkIn,
             LocalDate checkOut,
             int guests,
-            BookingStatus status
+            BookingStatus status,
+            Integer totalPriceCents
     ) {
         /**
          * @param b prenotazione
@@ -127,7 +132,8 @@ public class RefugeBookingCommands {
                     b.getCheckIn(),
                     b.getCheckOut(),
                     b.getGuests(),
-                    b.getStatus()
+                    b.getStatus(),
+                    b.getTotalPriceCents()
             );
         }
     }
@@ -147,12 +153,16 @@ public class RefugeBookingCommands {
      * @param from                  prima notte
      * @param to                    giorno di fine, escluso
      * @param availableBedsPerNight posti liberi per ogni notte, in ordine di data
+     * @param guests                ospiti su cui è calcolato il totale
+     * @param totalPriceCents       prezzo attuale × notti × ospiti, {@code null} se il rifugio non ha un prezzo
      */
     public record AvailabilityView(
             UUID refugeId,
             int totalCapacity,
             LocalDate from,
             LocalDate to,
-            Map<LocalDate, Integer> availableBedsPerNight
+            Map<LocalDate, Integer> availableBedsPerNight,
+            int guests,
+            Integer totalPriceCents
     ) {}
 }

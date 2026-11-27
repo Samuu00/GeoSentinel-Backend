@@ -67,6 +67,15 @@ public class Refuge extends AuditableEntity{
     @Enumerated(EnumType.STRING)
     @BatchSize(size = 50)
     private Set<RefugeAmenity> amenities = new HashSet<>();
+    /**
+     * Prezzo a persona per notte, in centesimi di euro; {@code null} se il gestore non l'ha impostato.
+     * Stesso intervallo del CHECK nel DDL (V18).
+     */
+    @Column(name = "price_per_night_cents")
+    private Integer pricePerNightCents;
+
+    /** Prezzo massimo a persona per notte, in centesimi (1000 €). */
+    public static final int MAX_PRICE_PER_NIGHT_CENTS = 100_000;
 
     /** Costruttore richiesto da JPA. */
     protected Refuge() {}
@@ -136,6 +145,34 @@ public class Refuge extends AuditableEntity{
     public void changeCapacity(int newCapacity) { this.capacity = validateCapacity(newCapacity); }
 
     /**
+     * Imposta o toglie il prezzo a persona per notte. Le prenotazioni già fatte non cambiano: conservano il
+     * totale calcolato quando sono state create.
+     *
+     * @param pricePerNightCents nuovo prezzo in centesimi, oppure {@code null} per toglierlo
+     * @throws BusinessRuleViolationException se è fuori dall'intervallo da 0 a {@link #MAX_PRICE_PER_NIGHT_CENTS}
+     */
+    public void changePrice(Integer pricePerNightCents) {
+        if (pricePerNightCents != null && (pricePerNightCents < 0 || pricePerNightCents > MAX_PRICE_PER_NIGHT_CENTS)) {
+            throw new BusinessRuleViolationException("Price per night must be between 0 and " + MAX_PRICE_PER_NIGHT_CENTS + " cents");
+        }
+        this.pricePerNightCents = pricePerNightCents;
+    }
+
+    /**
+     * Calcola il costo di un soggiorno al prezzo attuale: prezzo × notti × ospiti. È l'unico punto in cui si
+     * calcola, sia per la disponibilità sia per la copia sulla prenotazione.
+     *
+     * @param nights numero di notti, positivo
+     * @param guests numero di ospiti, positivo
+     * @return il totale in centesimi, oppure {@code null} se il rifugio non ha un prezzo
+     * @throws ArithmeticException se il totale supera un int (impossibile con i limiti delle API)
+     */
+    public Integer totalPriceCents(long nights, int guests) {
+        if (pricePerNightCents == null) return null;
+        return Math.toIntExact(Math.multiplyExact(Math.multiplyExact((long) pricePerNightCents, nights), (long) guests));
+    }
+
+    /**
      * Imposta i dati descrittivi del rifugio, tutti facoltativi. I testi vuoti diventano {@code null} e
      * gli altri vengono salvati senza spazi ai bordi; l'elenco dei servizi sostituisce quello precedente.
      *
@@ -180,6 +217,7 @@ public class Refuge extends AuditableEntity{
     public Integer getAltitudeM() { return altitudeM; }
     public String getSeason() { return season; }
     public String getPhone() { return phone; }
+    public Integer getPricePerNightCents() { return pricePerNightCents; }
     /**
      * Restituisce i servizi in una copia ordinata come l'enum, non nell'ordine casuale del Set, così
      * l'app li mostra sempre nello stesso ordine.

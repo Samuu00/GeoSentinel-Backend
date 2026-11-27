@@ -16,6 +16,8 @@
 > - **M8, verifica in due passaggi** (TOTP, ADR-0025, `V15__mfa`): scritta dall'utente, revisionata e corretta il 19/10; `./mvnw verify` verde (76 unit + 179 IT).
 > - **Audit della 2FA del 10/11** (ADR-0026, `V17__mfa_setup_email_code`): 3 piste su 5 confermate e corrette da Claude su richiesta (codice email allo setup, 2FA nel cambio password, due bucket dei tentativi, dispositivi cancellati al collegamento Google); `./mvnw verify` verde (76 unit + 189 IT); app adattata e provata sull'emulatore lo stesso giorno. Dettagli in fondo a M8.
 > - **Percorso A→B (21–22/11):** prima una rete in memoria (ADR-0027), poi GraphHopper sull'estratto OSM della Calabria (ADR-0028), sentieri `CLOSED` evitati, 503 `routing-unavailable`. Sezione "Dopo M9 — Percorso A→B".
+> - **Pianificate il 26/11:** M10 prezzo per notte dei rifugi (V18), M11 pagamenti con Stripe e poi PayPal (V19, ADR-0029), M12 impianti sciistici della Calabria con skipass giornaliero (V20), M13 stagione dei funghi e posti segnalati (V21), M14 riconoscimento dei funghi da foto con l'AI (ADR-0030). Sezione "Nuove feature" prima di §4.
+> - Il simulatore delle frane (vecchia M10, ADR-0022/0023) è diventato un progetto a parte (26/11).
 > **Cosa manca, in ordine: §7.**
 > M3 e M4 verificate anche dal vivo contro MinIO e Redis del compose, M5.3 nel browser. Limiti noti accettati: vedi le note "Limite noto" in M4.2 e M2.3/M2.7.
 
@@ -64,7 +66,7 @@ GeoSentinel-Backend/
 │   ├── README.md          # indice della documentazione
 │   ├── MASTER_PLAN.md
 │   ├── architecture.md    # arc42 + C4
-│   ├── adr/               # Architecture Decision Records (0001–0023 + template)
+│   ├── adr/               # Architecture Decision Records (0001–0028 + template)
 │   ├── api-guide.md       # guida per chi sviluppa il client
 │   ├── operations.md      # runbook
 │   └── openapi.json       # contratto (OpenApiContractIT)
@@ -166,6 +168,10 @@ GeoSentinel-Backend/
     │   │   │   │   ├── persistence/  MediaFileRepository
     │   │   │   │   └── storage/      MinioObjectStorage, MinioConfig, MinioProperties
     │   │   │   └── web/           MediaController (/api/v1/media), dto/ MediaDtos, MediaMapper
+    │   │   │
+    │   │   ├── payment/      # (M11, pianificata) PaymentService, port/PaymentProvider, StripePaymentProvider, PaymentExpiryJob
+    │   │   ├── ski/          # (M12, pianificata) SkiResort, SkiPassBooking, SkiResortService
+    │   │   ├── mushroom/     # (M13–M14, pianificate) specie, posti, MushroomIdentifier + ClaudeMushroomIdentifier
     │   │   │
     │   │   └── notification/                         # dispositivi e push (M7.4)
     │   │       ├── domain/        DeviceToken, DevicePlatform
@@ -1280,6 +1286,443 @@ circa 57 gruppi non collegati, e tra due gruppi l'app mostrava una linea dritta.
 
 ---
 
+### Nuove feature (pianificate il 26/11): ordine e regole comuni
+
+> Pianificate il 26/11 su richiesta dell'utente. Il codice lo scrivi tu; Claude revisiona. Ordine:
+> **M10 prezzi → M11 pagamenti → M12 impianti sciistici → M13 funghi → M14 riconoscimento con l'AI.**
+> M12 riusa le prenotazioni e i pagamenti, M14 riusa il catalogo delle specie di M13.
+> Scelte dell'utente (26/11): allo sci si prenota lo **skipass giornaliero**; prima **Stripe**, PayPal dopo
+> dietro la stessa porta; i posti dei funghi li rende **privati o pubblici chi li segnala**.
+
+Regole che valgono per tutte e cinque:
+- **Denaro:** sempre `integer` in **centesimi di euro** (`*_cents`), mai `double`. Una sola valuta (EUR), quindi
+  niente colonna `currency`: si aggiunge quando servirà. Il prezzo si **copia sulla prenotazione** al momento della
+  creazione: se il gestore lo cambia dopo, chi ha già prenotato paga quello di allora. Gli importi li calcola solo il
+  server: il client non manda mai un importo.
+- **Migrazioni:** V1–V17 sono immutabili. V18 prezzi, V19 pagamenti, V20 sci, V21 funghi (più il catalogo
+  ripetibile `R__mushroom_species.sql`). `validate` non controlla `NOT NULL` né lunghezze: vanno replicati a mano.
+- **Enum nelle risposte:** `BookingStatus.PENDING_PAYMENT` e gli enum nuovi cambiano il client generato. Ogni
+  milestone che ne aggiunge uno va integrata nell'app **nello stesso giro** (regola di M7.1).
+- **Cancellazione dell'account:** ogni feature nuova con dati personali espone `…Of(UUID userId)` e
+  `UserAccountService.deleteAccount` la chiama (skipass futuri come le prenotazioni, posti dei funghi). Eccezione:
+  i pagamenti restano per la contabilità, con `user_id` messo a `NULL` (vedi M11).
+- **Contratto OpenAPI:** `operationId`, `REQUIRED` sui campi mai null, `docs/openapi.json` rigenerato,
+  `api-guide.md` e `CHANGELOG.md` aggiornati, come sempre.
+- **Rete mobile:** una GET pubblica nuova con ETag va sia in `HttpCacheConfig` sia in `PUBLIC_CATALOG`.
+
+---
+
+### Milestone 10 — Prezzo per notte dei rifugi
+
+> Oggi `Refuge` non ha un prezzo (né in V3 né in V11) e OpenStreetMap non lo dà: lo imposta il gestore.
+
+**Obiettivo:** ogni rifugio ha un prezzo **a persona per notte** (com'è d'uso nei rifugi italiani); la
+disponibilità mostra il totale prima di prenotare; la prenotazione conserva quanto costava.
+
+**Scelte:**
+- `price_per_night_cents` **nullable**: `NULL` = prezzo non impostato. Senza prezzo la prenotazione resta com'è oggi
+  (confermata subito, si paga in rifugio); con un prezzo, da M11, passa dal pagamento online.
+- Totale = prezzo × notti × ospiti.
+- Il prezzo lo cambia il gestore del rifugio o un ADMIN, come la capacità (stesso controllo di `updateCapacity`,
+  stesso lock `findByIdForUpdate`).
+
+**Dati — `V18__refuge_price.sql`:**
+- `refuges.price_per_night_cents integer NULL CHECK (price_per_night_cents BETWEEN 0 AND 100000)`
+- `bookings.total_price_cents integer NULL CHECK (total_price_cents >= 0)`: copia al momento della prenotazione;
+  `NULL` per le prenotazioni vecchie e per i rifugi senza prezzo
+
+**Contratti:**
+```java
+// refuge/domain
+Refuge.changePrice(Integer pricePerNightCents)     // null ammesso (toglie il prezzo); fuori da 0..100000 → IllegalArgumentException
+Booking.create(..., Integer totalPriceCents)       // copia, mai ricalcolata
+// refuge/application
+RefugeView updatePrice(UUID actorId, boolean actorIsAdmin, UUID refugeId, Integer pricePerNightCents)
+// AvailabilityView: + Integer totalPriceCents (prezzo × notti × ospiti richiesti; null senza prezzo)
+// refuge/web
+PATCH /api/v1/refuges/{id}/price   { "pricePerNightCents": 3500 }   operationId updateRefugePrice
+```
+- `RefugeResponse.pricePerNightCents` e `BookingResponse.totalPriceCents` nullable (senza `REQUIRED`).
+- `UpdateRefugePriceRequest.pricePerNightCents` con `@Min(0) @Max(100000)` (null = togli il prezzo).
+- Seed locale (`R__local_seed.sql`): un prezzo di prova sui rifugi del seed. Nel seed OSM (`tools/osm-import`) resta
+  `NULL`: un prezzo inventato su un rifugio vero sarebbe un dato falso.
+
+**Checkpoint:**
+- [x] `BookingTest`: il totale copiato non cambia se poi cambia il prezzo del rifugio
+- [x] `RefugeBookingServiceTest`: `updatePrice` solo gestore o ADMIN (403 altrimenti)
+- [x] IT: prenotazione con prezzo → `totalPriceCents` = prezzo × notti × ospiti; senza prezzo → `null`; prezzo
+  negativo → 400; `MigrationIT` con V18 (`RefugePriceIT`)
+- [x] `docs/openapi.json` rigenerato; `./mvnw verify` verde
+
+> **Fatta il 27/11** (scritta da Claude su richiesta). Differenze dal contratto sopra:
+> - `Booking.create` non riceve il totale: lo calcola `Refuge.totalPriceCents(notti, ospiti)`, l'unico punto del
+>   calcolo (usato anche dalla disponibilità), con `Math.multiplyExact`;
+> - `changePrice` fuori intervallo lancia `BusinessRuleViolationException` (422, come la capacità), non
+>   `IllegalArgumentException` (sarebbe un 500); dal web il 400 arriva prima, da `@Min/@Max`;
+> - la disponibilità ha `?guests=` (1–20, default 1) e restituisce anche `guests`;
+> - seed locale (su richiesta dell'utente, 28/11): un `UPDATE` in fondo a `R__local_seed.sql` dà a ogni rifugio senza
+>   prezzo un prezzo base pseudo-casuale e stabile (25–60 €, da `hashtext(id)`); il seed OSM resta senza prezzi;
+> - `spring.jackson.deserialization.accept-float-as-int=false`: `35.99` in un campo intero dà 400 invece di 35 (bug
+>   trovato in review, `RefugePriceIT`);
+> - provata sull'emulatore con l'app (M12 del piano mobile) il 28/11.
+> - Da fare nell'app (M12 del piano mobile): rigenerare il client, mostrare prezzo e totale.
+
+---
+
+### Milestone 11 — Pagamenti online (Stripe, poi PayPal)
+
+> Nuovo **ADR-0029** (pagamenti). Solo **modalità di test** (chiavi `sk_test_…`, carta 4242 4242 4242 4242): il
+> progetto è una tesi e gira in locale, nessun pagamento vero.
+
+**Obiettivo:** chi prenota un rifugio con un prezzo (e da M12 uno skipass) paga con carta dall'app; se annulla in
+tempo viene rimborsato.
+
+**Scelte (da fissare nell'ADR-0029):**
+- **Porta `PaymentProvider`** in `payment/application` (è un sistema esterno: la regola D2 la ammette), adattatore
+  `StripePaymentProvider`; `PayPalPaymentProvider` è il secondo adattatore, dopo (ultimo checkpoint).
+- **Stripe Checkout (pagina ospitata da Stripe)**, aperta dall'app nel browser di sistema (Custom Tabs /
+  `ASWebAuthenticationSession`). I dati della carta non passano mai né dall'app né dal backend: nessun SDK di Stripe
+  nell'app KMP.
+- **Ritorno nell'app:** `success_url` e `cancel_url` puntano a `GET /api/v1/payments/return?target=…&id=…`
+  (pubblica, nessun dato), che risponde 302 verso `geosentinel://payments/return?...`. Così l'app riceve un
+  callback con uno schema suo: su iOS `ASWebAuthenticationSession` si chiude da sola, su Android una Custom Tab con un
+  intent filter sullo schema. Se Stripe accetta direttamente uno schema personalizzato come `success_url` (da
+  verificare nella documentazione), la rotta di ritorno non serve. Il ritorno **non** conferma niente: conferma solo
+  il sync.
+- **Conferma senza webhook:** in locale Stripe non raggiunge il backend. Il backend chiede a Stripe lo stato della
+  sessione quando l'app torna (`POST /bookings/{id}/payment/sync`) e in un job ogni minuto per i pagamenti in attesa.
+  Il webhook (`checkout.session.completed`, firma `Stripe-Signature` verificata, id dell'evento univoco per
+  l'idempotenza, rotta `permitAll` fuori dal rate limit) si aggiunge solo se servirà: in locale funziona solo con
+  `stripe listen --forward-to`.
+- **Posti tenuti durante il pagamento:** la prenotazione nasce `PENDING_PAYMENT` e **conta nella capacità**
+  (altrimenti due persone pagano lo stesso letto). La sessione di Checkout scade dopo 30 minuti (il minimo che Stripe
+  accetta: da verificare nella documentazione); scaduta senza pagamento, la prenotazione passa a `CANCELLED` e i
+  posti si liberano.
+- **Gara all'ultimo secondo:** prima di annullare una prenotazione scaduta, il job chiama `expire` sulla sessione; se
+  Stripe risponde che è già pagata, la conferma invece di annullarla.
+- **Rimborso:** l'annullamento di una prenotazione pagata prima del check-in rimborsa tutto. Dopo il check-in
+  l'annullamento è già vietato (`Booking.cancel`). Una politica a percentuali si aggiunge se servirà.
+- **Idempotenza verso Stripe:** header `Idempotency-Key` = id del pagamento sulla creazione della sessione e sul
+  rimborso: un retry non crea una seconda sessione né un secondo rimborso.
+- **Niente ciclo `refuge → payment → refuge`:** `refuge` chiama `PaymentService` per avviare e rimborsare;
+  `payment` pubblica `PaymentSucceededEvent(paymentId, targetType, targetId)` e `PaymentExpiredEvent(…)`, che
+  `refuge` (e poi `ski`) ascolta con `@EventListener` nella stessa transazione per confermare o annullare.
+- **Cancellazione dell'account:** le prenotazioni future pagate si annullano **con rimborso**; le righe di `payments`
+  restano (servono alla contabilità) con `user_id = NULL`.
+- **Chiamate HTTP:** la scelta tra `RestClient` e l'SDK `stripe-java` va nell'ADR. Servono quattro chiamate
+  form-encoded: creazione della sessione, lettura, expire, rimborso. Con `RestClient` serve la request factory
+  fissata (trappola di `httpclient5`, vedi `CLAUDE.md`) e timeout di 2 s + 10 s. Errori di rete, timeout e 5xx →
+  `PaymentUnavailableException` → 503 `payment-unavailable` con `Retry-After`.
+- **Configurazione:** `STRIPE_SECRET_KEY` nel `.env` (in `.env.example` solo il nome); `geosentinel.payments.enabled`
+  spento di default: spento, i rifugi con un prezzo si prenotano come oggi (si paga in rifugio). Nei test un
+  `PaymentProvider` finto con `@MockitoBean`: **mai chiamate vere in CI**.
+
+**Dati — `V19__payments.sql`:**
+| Tabella / modifica | Contenuto |
+|---|---|
+| `payments` | `id uuid PK`, `user_id uuid NULL` FK `users(id)` con indice, `target_type varchar(20) NOT NULL CHECK IN ('REFUGE_BOOKING','SKI_PASS_BOOKING')`, `target_id uuid NOT NULL`, `provider varchar(20) NOT NULL CHECK IN ('STRIPE','PAYPAL')`, `provider_ref varchar(255) NULL UNIQUE` (id della sessione), `amount_cents integer NOT NULL CHECK (amount_cents > 0)`, `status varchar(20) NOT NULL CHECK IN ('PENDING','PAID','EXPIRED','REFUNDED')`, `expires_at timestamptz NOT NULL`, `paid_at`, `refunded_at`, `created_at`; `UNIQUE (target_type, target_id)`; indice parziale su `expires_at WHERE status = 'PENDING'` per il job |
+| `bookings` | `DROP CONSTRAINT` del CHECK su `status` e di nuovo con `'PENDING_PAYMENT'` |
+
+**Contratti:**
+```java
+// payment/application
+public interface PaymentProvider {
+    CheckoutSession createCheckout(UUID paymentId, int amountCents, String description, Instant expiresAt); // (providerRef, checkoutUrl)
+    ProviderStatus fetchStatus(String providerRef);     // PAID, OPEN, EXPIRED
+    ProviderStatus expire(String providerRef);          // PAID se nel frattempo è stata pagata
+    void refund(String providerRef, UUID paymentId);    // rimborso totale, idempotente
+}
+public class PaymentService {
+    PaymentStart start(UUID userId, PaymentTarget target, int amountCents, String description); // nella transazione della prenotazione
+    PaymentView sync(UUID userId, PaymentTarget target); // rilegge da Stripe; 404 se non tuo
+    void refund(PaymentTarget target);                   // ultima istruzione della transazione di cancel (effetto irreversibile per ultimo)
+    void deleteAllOf(UUID userId);                       // user_id = NULL, niente cancellazione
+}
+// payment/application/PaymentExpiryJob: ogni 60 s; `@Scheduled` spento nei test, che lo chiamano direttamente
+// refuge: book() con prezzo e pagamenti accesi → PENDING_PAYMENT + PaymentStart
+// BookingResponse: + checkoutUrl (nullable), paymentExpiresAt (nullable)
+POST /api/v1/bookings/{id}/payment/sync    operationId syncBookingPayment   → BookingResponse
+```
+- **`PENDING_PAYMENT` conta come `CONFIRMED` ovunque si leggono posti o limiti.** È la modifica più facile da
+  dimenticare. Oggi `'CONFIRMED'` o `BookingStatus.CONFIRMED` compaiono in cinque punti, da rivedere uno per uno:
+  - `BookingRepository.maxNightlyOccupancy` (capacità per notte, anche nella disponibilità);
+  - la query `MAX(check_out)` usata dal 409 di `updateCapacity`;
+  - `findActiveOverlappingBookings`;
+  - il limite per utente di `book` (`countByUserIdAndStatusAndCheckOutAfter`, ADR-0021);
+  - `cancelAllFutureOf`: la cancellazione dell'account deve annullare anche quelle in attesa, chiudendo la sessione
+    di Stripe.
+  Il modo più corto: una costante `ACTIVE_STATUSES = (CONFIRMED, PENDING_PAYMENT)` e `status IN (...)` nelle query.
+- `Booking.isSameRequest` invariato: un retry con la stessa `Idempotency-Key` restituisce la prenotazione in attesa
+  con lo **stesso** `checkoutUrl` (nessuna seconda sessione).
+- Errori nuovi in `ProblemTypes`: `payment-unavailable` (503), `payment-expired` (409: sync o "paga ora" dopo la
+  scadenza).
+
+**Checkpoint:**
+- [ ] `PaymentServiceTest` (provider finto): avvio; sync pagato → evento e prenotazione `CONFIRMED`; scaduta →
+  `CANCELLED`; gara: scaduta ma `expire` risponde `PAID` → `CONFIRMED`
+- [ ] `StripePaymentProviderTest` (`MockRestServiceServer`, o il client finto dell'SDK): importo, `expires_at`,
+  `Idempotency-Key`; 5xx → `PaymentUnavailableException`
+- [ ] IT di concorrenza (`@RepeatedTest(5)`): 10 posti, 20 prenotazioni in parallelo con pagamento → 10 × 201 e
+  10 × 409 (i posti in attesa contano)
+- [ ] IT: annullamento di una prenotazione pagata → rimborso chiamato una volta; Stripe giù → 503 e prenotazione
+  ancora `CONFIRMED`; account cancellato → rimborso e `payments.user_id` `NULL`
+- [ ] Dal vivo con le chiavi di test: pagamento con 4242… → `CONFIRMED`; carta rifiutata (4000 0000 0000 0002) →
+  resta in attesa e scade; rimborso visibile nella dashboard di test di Stripe
+- [ ] **PayPal (dopo):** `PayPalPaymentProvider` con Orders v2 (`create`, approvazione nel browser, `capture` lato
+  server al sync, `refund`), sandbox; il provider si sceglie nella richiesta di prenotazione (`provider`, default
+  `STRIPE`). Nessuna modifica a `refuge` né a `ski`
+
+---
+
+### Milestone 12 — Impianti sciistici della Calabria e skipass
+
+> Su M10 e M11. Il codice lo scrivi tu.
+
+**Obiettivo:** sulla mappa ci sono gli impianti sciistici della Calabria; per ognuno l'app dice se oggi è aperto o
+chiuso e perché; se è aperto si prenota (e si paga) lo skipass giornaliero.
+
+**Cosa c'è in OpenStreetMap (letto il 26/11 da `tools/osm-import/.cache/sud.osm.pbf`):** in Calabria non ci sono
+aree `landuse=winter_sports`. Ci sono 22 tratti `aerialway=*` e 34 piste `piste:type=downhill`, raggruppati in
+quattro località:
+| Località | Centro (lat, lon) | Impianti in OSM | Piste in OSM |
+|---|---|---|---|
+| Gambarie d'Aspromonte | 38,16 / 15,85 | seggiovie Gambarie–Monte Scirocco e Monte Scirocco–Nardello, skilift Telese e Nino Martino | 5 con nome (Sud, Azzurra, Nord, Telese, Nino Martino) |
+| Lorica – Monte Botte Donato (Sila Grande) | 39,27 / 16,48 | Funivia Lorica (cabinovia), seggiovia Valle del Cavaliere, skilift Valle d'Inferno 1 e 2 | 5, senza nome |
+| Camigliatello Silano – Monte Curcio (Sila Grande) | 39,32 / 16,42 | Cabinovia Monte Curcio | 3 (Rossa, Blu) |
+| Sila Piccola, 39,19 / 16,65 (probabilmente **Villaggio Palumbo**: da confermare, gli impianti non hanno nome) | 39,19 / 16,65 | 2 seggiovie, 1 skilift, 1 tappeto | 11, senza nome |
+
+Il gruppo a 40,14 / 15,84 (Monte Sirino) sta in **Basilicata**, dentro il riquadro ma fuori dal confine: lo scarta
+il ritaglio sul confine regionale di `build_seed.sql`. Altre località calabresi (es. Ciricilla, la neve nordica del
+Pollino) non hanno impianti di risalita in OSM: si aggiungono a mano se servono.
+
+**Scelte:**
+- Feature nuova `ski/` (`domain`, `application`, `infrastructure`, `web`), come `refuge`.
+- **Import da OSM:** senza aree e con impianti spesso senza nome, il raggruppamento automatico non regge. In
+  `build_seed.sql` una piccola tabella scritta a mano (nome + punto delle quattro località); per ognuna il seed
+  conta impianti e piste entro 3 km e costruisce l'area come inviluppo convesso (`ST_ConvexHull`) di impianti e
+  piste. Prezzo, capienza e stagione OSM non li ha: nel seed OSM restano `NULL` e li imposta il gestore; il seed
+  locale ne mette di prova.
+- **Aperto o chiuso.** Non c'è un dato in tempo reale sulla neve, quindi lo stato è indicativo e l'app lo dice:
+  1. se il gestore ha impostato uno stato manuale ancora valido (`override_status` fino a `override_until`), vale
+     quello (motivo `MANAGER`): es. chiuso per mancanza di neve, aperto in anticipo;
+  2. altrimenti aperto se oggi è dentro la stagione (`season_start`…`season_end`, giorno e mese, anche a cavallo
+     d'anno: dicembre → marzo), chiuso fuori (motivo `SEASON`);
+  3. senza stagione impostata → `UNKNOWN` (motivo `NOT_CONFIGURED`, non prenotabile).
+  Lo stato si calcola nel service con il bean `Clock` e non si salva: così non serve un job che lo aggiorni.
+- **Skipass giornaliero:** prezzo a persona al giorno (`price_per_day_cents`), capienza giornaliera
+  (`daily_capacity`), da 1 a 7 giorni consecutivi, e **ogni giorno deve risultare aperto**. Stesso schema di
+  `RefugeBookingService.book`: lock sulla riga dell'impianto → chiave di idempotenza → date → capacità **giorno per
+  giorno** (`generate_series` sui giorni, estremi inclusi) → pagamento (M11) → save.
+- Ruoli: crea e gestisce un impianto un `PARK_MANAGER` (diventa il suo `managerId`, come per i rifugi) o un ADMIN.
+- Rotte pubbliche in lettura, **disponibilità compresa** (non contiene dati personali, e così basta un solo
+  matcher `GET /api/v1/ski-resorts/**` in `permitAll`), con ETag debole in `HttpCacheConfig` **e** `PUBLIC_CATALOG`.
+  Lo skipass sta sotto `/ski-passes`, fuori da quel matcher (stesso motivo per cui i pericoli stanno sotto
+  `/hazards` e non sotto `/trails/**`).
+  La risposta contiene lo stato calcolato per oggi, quindi l'ETag cambia da solo al cambio di stagione.
+
+**Dati — `V20__ski_resorts.sql`:**
+| Tabella | Contenuto |
+|---|---|
+| `ski_resorts` | `id`, `name varchar(120) NOT NULL`, `location geometry(Point,4326) NOT NULL` (+ GiST su `::geography`), `area geometry(Polygon,4326) NULL`, `altitude_min_m`, `altitude_max_m`, `lifts_count smallint NULL`, `pistes_count smallint NULL`, `season_start varchar(5) NULL` e `season_end varchar(5) NULL` (`MM-DD`, CHECK con regex, entrambe o nessuna), `override_status varchar(10) NULL CHECK IN ('OPEN','CLOSED')`, `override_until date NULL` (insieme a `override_status`), `price_per_day_cents integer NULL`, `daily_capacity integer NULL CHECK (daily_capacity > 0)`, `manager_id uuid NULL` FK, `version`, auditing |
+| `ski_pass_bookings` | `id`, `resort_id` FK con indice, `user_id` FK con indice, `first_day date`, `last_day date` (`CHECK last_day >= first_day AND last_day - first_day < 7`), `skiers smallint CHECK (skiers BETWEEN 1 AND 10)`, `status` (`PENDING_PAYMENT`, `CONFIRMED`, `CANCELLED`), `total_price_cents integer NULL`, `idempotency_key uuid NOT NULL`, `UNIQUE (user_id, idempotency_key)`, auditing |
+
+**Contratti:**
+```java
+// ski/domain
+enum SkiResortStatus { OPEN, CLOSED, UNKNOWN }     enum StatusReason { SEASON, MANAGER, NOT_CONFIGURED }
+ResortStatus SkiResort.statusOn(LocalDate day)      // pura, testata senza Spring
+// ski/application
+public class SkiResortService {
+    List<SkiResortSummaryView> findNearby(double lon, double lat, double radiusM, int limit); // ≤ 50 km, come i rifugi
+    SkiResortView get(UUID id);                                                  // con statusOn(oggi)
+    SkiPassAvailabilityView availability(UUID id, LocalDate from, LocalDate to); // per giorno: aperto, posti liberi; più il totale
+    SkiPassResult book(UUID userId, UUID idempotencyKey, SkiPassCommand cmd);    // @PreAuthorize HIKER
+    void cancel(UUID userId, UUID bookingId);                                    // rimborso se pagato e prima di first_day
+    SkiResortView updateSettings(UUID actorId, boolean isAdmin, UUID id, SkiResortSettings s);  // stagione, prezzo, capienza
+    SkiResortView setOverride(UUID actorId, boolean isAdmin, UUID id, long expectedVersion,
+                              SkiResortStatus status, LocalDate until);           // status null = togli
+    void cancelAllFutureOf(UUID userId);
+}
+// ski/web
+GET    /api/v1/ski-resorts/nearby             listNearbySkiResorts      (pubblica, ETag)
+GET    /api/v1/ski-resorts/{id}               getSkiResort              (pubblica, ETag)
+GET    /api/v1/ski-resorts/{id}/availability  getSkiPassAvailability    (pubblica, senza ETag: cambia a ogni prenotazione)
+PATCH  /api/v1/ski-resorts/{id}/settings      updateSkiResortSettings
+PUT    /api/v1/ski-resorts/{id}/override      setSkiResortOverride      (If-Match: c'è @Version)
+POST   /api/v1/ski-passes                     bookSkiPass               (Idempotency-Key obbligatoria)
+GET    /api/v1/ski-passes/my                  listMySkiPasses           (paginata, sort in whitelist)
+GET    /api/v1/ski-passes/{id}                getSkiPass
+DELETE /api/v1/ski-passes/{id}                cancelSkiPass
+POST   /api/v1/ski-passes/{id}/payment/sync   syncSkiPassPayment
+```
+- Errore nuovo: `resort-closed` (422: uno dei giorni richiesti è chiuso). `capacity-exceeded` (409) esiste già.
+- L'area esce come GeoJSON con un record `GeoJsonPolygon` in `shared/web/geo`, validato nel costruttore come
+  `GeoJsonLineString`.
+
+**Checkpoint:**
+- [ ] `SkiResortTest`: stagione dicembre → marzo (1 gennaio aperto, 1 luglio chiuso); override scaduto ignorato;
+  stagione assente → `UNKNOWN`
+- [ ] IT di concorrenza (`@RepeatedTest(5)`): capienza giornaliera 10, 30 prenotazioni parallele dello stesso giorno →
+  10 × 201 e 20 × 409
+- [ ] IT: due giorni di cui uno chiuso → 422 `resort-closed`; retry con la stessa chiave → 200 e una sola riga;
+  annullamento di uno skipass pagato → rimborso; ETag e 304 sulla GET pubblica; account cancellato → skipass futuri
+  annullati
+- [ ] Import OSM: le quattro località arrivano nel seed con l'area, il Sirino no; `MigrationIT` con V20
+- [ ] `docs/openapi.json` rigenerato; `./mvnw verify` verde
+
+---
+
+### Milestone 13 — Funghi: stagione vicino ai sentieri e posti segnalati
+
+> Il codice lo scrivi tu. Prima dei testi per l'utente, verifica le regole vere: in Calabria la raccolta dei funghi
+> è regolata da una **legge regionale** (autorizzazione o tesserino, giorni consentiti, chili per persona), e nei
+> parchi (Sila, Aspromonte, Pollino) valgono anche i regolamenti del parco, con zone dove è vietata. Numero della
+> legge, limiti e fonti vanno cercati e citati: non scriverli a memoria.
+
+**Obiettivo:** vicino a un sentiero l'app dice quali funghi sono in stagione in questo periodo; gli utenti segnano i
+posti dove li hanno trovati, privati (un diario) o pubblici.
+
+**Scelte:**
+- **Catalogo delle specie statico**, uguale per tutti: migrazione **ripetibile** `db/migration/R__mushroom_species.sql`
+  (gira in tutti i profili e si può correggere; `INSERT … ON CONFLICT (code) DO UPDATE`). Una ventina di specie comuni
+  in Calabria, comprese le **velenose e mortali** che si confondono con quelle commestibili (es. *Amanita
+  phalloides*). Per ogni specie: mesi della stagione, fascia di quota, habitat (faggio, castagno, pino laricio,
+  querce…), commestibilità secondo la fonte, specie con cui si confonde, fonte. I dati vengono da fonti citabili
+  (guide micologiche, ASL, enti regionali): da cercare e citare nel file.
+- **"In stagione"** = il mese di oggi è dentro la stagione della specie e, se l'app manda la quota (la ricava già dal
+  profilo altimetrico), la quota è dentro la fascia. Niente meteo per ora: "dopo le piogge" (Open-Meteo, senza
+  chiave) è un'estensione da decidere se servirà.
+- **Posti segnalati:** un punto, la specie (facoltativa), la data del ritrovamento, una nota (≤ 500 caratteri) e la
+  **visibilità scelta da chi segnala**: `PRIVATE` (solo lui) o `PUBLIC` (tutti gli utenti autenticati). Un
+  `PARK_MANAGER` può **nascondere** un posto pubblico (es. in una zona dove la raccolta è vietata); nascosto, lo vede
+  solo chi l'ha segnalato. `reporterId` mai nella risposta (come per i pericoli): solo `mine: boolean`.
+- I posti si leggono solo da autenticati (non sono catalogo pubblico): niente ETag, `no-store`.
+- **Matcher:** in `permitAll` e in `PUBLIC_CATALOG` solo i due path esatti `GET /api/v1/mushrooms/species` e
+  `GET /api/v1/mushrooms/season`, **mai** `/api/v1/mushrooms/**`: sotto lo stesso prefisso c'è `POST
+  /mushrooms/identify`, che costa e deve restare autenticato.
+- Limite: 30 posti al giorno per utente (stesso stile dell'ADR-0021). Niente foto dei posti per ora: si aggiungono
+  con un `MediaTargetType` nuovo se serviranno.
+
+**Dati — `V21__mushrooms.sql` + `R__mushroom_species.sql`:**
+| Tabella | Contenuto |
+|---|---|
+| `mushroom_species` | `code varchar(60) PK` (es. `boletus-edulis`), `scientific_name varchar(120) NOT NULL UNIQUE`, `common_name_it varchar(120) NOT NULL`, `edibility varchar(20) NOT NULL CHECK IN ('EDIBLE','NOT_EDIBLE','TOXIC','DEADLY')`, `season_from_month smallint NOT NULL`, `season_to_month smallint NOT NULL` (anche a cavallo d'anno), `altitude_min_m`, `altitude_max_m` NULL, `habitat varchar(200)`, `lookalike_codes varchar(60)[] NOT NULL DEFAULT '{}'`, `source varchar(300) NOT NULL`. La tabella la crea V21, i dati li mette R__ |
+| `mushroom_spots` | `id`, `reporter_id uuid NOT NULL` FK con indice, `location geometry(Point,4326) NOT NULL` (+ GiST su `::geography`), `species_code` FK `NULL`, `found_on date NOT NULL`, `note varchar(500) NULL`, `visibility varchar(10) NOT NULL CHECK IN ('PRIVATE','PUBLIC')`, `hidden_at timestamptz NULL`, `hidden_by uuid NULL`, auditing |
+
+**Contratti:**
+```java
+// mushroom/application
+public class MushroomSeasonService {
+    List<SpeciesView> inSeason(LocalDate day, Integer altitudeM);   // day null → oggi dal Clock
+    List<SpeciesView> catalog();
+    Optional<SpeciesView> byScientificName(String name);             // serve a M14
+}
+public class MushroomSpotService {
+    SpotView create(UUID userId, CreateSpotCommand cmd);             // found_on non nel futuro
+    List<SpotView> findNearby(UUID userId, double lon, double lat, double radiusM, int limit); // propri + pubblici non nascosti, ≤ 50 km
+    PagedModel<SpotView> mine(UUID userId, Pageable p);
+    SpotView changeVisibility(UUID userId, UUID spotId, Visibility v);  // 404 se non tuo
+    void delete(UUID userId, UUID spotId);                              // proprietario o ADMIN
+    SpotView hide(UUID managerId, UUID spotId);                         // PARK_MANAGER, solo PUBLIC
+    void deleteAllOf(UUID userId);                                      // cancellazione dell'account
+}
+// mushroom/web
+GET    /api/v1/mushrooms/species               listMushroomSpecies           (pubblica, ETag)
+GET    /api/v1/mushrooms/season?date&altitude  listMushroomsInSeason         (pubblica, ETag)
+POST   /api/v1/mushroom-spots                  createMushroomSpot
+GET    /api/v1/mushroom-spots/nearby           listNearbyMushroomSpots
+GET    /api/v1/mushroom-spots/mine             listMyMushroomSpots           (paginata)
+PATCH  /api/v1/mushroom-spots/{id}/visibility  changeMushroomSpotVisibility
+POST   /api/v1/mushroom-spots/{id}/hide        hideMushroomSpot
+DELETE /api/v1/mushroom-spots/{id}             deleteMushroomSpot
+```
+- `SpeciesResponse` porta sempre `edibility` e `lookalikeCodes`: l'app li mostra **solo** insieme all'avviso (M15 del
+  piano mobile).
+
+**Checkpoint:**
+- [ ] `MushroomSeasonServiceTest`: stagione a cavallo d'anno; quota fuori fascia esclusa; quota assente ignorata
+- [ ] IT: un posto `PRIVATE` non lo vede un altro utente (né in lista né per id); `PUBLIC` sì; nascosto dal gestore →
+  sparisce per gli altri e resta per il segnalatore; `reporterId` assente dal JSON; account cancellato → nessun posto
+  rimasto; 31° posto del giorno → 429
+- [ ] `R__mushroom_species.sql` con la fonte su ogni riga; `MigrationIT` con V21
+- [ ] `docs/openapi.json` rigenerato; `./mvnw verify` verde
+
+---
+
+### Milestone 14 — Riconoscimento dei funghi da foto con l'AI (proxy)
+
+> Su M13. Nuovo **ADR-0030**. Il codice lo scrivi tu.
+
+**Obiettivo:** l'utente fotografa un fungo; il backend manda la foto a un modello AI e restituisce le specie
+candidate, sempre con l'avviso che la risposta è generata da un'AI e va controllata da un esperto.
+
+**Scelte (da fissare nell'ADR-0030):**
+- **Il backend fa da proxy:** la chiave dell'API sta solo nel `.env` (`ANTHROPIC_API_KEY`), mai nell'app. La foto
+  passa dal backend (il modello non raggiunge il MinIO locale) e **non viene salvata né scritta nei log**.
+- **Porta `MushroomIdentifier`** (sistema esterno) con l'adattatore `ClaudeMushroomIdentifier`, che usa l'SDK
+  ufficiale `com.anthropic:anthropic-java` (ultima versione stabile da Maven Central). **Da controllare prima:**
+  l'SDK usa OkHttp e il progetto fissa `okhttp-jvm` 5.3.2 per MinIO (M3). Guarda `dependency:tree`, poi fai una
+  chiamata vera dal profilo `local`; se le versioni non convivono, scrivi nell'ADR come l'hai risolto.
+- **Modello:** `claude-opus-5-5`, con `output_config.effort` esplicito (su questo modello il default è `medium`) e i
+  `fallbacks` lato server (beta `server-side-fallback-2026-07-01`, `fallbacks: "default"`) per le richieste
+  rifiutate. Il modello è una property (`geosentinel.mushroom-ai.model`), non una costante.
+- **Richiesta:** un blocco `image` (`source.type = base64`, `media_type = image/jpeg`) seguito dal testo con le
+  istruzioni, e **output strutturato** con `output_config.format` (JSON Schema). Niente prefill: su questi modelli
+  non è più ammesso. Schema della risposta del modello:
+  `{ isMushroom: boolean, photoIssues: string[], candidates: [{ scientificName, commonNameIt, confidence:
+  LOW|MEDIUM|HIGH, visibleFeatures: string[], dangerousLookalikes: string[] }] }`, al massimo 3 candidati.
+- **Mai un giudizio di commestibilità dall'AI.** Lo schema non ha un campo "commestibile" e le istruzioni chiedono di
+  non darne. Il backend unisce i candidati al catalogo di M13 per nome scientifico: se un candidato **o uno dei suoi
+  simili** è `TOXIC` o `DEADLY` nel catalogo, la risposta ha `dangerWarning = true`. L'avviso lo scrive il backend,
+  non il modello, ed è sempre presente (`REQUIRED`): la risposta è generata da un'AI e può sbagliare; non mangiare
+  funghi riconosciuti da un'app; farli controllare all'**Ispettorato micologico dell'ASL**.
+- **Il contenuto della foto è un dato, non un'istruzione:** un testo scritto nell'immagine non cambia il compito. Lo
+  schema vincola comunque l'uscita, e i nomi tornano solo come testo.
+- **Costi:** ogni chiamata costa. Limite per utente su Redis, **fail-closed**: 10 riconoscimenti al giorno
+  (`rl:mushroom-ai:{userId}`), 429 con `Retry-After`. Funzione spenta di default (`geosentinel.mushroom-ai.enabled=false`
+  → 503), come le push.
+- **Primo endpoint multipart del progetto** (le altre foto vanno dirette a MinIO): il limite di default di Spring
+  è 1 MB, quindi servono `spring.servlet.multipart.max-file-size=5MB` e `max-request-size=6MB`, più un handler di
+  `MaxUploadSizeExceededException` → 413 `media-too-large` in `GlobalExceptionHandler` (senza: 500).
+- **Foto:** JPEG ≤ 5 MB, magic bytes controllati con `MediaPolicy`. L'app la manda già senza EXIF e con il lato lungo
+  ≤ 1568 px (oltre, il modello la rimpicciolisce comunque). Prima di fissare i limiti, verificali nella
+  documentazione attuale dell'API.
+- **Timeout:** con il ragionamento sempre attivo su questo modello una chiamata con immagine può durare parecchi
+  secondi. Il timeout è una property (`geosentinel.mushroom-ai.timeout`), da fissare dopo aver misurato la latenza
+  nel checkpoint dal vivo e comunque **sotto i 30 s** del `requestTimeoutMillis` dell'app (`HttpClientFactory`):
+  altrimenti l'app rinuncia prima del backend e l'utente paga una chiamata di cui non vede il risultato.
+- **Errori:** `stop_reason = refusal` o `isMushroom = false` → 422 `mushroom-not-recognized`; timeout, rete,
+  5xx e 429 del provider → 503 `identification-unavailable` con `Retry-After`. Nei test **solo** il finto
+  (`@MockitoBean`): nessuna chiamata vera in CI.
+
+**Contratti:**
+```java
+// mushroom/application
+public interface MushroomIdentifier { IdentificationResult identify(byte[] jpeg); }   // candidati grezzi o NotRecognized
+public class MushroomIdentificationService {
+    IdentificationView identify(UUID userId, byte[] photo);   // limite → policy della foto → identifier → unione con il catalogo
+}
+// mushroom/web
+POST /api/v1/mushrooms/identify   multipart `photo`   operationId identifyMushroom
+→ { disclaimer, dangerWarning, photoIssues,
+    candidates: [{ scientificName, commonNameIt, speciesCode?, confidence, visibleFeatures,
+                   dangerousLookalikes: [{ name, speciesCode?, edibility? }] }] }
+```
+
+**Checkpoint:**
+- [ ] `ClaudeMushroomIdentifierTest` (client finto): blocco immagine in base64, `output_config.format`; rifiuto →
+  `NotRecognized`; timeout → `IdentificationUnavailableException`
+- [ ] IT: file di 6 MB → 413 problem+json, non 500
+- [ ] IT (identifier finto): `disclaimer` sempre presente; candidato velenoso nel catalogo → `dangerWarning`; 11°
+  tentativo del giorno → 429; Redis giù → nessuna chiamata al modello (fail-closed); foto non JPEG → 415; né la foto
+  né il base64 nei log (appender di test)
+- [ ] Dal vivo: latenza misurata su 5 foto, timeout fissato di conseguenza (sotto i 30 s dell'app)
+- [ ] Dal vivo con la chiave nel `.env`: una foto di porcino e una di *Amanita* → candidati sensati, `dangerWarning`
+  sulla seconda; una foto senza funghi → 422
+- [ ] `docs/openapi.json` rigenerato; `./mvnw verify` verde
+
+---
+
 ## 4. Ordine di esecuzione e dipendenze
 
 > Ordine pianificato all'inizio. Quello reale è stato: feature (M1.3, M2, M3, M4, M5.2) prima dell'infrastruttura, poi M0.2 → M1.1 → M0.4 → M0.5 → M6 → verifiche dal vivo di M3/M4 → M5.3. Lezione: con `ddl-auto=validate` l'app non parte finché non esistono tutte le migrazioni, quindi M0.2 + M1.1 vanno fatti presto.
@@ -1295,6 +1738,7 @@ M0.1 → M0.2 → M0.3 → M0.4 → M0.5
   → M7
   → M8 (2FA, V15) → M9 (foto profilo, V16)
   → percorso A→B (21–22/11: ADR-0027, poi ADR-0028 con GraphHopper)
+  → M10 (prezzi, V18) → M11 (pagamenti, V19) → M12 (sci, V20) → M13 (funghi, V21) → M14 (AI)
 ```
 Nota: `M5.1` (GlobalExceptionHandler) conviene farlo subito dopo M2, così ogni feature successiva nasce con gli errori già nel formato giusto. `AbstractIntegrationTest` (M6.1) puoi anticiparlo dopo M1 e scrivere gli IT insieme a ogni milestone. È la scelta consigliata.
 
@@ -1317,6 +1761,11 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 | 8 | Verifica in due passaggi | `ecc:security-reviewer,ecc:java-reviewer` |
 | 9 | Foto profilo | `ecc:security-reviewer,ecc:java-reviewer` |
 | — | Percorso A→B (GraphHopper) | `ecc:security-reviewer,ecc:java-reviewer,ecc:database-reviewer` |
+| 10 | Prezzi dei rifugi | `ecc:java-reviewer,ecc:database-reviewer` |
+| 11 | Pagamenti | `ecc:security-reviewer,ecc:java-reviewer,ecc:database-reviewer` |
+| 12 | Impianti sciistici | `ecc:database-reviewer,ecc:java-reviewer` |
+| 13 | Funghi | `ecc:security-reviewer,ecc:java-reviewer` |
+| 14 | Riconoscimento con l'AI | `ecc:security-reviewer,ecc:java-reviewer` |
 
 ```bash
 /ecc:orchestrate custom "ecc:java-build-resolver,ecc:code-reviewer" "[Plan: docs/MASTER_PLAN.md#step-0] Review only, do not write feature code: pom.xml deps for Spring Boot 4.1 (flyway-database-postgresql, oauth2-resource-server, mapstruct processor paths, springdoc 3, testcontainers 2), docker-compose healthchecks + minio-init bucket, Dockerfile multi-stage layers; Acceptance: mvnw compile green; all compose services healthy; no secrets in repo"
@@ -1334,15 +1783,20 @@ Le catene di **implementazione** (`tdd-guide`, …) scriverebbero il codice al p
 ---
 
 ## 6. Come lavoriamo da qui
-M0–M9 completate e integrate nell'app (2FA e foto profilo comprese), più il percorso A→B con GraphHopper (22/11) e la pulizia per la tesi con il rate limit del login (23–24/11). Prossimo lavoro: §7.
+M0–M9 completate e integrate nell'app (2FA e foto profilo comprese), più il percorso A→B con GraphHopper (22/11) e la pulizia per la tesi con il rate limit del login (23–24/11). Prossimo lavoro: §7, poi le nuove feature M10–M14 (pianificate il 26/11).
 1. Aggiungi la milestone o il task qui, con contratti e checkpoint.
 2. Scrivi il codice.
 3. Chiedimi "review <task>": leggo i file e ti restituisco problemi, rischi e correzioni, **senza riscriverti il codice**.
 4. Spunta i checkpoint e passa al task successivo.
 
-## 7. Cosa manca (aggiornato al 24/11)
+## 7. Cosa manca (aggiornato al 26/11)
 
 In ordine di priorità. I dettagli stanno nei checkpoint delle milestone; qui solo l'elenco.
+
+### 7.0 Nuove feature (pianificate il 26/11)
+M10 prezzi → M11 pagamenti (Stripe, poi PayPal) → M12 impianti sciistici → M13 funghi → M14 riconoscimento con
+l'AI. Contratti e checkpoint nella sezione "Nuove feature" prima di §4; ognuna va integrata nell'app (M12–M16 del
+piano mobile) nello stesso giro, perché aggiunge rotte ed enum al contratto.
 
 ### 7.1 Infrastruttura
 1. **Immagini fissate per digest**, non solo per tag: soprattutto quelle non ufficiali (`israelhikingmap/graphhopper`,

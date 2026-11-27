@@ -20,6 +20,7 @@ import it.unical.geosentinel.refuge.web.dto.RefugeDtos.AvailableResponse;
 import it.unical.geosentinel.refuge.web.dto.RefugeDtos.CreateRefugeRequest;
 import it.unical.geosentinel.refuge.web.dto.RefugeDtos.RefugeResponse;
 import it.unical.geosentinel.refuge.web.dto.RefugeDtos.UpdateCapacityRequest;
+import it.unical.geosentinel.refuge.web.dto.RefugeDtos.UpdateRefugePriceRequest;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -99,17 +100,19 @@ public class RefugeController {
      *
      * @param id   identificativo del rifugio
      * @param from prima notte, in formato ISO (aaaa-mm-gg)
-     * @param to   giorno di fine, escluso
-     * @return 200 con la disponibilità; 422 se l'intervallo non è valido
+     * @param to     giorno di fine, escluso
+     * @param guests ospiti su cui calcolare il totale, di default 1, al massimo 20 come una prenotazione
+     * @return 200 con la disponibilità e il totale; 422 se l'intervallo non è valido
      */
     @GetMapping("/{id}/availability")
     @Operation(operationId = "getRefugeAvailability", summary = "Check bed availability per night in a date range [from, to)", security = @SecurityRequirement(name = "bearerAuth"))
     public ResponseEntity<AvailableResponse> checkAvailability(
             @PathVariable UUID id,
             @RequestParam("from") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam("to") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to
+            @RequestParam("to") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = "1") @Min(1) @Max(20) int guests
     ) {
-        AvailabilityView view = refugeBookingService.availability(id, from, to);
+        AvailabilityView view = refugeBookingService.availability(id, from, to, guests);
         return ResponseEntity.ok(refugeMapper.toResponse(view));
     }
 
@@ -148,6 +151,27 @@ public class RefugeController {
     ) {
         RefugeView updated = refugeBookingService.updateCapacity(currentUser.getRequiredUserId(), currentUser.isAdmin(),
                 id, request.capacity());
+        return ResponseEntity.ok(refugeMapper.toResponse(updated));
+    }
+
+    /**
+     * Imposta o toglie il prezzo a persona per notte; è permesso al gestore di quel rifugio o a un
+     * amministratore. Le prenotazioni già fatte conservano il totale di allora.
+     *
+     * @param id      identificativo del rifugio
+     * @param request nuovo prezzo in centesimi, {@code null} per toglierlo
+     * @return 200 con il rifugio aggiornato; 400 se il prezzo è fuori dai limiti; 403 se l'utente non può
+     *         modificarlo
+     */
+    @PatchMapping("/{id}/price")
+    @Operation(operationId = "updateRefugePrice", summary = "Set or clear the per-person nightly price of a refuge (euro cents)",
+            security = @SecurityRequirement(name = "bearerAuth"))
+    public ResponseEntity<RefugeResponse> updatePrice(
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdateRefugePriceRequest request
+    ) {
+        RefugeView updated = refugeBookingService.updatePrice(currentUser.getRequiredUserId(), currentUser.isAdmin(),
+                id, request.pricePerNightCents());
         return ResponseEntity.ok(refugeMapper.toResponse(updated));
     }
 }

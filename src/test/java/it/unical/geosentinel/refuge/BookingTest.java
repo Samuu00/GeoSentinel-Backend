@@ -1,6 +1,7 @@
 // Test unitario dell'entità di dominio Booking (prenotazione di posti letto in un rifugio).
 // Controlla le regole di business che l'entità applica da sola, senza database e senza Spring:
-// numero minimo di notti e finestra temporale in cui una prenotazione si può annullare.
+// numero minimo di notti, finestra temporale in cui una prenotazione si può annullare e totale copiato dal
+// prezzo del rifugio (M10).
 package it.unical.geosentinel.refuge;
 
 import it.unical.geosentinel.refuge.domain.Booking;
@@ -57,5 +58,38 @@ class BookingTest {
 
         booking.cancel(Instant.parse("2026-10-09T08:00:00Z"));
         assertThat(booking.getStatus()).isEqualTo(BookingStatus.CANCELLED);
+    }
+
+    /**
+     * Il totale è prezzo × notti × ospiti al momento della prenotazione e non cambia se poi il gestore cambia
+     * o toglie il prezzo: chi ha prenotato paga quello di allora.
+     */
+    @Test
+    void copiedTotalDoesNotChangeWhenTheRefugePriceChanges() {
+        refuge.changePrice(3500);
+        Booking booking = Booking.create(refuge, UUID.randomUUID(), UUID.randomUUID(), CHECK_IN, CHECK_IN.plusDays(3), 2);
+        assertThat(booking.getTotalPriceCents()).isEqualTo(3500 * 3 * 2);
+
+        refuge.changePrice(9000);
+        assertThat(booking.getTotalPriceCents()).isEqualTo(21000);
+        refuge.changePrice(null);
+        assertThat(booking.getTotalPriceCents()).isEqualTo(21000);
+    }
+
+    /** Senza prezzo il totale è {@code null} (si paga in rifugio), non zero. */
+    @Test
+    void noPriceMeansNoTotal() {
+        Booking booking = Booking.create(refuge, UUID.randomUUID(), UUID.randomUUID(), CHECK_IN, CHECK_IN.plusDays(1), 1);
+        assertThat(booking.getTotalPriceCents()).isNull();
+    }
+
+    /** Il prezzo segue lo stesso intervallo del CHECK nel DDL: 0 e 100000 ammessi, -1 e 100001 no. */
+    @Test
+    void priceOutsideTheDdlRangeIsRejected() {
+        refuge.changePrice(0);
+        refuge.changePrice(100_000);
+        assertThatThrownBy(() -> refuge.changePrice(-1)).isInstanceOf(BusinessRuleViolationException.class);
+        assertThatThrownBy(() -> refuge.changePrice(100_001)).isInstanceOf(BusinessRuleViolationException.class);
+        assertThat(refuge.getPricePerNightCents()).isEqualTo(100_000);
     }
 }
